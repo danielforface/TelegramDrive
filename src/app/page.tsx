@@ -4,11 +4,11 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Header } from "@/components/layout/header";
 import { TelegramConnect } from "@/components/telegram-connect";
-import { CloudExplorer } from "@/components/cloud-explorer/cloud-explorer";
-import { AnimatedCloudIcon } from "@/components/animated-cloud-icon";
+import { SidebarNav } from "@/components/layout/sidebar-nav";
+import { MainContentView } from "@/components/main-content-view/main-content-view";
 import type { CloudFolder } from "@/types";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, Loader2 } from "lucide-react";
+import { RefreshCw, Loader2, LayoutPanelLeft, FolderClosed } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import * as telegramService from "@/services/telegramService";
 
@@ -18,10 +18,11 @@ const SUBSEQUENT_LOAD_LIMIT = 5;
 type AuthStep = 'initial' | 'awaiting_code' | 'awaiting_password';
 
 export default function Home() {
-  const [isConnecting, setIsConnecting] = useState(false); 
+  const [isConnecting, setIsConnecting] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false); 
-  const [cloudData, setCloudData] = useState<CloudFolder[] | null>(null);
+  const [isProcessingChats, setIsProcessingChats] = useState(false);
+  const [allChats, setAllChats] = useState<CloudFolder[]>([]);
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
   const { toast } = useToast();
 
   const [authStep, setAuthStep] = useState<AuthStep>('initial');
@@ -43,44 +44,43 @@ export default function Home() {
       if (previouslyConnected) {
         console.log("User was previously connected. Setting state and fetching chats.");
         setIsConnected(true);
-        setAuthStep('initial'); // Ensure auth step is reset
-        setAuthError(null);    // Clear any previous auth errors
-        fetchChats(); 
+        setAuthStep('initial');
+        setAuthError(null);
+        fetchChats(true); // Initial fetch
       } else {
         console.log("No existing connection found or session invalid.");
-        setIsConnected(false); 
-        handleReset(false); // Reset local state if not connected
+        setIsConnected(false);
+        handleReset(false);
       }
     } catch (error: any) {
       console.warn("Error checking existing connection:", error.message);
       setIsConnected(false);
       setAuthError(`Failed to check connection: ${error.message}`);
     }
-  }, []); 
+  }, []);
 
   useEffect(() => {
     checkExistingConnection();
   }, [checkExistingConnection]);
 
-
   const fetchChats = async (isInitialLoad = true) => {
     if (!isInitialLoad && (isLoadingMore || !hasMoreChats)) return;
 
     if (isInitialLoad) {
-      setIsProcessing(true);
-      setCloudData(null); 
-      setAuthError(null); // Clear previous errors on new fetch attempt
-      // Reset pagination for initial load
+      setIsProcessingChats(true);
+      setAllChats([]);
+      setSelectedFolderId(null);
+      setAuthError(null);
       setOffsetDate(0);
       setOffsetId(0);
       setOffsetPeer({ _: 'inputPeerEmpty' });
-      setHasMoreChats(true); // Assume there are chats on initial load
+      setHasMoreChats(true);
       toast({ title: "Fetching Chats...", description: "Loading your Telegram conversations." });
     } else {
       setIsLoadingMore(true);
       toast({ title: "Loading More Chats...", description: "Fetching the next batch of conversations." });
     }
-    
+
     try {
       const currentOffsetDate = isInitialLoad ? 0 : offsetDate;
       const currentOffsetId = isInitialLoad ? 0 : offsetId;
@@ -88,12 +88,8 @@ export default function Home() {
       const limit = isInitialLoad ? INITIAL_LOAD_LIMIT : SUBSEQUENT_LOAD_LIMIT;
 
       const response = await telegramService.getTelegramChats(limit, currentOffsetDate, currentOffsetId, currentOffsetPeer);
-      
-      if (isInitialLoad) {
-        setCloudData(response.folders);
-      } else {
-        setCloudData(prevData => [...(prevData || []), ...response.folders]);
-      }
+
+      setAllChats(prevData => isInitialLoad ? response.folders : [...prevData, ...response.folders]);
       
       setOffsetDate(response.nextOffsetDate);
       setOffsetId(response.nextOffsetId);
@@ -118,32 +114,31 @@ export default function Home() {
       const description = error.message || `Could not ${isInitialLoad ? 'load your' : 'load more'} chats.`;
       toast({ title: `Error ${isInitialLoad ? 'Fetching' : 'Loading More'} Chats`, description, variant: "destructive" });
       setAuthError(description);
-      if (!isInitialLoad) setHasMoreChats(false); // Stop trying to load more if an error occurs
+      if (!isInitialLoad) setHasMoreChats(false);
     } finally {
-      if (isInitialLoad) setIsProcessing(false);
+      if (isInitialLoad) setIsProcessingChats(false);
       else setIsLoadingMore(false);
     }
   };
-  
+
   const loadMoreChats = useCallback(() => {
-     if (isLoadingMore || !hasMoreChats || !isConnected || isProcessing) return;
+     if (isLoadingMore || !hasMoreChats || !isConnected || isProcessingChats) return;
      fetchChats(false);
-  }, [isLoadingMore, hasMoreChats, isConnected, isProcessing, offsetDate, offsetId, offsetPeer]); // Add dependencies
+  }, [isLoadingMore, hasMoreChats, isConnected, isProcessingChats, offsetDate, offsetId, offsetPeer]);
 
   const observer = useRef<IntersectionObserver | null>(null);
-  const lastChatElementRef = useCallback((node: HTMLDivElement | null) => {
-    if (isLoadingMore || isProcessing) return; // Don't observe if already loading/processing initial
+  const lastChatElementRef = useCallback((node: HTMLLIElement | null) => {
+    if (isLoadingMore || isProcessingChats) return;
     if (observer.current) observer.current.disconnect();
 
     observer.current = new IntersectionObserver(entries => {
-      if (entries[0].isIntersecting && hasMoreChats && !isLoadingMore && !isProcessing) {
+      if (entries[0].isIntersecting && hasMoreChats && !isLoadingMore && !isProcessingChats) {
         loadMoreChats();
       }
     });
 
     if (node) observer.current.observe(node);
-  }, [isLoadingMore, isProcessing, hasMoreChats, loadMoreChats]);
-
+  }, [isLoadingMore, isProcessingChats, hasMoreChats, loadMoreChats]);
 
   const handleSendCode = async (currentPhoneNumber: string) => {
     if (!currentPhoneNumber) {
@@ -155,8 +150,7 @@ export default function Home() {
     toast({ title: "Sending Code...", description: "Requesting verification code from Telegram." });
     try {
       await telegramService.sendCode(currentPhoneNumber);
-      // No need to set phoneCodeHash in state, it's managed internally by telegramService now
-      setPhoneNumber(currentPhoneNumber); 
+      setPhoneNumber(currentPhoneNumber);
       setAuthStep('awaiting_code');
       toast({ title: "Code Sent!", description: "Please check Telegram for your verification code." });
     } catch (error: any) {
@@ -164,10 +158,10 @@ export default function Home() {
       if (error.message === 'AUTH_RESTART') {
         toast({
           title: "Authentication Restarted",
-          description: "The authentication process needs to be restarted by Telegram. Please try entering your phone number again.",
+          description: "The authentication process needs to be restarted. Please try entering your phone number again.",
           variant: "destructive",
         });
-        handleReset(false); 
+        handleReset(false);
       } else if (error.message && error.message.includes("Invalid hash in mt_dh_gen_ok")) {
         toast({
           title: "Connection Handshake Failed",
@@ -190,32 +184,27 @@ export default function Home() {
       setAuthError("Verification code is required.");
       return;
     }
-    
     setIsConnecting(true);
     setAuthError(null);
     toast({ title: "Verifying Code...", description: "Checking your verification code with Telegram." });
     try {
-      const result = await telegramService.signIn(currentPhoneCode); 
-
+      const result = await telegramService.signIn(currentPhoneCode);
       if (result.user) {
         setIsConnected(true);
         setAuthStep('initial');
-        setPhoneCode(''); 
-        setPassword('');   
-        fetchChats();
+        setPhoneCode('');
+        setPassword('');
+        fetchChats(true);
         toast({ title: "Sign In Successful!", description: "Connected to Telegram." });
       } else {
-        // This case should ideally not be reached if errors are thrown correctly
         setAuthError("Sign in failed. Unexpected response from server.");
         toast({ title: "Sign In Failed", description: "Unexpected response from server.", variant: "destructive" });
       }
     } catch (error: any) {
-      // Error object from telegramService should now always have a .message
       if (error.message === '2FA_REQUIRED' && (error as any).srp_id) {
         console.log("2FA required for sign in, srp_id received:", (error as any).srp_id);
-        // srp_id is now managed by telegramService's userSession
         setAuthStep('awaiting_password');
-        setAuthError(null); // Clear previous error, show 2FA prompt
+        setAuthError(null);
         toast({ title: "2FA Required", description: "Please enter your two-factor authentication password." });
       } else {
         console.error("Error signing in (handleSignIn):", error.message, error);
@@ -232,18 +221,17 @@ export default function Home() {
       setAuthError("Password is required.");
       return;
     }
-    
     setIsConnecting(true);
     setAuthError(null);
     toast({ title: "Verifying Password...", description: "Checking your 2FA password." });
     try {
-      const user = await telegramService.checkPassword(currentPassword); 
+      const user = await telegramService.checkPassword(currentPassword);
       if (user) {
         setIsConnected(true);
         setAuthStep('initial');
-        setPhoneCode('');   
-        setPassword('');    
-        fetchChats();
+        setPhoneCode('');
+        setPassword('');
+        fetchChats(true);
         toast({ title: "2FA Successful!", description: "Connected to Telegram." });
       } else {
         setAuthError("2FA failed. Unexpected response from server.");
@@ -259,7 +247,7 @@ export default function Home() {
   };
 
   const handleReset = async (performServerLogout = true) => {
-    if (performServerLogout && isConnected) { 
+    if (performServerLogout && isConnected) {
         toast({ title: "Disconnecting...", description: "Logging out from Telegram." });
         try {
             await telegramService.signOut();
@@ -269,22 +257,23 @@ export default function Home() {
         }
     }
     setIsConnected(false);
-    setIsProcessing(false);
-    setCloudData(null);
+    setIsProcessingChats(false);
+    setAllChats([]);
+    setSelectedFolderId(null);
     setIsConnecting(false);
     setAuthStep('initial');
-    setPhoneNumber(''); 
+    setPhoneNumber('');
     setPhoneCode('');
     setPassword('');
-    // phoneCodeHash and srpId are managed internally by telegramService's userSession
     setAuthError(null);
     setIsLoadingMore(false);
-    setHasMoreChats(true); 
+    setHasMoreChats(true);
     setOffsetDate(0);
     setOffsetId(0);
     setOffsetPeer({ _: 'inputPeerEmpty' });
   };
 
+  const selectedFolderData = allChats.find(folder => folder.id === selectedFolderId) || null;
 
   if (!isConnected) {
     return (
@@ -304,7 +293,7 @@ export default function Home() {
             setPhoneCode={setPhoneCode}
             password={password}
             setPassword={setPassword}
-            onReset={() => handleReset(false)} 
+            onReset={() => handleReset(false)}
           />
         </main>
         <footer className="py-4 px-4 sm:px-6 lg:px-8 text-center border-t">
@@ -317,75 +306,72 @@ export default function Home() {
   }
 
   return (
-    <>
+    <div className="min-h-screen flex flex-col">
       <Header />
-      <main className="flex-grow container mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col items-center">
-        {isProcessing && !cloudData ? ( 
-          <div className="flex flex-col items-center text-center p-8 mt-10">
-            <AnimatedCloudIcon className="mb-6" isAnimating={true} />
-            <h2 className="text-2xl font-semibold mb-2 text-primary">Processing Your Chats</h2>
-            <p className="text-muted-foreground max-w-md">
-              We're organizing your Telegram media into a neat cloud structure. This might take a few moments...
-            </p>
+      <div className="flex-grow flex container mx-auto px-0 sm:px-2 lg:px-4 py-4 overflow-hidden">
+        {/* Sidebar */}
+        <aside className="w-64 md:w-72 lg:w-80 p-4 border-r bg-card overflow-y-auto flex-shrink-0">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-semibold text-primary">Chats</h2>
+            <Button variant="outline" size="sm" onClick={() => handleReset(true)} title="Disconnect and Reset">
+              <RefreshCw className="h-4 w-4" />
+            </Button>
           </div>
-        ) : cloudData && cloudData.length > 0 ? (
-          <div className="w-full max-w-4xl">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-3xl font-bold text-primary">Your Cloudified Telegram</h2>
-              <Button variant="outline" onClick={() => handleReset(true)}>
-                <RefreshCw className="mr-2 h-4 w-4" />
-                Disconnect & Reset
-              </Button>
+          {isProcessingChats && allChats.length === 0 ? (
+            <div className="flex flex-col items-center p-4">
+              <Loader2 className="animate-spin h-8 w-8 text-primary mb-2" />
+              <p className="text-muted-foreground">Loading chats...</p>
             </div>
-            <CloudExplorer data={cloudData} lastItemRef={lastChatElementRef} />
-            
-            {isLoadingMore && (
-              <div className="flex justify-center items-center p-4 my-4">
-                <Loader2 className="animate-spin h-8 w-8 text-primary" />
-                <p className="ml-3 text-muted-foreground">Loading more chats...</p>
-              </div>
-            )}
-            {!isLoadingMore && !hasMoreChats && cloudData.length > 0 && ( // Ensure cloudData has items before saying "no more"
-              <p className="text-center text-muted-foreground py-4">No more chats to load.</p>
-            )}
-             {!isLoadingMore && hasMoreChats && cloudData.length > 0 && !isProcessing && ( // Prompt to scroll if not loading and has more
-              <p className="text-center text-muted-foreground py-4">Scroll down to load more chats.</p>
-            )}
-          </div>
-        ) : cloudData && cloudData.length === 0 && !isProcessing && !authError ? (
-          // Case for successfully connected, processing done, but no chats returned and no error
-          <div className="flex flex-col items-center text-center p-8 mt-10">
-            <AnimatedCloudIcon className="mb-6" isAnimating={false} />
-            <h2 className="text-2xl font-semibold mb-2">No Chats Found</h2>
-            <p className="text-muted-foreground max-w-md mb-4">
-              It seems your Telegram chat list is empty or we couldn't find any chats to display.
-            </p>
-            <Button onClick={() => fetchChats()}> 
-              <RefreshCw className="mr-2 h-4 w-4" /> Try Refreshing Chats
-            </Button>
-             <Button variant="outline" onClick={() => handleReset(true)} className="mt-2">
-                <RefreshCw className="mr-2 h-4 w-4" />
-                Disconnect & Reset
-              </Button>
-          </div>
-        ) : ( // This case handles errors after connection or if fetchChats failed and set an authError
-           <div className="flex flex-col items-center text-center p-8 mt-10">
-            <AnimatedCloudIcon className="mb-6" isAnimating={false} />
-            <h2 className="text-2xl font-semibold mb-2 text-destructive">Something went wrong</h2>
-            <p className="text-muted-foreground max-w-md mb-4">
-              {authError || "We couldn't load your cloud data. Please try disconnecting and connecting again."}
-            </p>
-            <Button onClick={() => handleReset(true)}>
-              <RefreshCw className="mr-2 h-4 w-4" /> Disconnect & Try Again
-            </Button>
-          </div>
-        )}
-      </main>
-      <footer className="py-4 px-4 sm:px-6 lg:px-8 text-center border-t">
-        <p className="text-sm text-muted-foreground">
+          ) : allChats.length === 0 && !isProcessingChats && !authError ? (
+             <div className="text-center py-4">
+                <FolderClosed className="mx-auto h-12 w-12 text-muted-foreground mb-2" />
+                <p className="text-muted-foreground">No chats found.</p>
+                <Button onClick={() => fetchChats(true)} variant="link" className="mt-2">Try Refreshing</Button>
+            </div>
+          ) : authError && allChats.length === 0 ? (
+            <div className="text-center py-4 text-destructive">
+              <p>{authError}</p>
+              <Button onClick={() => fetchChats(true)} variant="link" className="mt-2">Try Refreshing</Button>
+            </div>
+          ) : (
+            <SidebarNav
+              folders={allChats}
+              selectedFolderId={selectedFolderId}
+              onSelectFolder={setSelectedFolderId}
+              lastItemRef={lastChatElementRef}
+            />
+          )}
+          {isLoadingMore && (
+            <div className="flex justify-center items-center p-2 mt-2">
+              <Loader2 className="animate-spin h-5 w-5 text-primary" />
+              <p className="ml-2 text-sm text-muted-foreground">Loading more...</p>
+            </div>
+          )}
+          {!isLoadingMore && !hasMoreChats && allChats.length > 0 && (
+            <p className="text-center text-xs text-muted-foreground py-2 mt-2">No more chats to load.</p>
+          )}
+        </aside>
+
+        {/* Main Content */}
+        <main className="flex-grow p-4 md:p-6 lg:p-8 overflow-y-auto">
+          {selectedFolderData ? (
+            <MainContentView folder={selectedFolderData} />
+          ) : (
+            <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground">
+              <LayoutPanelLeft className="w-16 h-16 mb-4 opacity-50" />
+              <p className="text-lg">Select a chat from the sidebar to view its content.</p>
+              {allChats.length > 0 && <p className="text-sm mt-1">Or scroll to load more chats.</p>}
+            </div>
+          )}
+        </main>
+      </div>
+      <footer className="py-3 px-4 sm:px-6 lg:px-8 text-center border-t text-xs">
+        <p className="text-muted-foreground">
           Telegram Cloudifier &copy; {new Date().getFullYear()}
         </p>
       </footer>
-    </>
+    </div>
   );
 }
+
+    
