@@ -6,14 +6,12 @@ import { ContentFolderItem } from "./content-folder-item";
 import { ContentFileItem } from "./content-file-item";
 import { Input } from "@/components/ui/input";
 import { Search, FolderOpen } from "lucide-react";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 
 interface MainContentViewProps {
   folder: CloudFolder | null;
-  // onSelectSubFolder: (folderId: string) => void; // For navigating deeper if needed
 }
 
-// Debounce function - can be moved to utils if used elsewhere
 function debounce<F extends (...args: any[]) => any>(func: F, waitFor: number) {
   let timeout: ReturnType<typeof setTimeout> | null = null;
   const debounced = (...args: Parameters<F>) => {
@@ -29,8 +27,14 @@ export function MainContentView({ folder }: MainContentViewProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
 
+  // Reset search term when folder changes
+  useEffect(() => {
+    setSearchTerm("");
+    setDebouncedSearchTerm("");
+  }, [folder]);
+
   const updateDebouncedSearchTerm = useMemo(
-    () => debounce((term: string) => setDebouncedSearchTerm(term), 300),
+    () => debounce((term: string) => setDebouncedSearchTerm(term.toLowerCase()), 300),
     []
   );
 
@@ -41,11 +45,17 @@ export function MainContentView({ folder }: MainContentViewProps) {
 
   const filteredFolderContent = useMemo(() => {
     if (!folder) return { files: [], folders: [] };
-    if (!debouncedSearchTerm.trim()) return { files: folder.files, folders: folder.folders };
-
-    const term = debouncedSearchTerm.toLowerCase();
-    const filteredFiles = folder.files.filter(file => file.name.toLowerCase().includes(term));
-    const filteredSubFolders = folder.folders.filter(subFolder => subFolder.name.toLowerCase().includes(term));
+    
+    const term = debouncedSearchTerm; // Already lowercased by debounced function
+    
+    const filteredSubFolders = folder.folders.filter(subFolder => 
+      subFolder.name.toLowerCase().includes(term)
+    );
+    
+    const filteredFiles = folder.files.filter(file => 
+      file.name.toLowerCase().includes(term) || 
+      file.type.toLowerCase().includes(term)
+    );
     
     return { files: filteredFiles, folders: filteredSubFolders };
   }, [folder, debouncedSearchTerm]);
@@ -53,24 +63,26 @@ export function MainContentView({ folder }: MainContentViewProps) {
 
   if (!folder) {
     return (
-      <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-        <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
-        <p className="text-lg">Select a chat to view its media and files.</p>
+      <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-8">
+        <FolderOpen className="w-20 h-20 mb-6 opacity-40" />
+        <p className="text-xl font-medium">Select a chat to view its media and files.</p>
+        <p className="text-sm mt-1">Your organized cloud view awaits!</p>
       </div>
     );
   }
 
   const { files: displayFiles, folders: displayFolders } = filteredFolderContent;
+  const totalItems = displayFiles.length + displayFolders.length;
 
   return (
-    <div className="space-y-6 h-full flex flex-col">
+    <div className="space-y-6 h-full flex flex-col p-4 md:p-6 lg:p-8">
       <div className="flex-shrink-0">
         <h1 className="text-3xl font-bold text-primary mb-2 pb-2 border-b">{folder.name}</h1>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
           <Input
             type="search"
-            placeholder={`Search in ${folder.name}...`}
+            placeholder={`Search in ${folder.name}... (e.g., "photo", ".jpg", "report")`}
             className="pl-10 pr-4 py-2 text-base"
             value={searchTerm}
             onChange={handleSearchChange}
@@ -78,33 +90,34 @@ export function MainContentView({ folder }: MainContentViewProps) {
         </div>
       </div>
 
-      {(displayFolders.length === 0 && displayFiles.length === 0) ? (
-        <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground">
-           <FolderOpen className="w-12 h-12 mb-3 opacity-50" />
-          <p>This chat folder is empty {searchTerm ? `for "${searchTerm}".` : `or contains no media.`}</p>
+      {totalItems === 0 ? (
+        <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center">
+          <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
+          <p className="text-lg">
+            This chat folder {searchTerm ? `has no items matching "${searchTerm}".` : `is empty or contains no media.`}
+          </p>
         </div>
       ) : (
-        <div className="flex-grow overflow-y-auto space-y-3 pr-1">
-          {displayFolders.map((subFolder, index) => (
-            <ContentFolderItem
-              key={subFolder.id}
-              folder={subFolder}
-              defaultOpen={!!searchTerm || displayFolders.length === 1 || subFolder.files.length > 0}
-              // onSelect={() => onSelectSubFolder(subFolder.id)} // If subfolders navigate
-              style={{ animationDelay: `${index * 80}ms` }}
-            />
-          ))}
-          {displayFiles.map((file, index) => (
-            <ContentFileItem 
-              key={file.id} 
-              file={file} 
-              style={{ animationDelay: `${(displayFolders.length + index) * 80}ms` }}
-            />
-          ))}
+        <div className="flex-grow overflow-y-auto space-y-0 pr-1">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+            {displayFolders.map((subFolder, index) => (
+              <ContentFolderItem
+                key={subFolder.id}
+                folder={subFolder}
+                // onClick={() => console.log("Sub-folder clicked:", subFolder.name)} // Placeholder for future navigation
+                style={{ animationDelay: `${index * 60}ms` }}
+              />
+            ))}
+            {displayFiles.map((file, index) => (
+              <ContentFileItem 
+                key={file.id} 
+                file={file} 
+                style={{ animationDelay: `${(displayFolders.length + index) * 60}ms` }}
+              />
+            ))}
+          </div>
         </div>
       )}
     </div>
   );
 }
-
-    

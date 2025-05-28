@@ -4,9 +4,10 @@
 import type { CloudFile } from "@/types";
 import { FileText, Image as ImageIcon, Video, FileAudio, FileQuestion, Download, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 
 interface ContentFileItemProps {
   file: CloudFile;
@@ -14,61 +15,57 @@ interface ContentFileItemProps {
 }
 
 const FileTypeIcon = ({ type, name }: { type: CloudFile['type'], name: string }) => {
-  const iconProps = { className: "w-6 h-6 text-primary flex-shrink-0" };
+  const iconProps = { className: "w-12 h-12 text-primary flex-shrink-0 mb-2", strokeWidth: 1.5 };
   switch (type) {
     case 'image':
-      return <ImageIcon {...iconProps} />;
+      return <ImageIcon {...iconProps} data-ai-hint={file.dataAiHint || "image file"}/>;
     case 'video':
-      return <Video {...iconProps} />;
+      return <Video {...iconProps} data-ai-hint={file.dataAiHint || "video file"}/>;
     case 'audio':
-      return <FileAudio {...iconProps} />;
+      return <FileAudio {...iconProps} data-ai-hint={file.dataAiHint || "audio file"}/>;
     case 'document':
-      // Could add more specific document icons based on extension
-      if (name.endsWith('.pdf')) return <FileText {...iconProps} color="red" />;
-      if (name.endsWith('.doc') || name.endsWith('.docx')) return <FileText {...iconProps} color="blue"/>;
-      if (name.endsWith('.xls') || name.endsWith('.xlsx')) return <FileText {...iconProps} color="green"/>;
-      return <FileText {...iconProps} />;
+      if (name.endsWith('.pdf')) return <FileText {...iconProps} color="red" data-ai-hint={file.dataAiHint || "pdf document"}/>;
+      if (name.endsWith('.doc') || name.endsWith('.docx')) return <FileText {...iconProps} color="blue" data-ai-hint={file.dataAiHint || "word document"}/>;
+      if (name.endsWith('.xls') || name.endsWith('.xlsx')) return <FileText {...iconProps} color="green" data-ai-hint={file.dataAiHint || "excel spreadsheet"}/>;
+      return <FileText {...iconProps} data-ai-hint={file.dataAiHint || "document file"}/>;
     default:
-      return <FileQuestion {...iconProps} />;
+      return <FileQuestion {...iconProps} data-ai-hint={file.dataAiHint || "unknown file"}/>;
   }
 };
 
 export function ContentFileItem({ file, style }: ContentFileItemProps) {
   const handleDownload = (e: React.MouseEvent) => {
-    e.stopPropagation(); // Prevent card click if button is inside
-    // TODO: Implement actual download logic if file.url exists
+    e.stopPropagation();
     console.log("Download requested for:", file.name, file.url);
     if (!file.url) {
       alert("No download URL available for this file.");
     } else {
-      // For actual download, you might need to create an <a> tag dynamically or use window.open(file.url, '_blank')
-      // This is a placeholder:
       window.open(file.url, '_blank');
     }
   };
 
   return (
     <Card
-      className="flex items-center justify-between p-3 hover:shadow-lg transition-shadow duration-200 animate-item-enter rounded-md"
+      className={cn(
+        "flex flex-col items-center justify-between p-3 hover:shadow-lg transition-shadow duration-200 animate-item-enter rounded-md h-48 w-full",
+        "overflow-hidden"
+      )}
       style={style}
-      // onClick={() => console.log("File selected:", file.name)} // Placeholder for select/preview
+      aria-label={`File: ${file.name}, Type: ${file.type}${file.size ? `, Size: ${file.size}` : ''}`}
     >
       <TooltipProvider delayDuration={300}>
         <Tooltip>
           <TooltipTrigger asChild>
-            <div className="flex items-center gap-3 overflow-hidden cursor-default">
+            <CardContent className="flex flex-col items-center text-center pt-3 flex-grow w-full overflow-hidden">
               <FileTypeIcon type={file.type} name={file.name} />
-              <div className="flex flex-col overflow-hidden">
-                <span className="text-sm font-medium truncate" title={file.name}>{file.name}</span>
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <span>{file.type.charAt(0).toUpperCase() + file.type.slice(1)}</span>
-                  {file.size && <><span>&bull;</span><span>{file.size}</span></>}
-                </div>
-                 {file.lastModified && <span className="text-xs text-muted-foreground">Modified: {file.lastModified}</span>}
+              <p className="text-xs font-medium truncate w-full" title={file.name}>{file.name}</p>
+              <div className="flex items-center gap-1 text-xs text-muted-foreground mt-1">
+                <span>{file.type.charAt(0).toUpperCase() + file.type.slice(1)}</span>
+                {file.size && <><span>&bull;</span><span>{file.size}</span></>}
               </div>
-            </div>
+            </CardContent>
           </TooltipTrigger>
-          <TooltipContent side="bottom" align="start">
+          <TooltipContent side="bottom" align="center">
             <p className="font-semibold">{file.name}</p>
             <p>Type: {file.type}</p>
             {file.size && <p>Size: {file.size}</p>}
@@ -78,26 +75,28 @@ export function ContentFileItem({ file, style }: ContentFileItemProps) {
         </Tooltip>
       </TooltipProvider>
 
-      {file.url ? (
-        <Button variant="ghost" size="icon" onClick={handleDownload} aria-label={`Download ${file.name}`}>
-          <Download className="w-5 h-5 text-muted-foreground hover:text-primary" />
-        </Button>
-      ) : (
-         <TooltipProvider delayDuration={300}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div className="p-2"> {/* Wrapper for tooltip trigger on non-button */}
-                <AlertCircle className="w-5 h-5 text-amber-500" />
-              </div>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>Download not available for this file.</p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-      )}
+      <CardFooter className="p-2 w-full mt-auto border-t">
+        {file.url ? (
+          <Button variant="ghost" size="sm" onClick={handleDownload} className="w-full text-xs">
+            <Download className="w-4 h-4 mr-1" />
+            Download
+          </Button>
+        ) : (
+          <TooltipProvider delayDuration={300}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="flex items-center justify-center text-muted-foreground p-1 text-xs w-full">
+                  <AlertCircle className="w-4 h-4 mr-1 text-amber-500" />
+                  No URL
+                </div>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Download not available for this file.</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
+      </CardFooter>
     </Card>
   );
 }
-
-    
