@@ -118,6 +118,8 @@ export default function Home() {
       }
     };
     // checkExistingConnection(); 
+    // Commented out to prevent auto-connect on page load during development
+    // To re-enable, uncomment the line above.
   }, []);
 
 
@@ -128,14 +130,14 @@ export default function Home() {
       const chats = await telegramService.getTelegramChats();
       setCloudData(chats);
       if (chats.length === 0) {
-        toast({ title: "No Chats Found", description: "Your Telegram chat list appears to be empty or couldn't be loaded.", variant: "destructive" });
+        toast({ title: "No Chats Found", description: "Your Telegram chat list appears to be empty or couldn't be loaded.", variant: "default" });
       } else {
         toast({ title: "Chats Loaded!", description: "Your Telegram cloud structure is ready." });
       }
     } catch (error: any) {
       console.error("Error fetching chats:", error);
       toast({ title: "Error Fetching Chats", description: error.message || "Could not load your chats.", variant: "destructive" });
-      setCloudData(MOCK_CLOUD_DATA); 
+      // setCloudData(MOCK_CLOUD_DATA); // Optionally fallback to mock data or show error state
     } finally {
       setIsProcessing(false);
     }
@@ -156,9 +158,19 @@ export default function Home() {
       setAuthStep('awaiting_code');
       toast({ title: "Code Sent!", description: "Please check Telegram for your verification code." });
     } catch (error: any) {
-      console.error("Error sending code:", error);
-      setAuthError(error.message || "Failed to send code. Please check the phone number and try again.");
-      toast({ title: "Error Sending Code", description: error.message || "Failed to send code.", variant: "destructive" });
+      if (error.message === 'AUTH_RESTART') {
+        console.warn("AUTH_RESTART received. Resetting authentication flow.");
+        toast({
+          title: "Authentication Restarted",
+          description: "The authentication process needs to be restarted. Please try again.",
+          variant: "destructive",
+        });
+        handleReset(false); // Reset without logging out from server if not connected
+      } else {
+        console.error("Error sending code:", error);
+        setAuthError(error.message || "Failed to send code. Please check the phone number and try again.");
+        toast({ title: "Error Sending Code", description: error.message || "Failed to send code.", variant: "destructive" });
+      }
     } finally {
       setIsConnecting(false);
     }
@@ -171,7 +183,7 @@ export default function Home() {
     }
     if (!phoneCodeHash || !phoneNumber) {
         setAuthError("Phone number or code hash is missing. Please start over.");
-        handleReset(); 
+        handleReset(false); 
         return;
     }
     setIsConnecting(true);
@@ -183,8 +195,12 @@ export default function Home() {
       if (result.user) {
         setIsConnected(true);
         setAuthStep('initial'); 
+        setPhoneCode(''); // Clear code after successful use
+        setPassword(''); // Clear password if any
         fetchChats(); 
+        toast({ title: "Sign In Successful!", description: "Connected to Telegram." });
       } else {
+        // This case should ideally not happen if signIn throws an error for 2FA or other issues
         setAuthError("Sign in failed. Unexpected response.");
         toast({ title: "Sign In Failed", description: "Unexpected response from server.", variant: "destructive" });
       }
@@ -193,10 +209,10 @@ export default function Home() {
         console.log("2FA required for sign in, srp_id received:", error.srp_id);
         setSrpId(error.srp_id);
         setAuthStep('awaiting_password');
-        setAuthError("2FA password required.");
+        setAuthError("2FA password required."); // Informative message for user
         toast({ title: "2FA Required", description: "Please enter your two-factor authentication password." });
       } else {
-        console.error("Error signing in:", error);
+        console.error("Error signing in:", error); // Keep console.error for unexpected errors
         setAuthError(error.message || "Sign in failed. Invalid code or other issue.");
         toast({ title: "Sign In Failed", description: error.message || "Invalid code or other issue.", variant: "destructive" });
       }
@@ -212,7 +228,7 @@ export default function Home() {
     }
     if (!srpId) {
         setAuthError("SRP ID is missing for 2FA. Please start over.");
-        handleReset();
+        handleReset(false);
         return;
     }
     setIsConnecting(true);
@@ -223,7 +239,10 @@ export default function Home() {
       if (user) {
         setIsConnected(true);
         setAuthStep('initial'); 
+        setPhoneCode(''); 
+        setPassword(''); 
         fetchChats(); 
+        toast({ title: "2FA Successful!", description: "Connected to Telegram." });
       } else {
         setAuthError("2FA failed. Unexpected response.");
         toast({ title: "2FA Failed", description: "Unexpected response from server.", variant: "destructive" });
@@ -237,8 +256,8 @@ export default function Home() {
     }
   };
 
-  const handleReset = async () => {
-    if (isConnected) {
+  const handleReset = async (performServerLogout = true) => {
+    if (performServerLogout && isConnected) {
         toast({ title: "Disconnecting...", description: "Logging out from Telegram." });
         try {
             await telegramService.signOut();
@@ -279,6 +298,7 @@ export default function Home() {
             setPhoneCode={setPhoneCode}
             password={password}
             setPassword={setPassword}
+            onReset={() => handleReset(false)}
           />
         </main>
         <footer className="py-4 px-4 sm:px-6 lg:px-8 text-center border-t">
@@ -306,7 +326,7 @@ export default function Home() {
           <div className="w-full max-w-4xl">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-3xl font-bold text-primary">Your Cloudified Telegram</h2>
-              <Button variant="outline" onClick={handleReset}>
+              <Button variant="outline" onClick={() => handleReset(true)}>
                 <RefreshCw className="mr-2 h-4 w-4" />
                 Disconnect & Reset
               </Button>
@@ -320,7 +340,7 @@ export default function Home() {
             <p className="text-muted-foreground max-w-md mb-4">
               We couldn't load your cloud data. Please try disconnecting and connecting again.
             </p>
-            <Button onClick={handleReset}>
+            <Button onClick={() => handleReset(true)}>
               <RefreshCw className="mr-2 h-4 w-4" /> Try Again
             </Button>
           </div>
@@ -334,5 +354,6 @@ export default function Home() {
     </>
   );
 }
+    
 
     

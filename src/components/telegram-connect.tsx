@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AnimatedCloudIcon } from "./animated-cloud-icon";
-import { Zap, KeyRound, Phone, MessageSquare } from "lucide-react";
+import { Zap, KeyRound, Phone, MessageSquare, RotateCcw } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Terminal } from "lucide-react";
 
@@ -26,6 +26,7 @@ interface TelegramConnectProps {
   setPhoneCode: (value: string) => void;
   password: string;
   setPassword: (value: string) => void;
+  onReset: () => void;
 }
 
 export function TelegramConnect({
@@ -41,6 +42,7 @@ export function TelegramConnect({
   setPhoneCode,
   password,
   setPassword,
+  onReset,
 }: TelegramConnectProps) {
 
   const handlePhoneNumberSubmit = (e: FormEvent) => {
@@ -57,6 +59,10 @@ export function TelegramConnect({
     e.preventDefault();
     onCheckPassword(password);
   };
+
+  const handleStartOver = () => {
+    onReset();
+  }
 
   const renderFormContent = () => {
     switch (authStep) {
@@ -194,11 +200,14 @@ export function TelegramConnect({
         {renderFormContent()}
       </CardContent>
        {authStep !== 'initial' && (
-        <CardFooter>
-          <Button variant="link" onClick={() => onSendCode(phoneNumber)} disabled={isLoading || authStep !== 'awaiting_code'}>
-            Resend Code
-          </Button>
-           <Button variant="link" onClick={() => { setPassword(''); setPhoneCode(''); setPhoneNumber(''); onSendCode(''); /* This effectively resets to initial via parent's handleReset if called on error */ }} disabled={isLoading} className="ml-auto">
+        <CardFooter className="flex justify-between">
+          {authStep === 'awaiting_code' && (
+            <Button variant="link" onClick={() => onSendCode(phoneNumber)} disabled={isLoading}>
+              Resend Code
+            </Button>
+          )}
+          <Button variant="link" onClick={handleStartOver} disabled={isLoading} className={authStep !== 'awaiting_code' ? "ml-auto" : ""}>
+            <RotateCcw className="mr-2 h-4 w-4" />
             Start Over
           </Button>
         </CardFooter>
@@ -206,5 +215,6 @@ export function TelegramConnect({
     </Card>
   );
 }
+    
 
     
