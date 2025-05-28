@@ -1,13 +1,17 @@
+
 "use client";
 
 import type { CloudFolder } from "@/types";
 import { FolderItem } from "./folder-item";
 import { Input } from "@/components/ui/input";
-import { Search } from "lucide-react";
-import { useState, useMemo, useEffect } from "react";
+import { Search, Loader2 } from "lucide-react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 
 interface CloudExplorerProps {
   data: CloudFolder[];
+  // The lastItemRef will be passed from the parent (page.tsx)
+  // to attach to the very last FolderItem rendered by this component.
+  lastItemRef?: (node: HTMLDivElement | null) => void; 
 }
 
 // Debounce function
@@ -26,19 +30,22 @@ function debounce<F extends (...args: any[]) => any>(func: F, waitFor: number) {
 }
 
 
-export function CloudExplorer({ data }: CloudExplorerProps) {
+export function CloudExplorer({ data, lastItemRef }: CloudExplorerProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
-  const [isLoading, setIsLoading] = useState(true);
+  const [isFiltering, setIsFiltering] = useState(false); // Separate loading for filtering
 
   useEffect(() => {
-    const timer = setTimeout(() => setIsLoading(false), 500); // Simulate loading structure
+    // This effect is just to show initial loading state of the component itself,
+    // not related to data fetching which is handled by page.tsx
+    const timer = setTimeout(() => setIsFiltering(false), 300); // Simulate structure filtering time
     return () => clearTimeout(timer);
-  }, [data]);
+  }, [debouncedSearchTerm]); // Trigger on actual search term change
 
-  const updateDebouncedSearchTerm = useMemo(() => 
+  const updateDebouncedSearchTerm = useMemo(() =>
     debounce((term: string) => {
       setDebouncedSearchTerm(term);
+      setIsFiltering(true); // Start filtering visual cue
     }, 300),
   []);
 
@@ -62,17 +69,23 @@ export function CloudExplorer({ data }: CloudExplorerProps) {
     }).filter(folder => folder !== null) as CloudFolder[];
   };
 
-  const filteredData = useMemo(() => filterData(data, debouncedSearchTerm), [data, debouncedSearchTerm]);
+  const filteredData = useMemo(() => {
+    if (!data) return [];
+    const result = filterData(data, debouncedSearchTerm);
+    setIsFiltering(false); // Filtering done
+    return result;
+  }, [data, debouncedSearchTerm]);
 
-  if (isLoading) {
+
+  if (!data && !searchTerm) { // Handles case where initial data is null (during initial fetch)
     return (
       <div className="flex flex-col items-center justify-center p-8">
-        <Search className="w-12 h-12 text-primary animate-pulse mb-4" />
+        <Loader2 className="w-12 h-12 text-primary animate-spin mb-4" />
         <p className="text-lg text-muted-foreground">Loading your cloud structure...</p>
       </div>
     );
   }
-
+  
   return (
     <div className="w-full space-y-6">
       <div className="relative">
@@ -85,22 +98,31 @@ export function CloudExplorer({ data }: CloudExplorerProps) {
           onChange={handleSearchChange}
         />
       </div>
-      {filteredData.length === 0 && searchTerm && (
+      {isFiltering && (
+         <div className="flex justify-center items-center p-4">
+            <Loader2 className="animate-spin h-6 w-6 text-primary" />
+            <p className="ml-2 text-muted-foreground">Filtering...</p>
+          </div>
+      )}
+      {!isFiltering && filteredData.length === 0 && searchTerm && (
         <p className="text-center text-muted-foreground py-4">No results found for "{searchTerm}".</p>
       )}
-      {filteredData.length === 0 && !searchTerm && (
-         <p className="text-center text-muted-foreground py-4">No chats or files found. Try connecting again or check your Telegram account.</p>
+      {!isFiltering && filteredData.length === 0 && !searchTerm && data && data.length === 0 && (
+         <p className="text-center text-muted-foreground py-4">No chats found. Your Telegram appears to be empty.</p>
       )}
-      <div className="space-y-2">
-        {filteredData.map((rootFolder, index) => (
-          <FolderItem 
-            key={rootFolder.id} 
-            folder={rootFolder} 
-            defaultOpen={rootFolder.isChatFolder || filteredData.length === 1 || !!searchTerm} // Open chat folders by default or if only one result or searching
-            style={{ animationDelay: `${index * 100}ms` }}
-          />
-        ))}
-      </div>
+      {!isFiltering && (
+        <div className="space-y-2">
+          {filteredData.map((rootFolder, index) => (
+            <div key={rootFolder.id} ref={index === filteredData.length - 1 ? lastItemRef : null}>
+              <FolderItem
+                folder={rootFolder}
+                defaultOpen={rootFolder.isChatFolder || filteredData.length === 1 || !!searchTerm || data.length <= 5 } // Open chat folders, or if only one result, or searching, or few items
+                style={{ animationDelay: `${index * 100}ms` }}
+              />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

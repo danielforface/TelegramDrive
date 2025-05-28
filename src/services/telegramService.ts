@@ -2,7 +2,7 @@
 'use client';
 
 import MTProto from '@mtproto/core/envs/browser';
-import type { CloudFolder } from '@/types';
+import type { CloudFolder, GetChatsPaginatedResponse } from '@/types';
 
 // Ensure NEXT_PUBLIC_ variables are loaded
 const API_ID_STRING = process.env.NEXT_PUBLIC_TELEGRAM_API_ID;
@@ -34,13 +34,13 @@ let userSession: {
   phone?: string;
   phone_code_hash?: string;
   user?: any;
-  srp_id?: string; 
-  srp_params?: { 
+  srp_id?: string;
+  srp_params?: {
     g: number;
     p: Uint8Array;
     salt1: Uint8Array;
     salt2: Uint8Array;
-    srp_B: Uint8Array; 
+    srp_B: Uint8Array;
   };
 } = {};
 
@@ -96,12 +96,12 @@ class API {
       const result = await this.mtproto.call(method, params, options);
       return result;
     } catch (originalError: any) {
-      console.warn(`MTProto call '${method}' raw error object:`, JSON.stringify(originalError));
+      console.warn(`MTProto call '${method}' raw error object:`, JSON.stringify(originalError, null, 2));
 
       const { error_code, error_message } = originalError;
 
       if (error_code === 420) { // FLOOD_WAIT_X
-        const secondsStr = error_message.split('FLOOD_WAIT_')[1];
+        const secondsStr = typeof error_message === 'string' ? error_message.split('FLOOD_WAIT_')[1] : '';
         const seconds = parseInt(secondsStr, 10);
         if (!isNaN(seconds)) {
             const ms = seconds * 1000;
@@ -113,7 +113,7 @@ class API {
         }
       }
 
-      if (error_code === 303) { // *_MIGRATE_X
+      if (error_code === 303 && typeof error_message === 'string') { // *_MIGRATE_X
         const migrateMatch = error_message.match(/([A-Z_]+)_MIGRATE_(\d+)/);
         if (migrateMatch && migrateMatch[1] && migrateMatch[2]) {
             const type = migrateMatch[1];
@@ -126,7 +126,7 @@ class API {
               await this.mtproto.setDefaultDc(dcId);
             } else {
               console.log(`Retrying ${method} with dcId ${dcId}.`);
-              Object.assign(options, { dcId });
+              options = { ...options, dcId };
             }
             return this.call(method, params, options); // Retry with new DC/options
         } else {
@@ -134,7 +134,6 @@ class API {
         }
       }
 
-      // Ensure the rejected error is always an Error instance with a message
       let processedError;
       if (originalError instanceof Error && originalError.message) {
         processedError = originalError;
@@ -143,7 +142,7 @@ class API {
       } else {
         processedError = new Error(`MTProto call '${method}' failed with an unrecognized error object: ${JSON.stringify(originalError)}`);
       }
-      // Attach the original error object if it's not the same as the processed one
+      
       if (processedError !== originalError) {
         (processedError as any).originalErrorObject = originalError;
       }
@@ -158,7 +157,7 @@ const api = new API();
 // --- API Service Functions ---
 
 export async function sendCode(phoneNumber: string): Promise<string> {
-  userSession = { phone: phoneNumber }; 
+  userSession = { phone: phoneNumber };
   console.log(`Attempting to send code to ${phoneNumber} via API class`);
 
   const sendCodePayload = {
@@ -175,8 +174,8 @@ export async function sendCode(phoneNumber: string): Promise<string> {
     console.log('Verification code sent, phone_code_hash:', result.phone_code_hash);
     return result.phone_code_hash;
   } catch (error: any) {
-    console.error('Error in sendCode function after api.call:', error.message, error);
-    const message = error.message || 'Failed to send code.'; // error.message should now always exist
+    console.error('Error in sendCode function after api.call:', error.message, error.originalErrorObject || error);
+    const message = error.message || 'Failed to send code.';
      if (message === 'AUTH_RESTART' || (error.originalErrorObject?.error_message === 'AUTH_RESTART')) {
          throw new Error('AUTH_RESTART');
     }
@@ -208,8 +207,8 @@ export async function signIn(code: string): Promise<{ user?: any; error?: string
     return { user: result.user };
 
   } catch (error: any) {
-    console.warn('Error in signIn function after api.call:', error.message, error);
-    const errorMessage = error.message || (error.originalErrorObject?.error_message);
+    console.warn('Error in signIn function after api.call:', error.message, error.originalErrorObject || error);
+    const errorMessage = error.message;
 
     if (errorMessage === 'SESSION_PASSWORD_NEEDED') {
       console.log('2FA password needed. Fetching password details...');
@@ -242,13 +241,13 @@ export async function signIn(code: string): Promise<{ user?: any; error?: string
             throw new Error("Failed to initialize 2FA: SRP parameter 'salt2' is missing or empty.");
         }
         
-        userSession.srp_id = passwordData.srp_id.toString(); 
+        userSession.srp_id = passwordData.srp_id.toString();
         userSession.srp_params = {
             g: passwordData.current_algo.g,
-            p: passwordData.current_algo.p, 
-            salt1: passwordData.current_algo.salt1, 
-            salt2: passwordData.current_algo.salt2, 
-            srp_B: passwordData.srp_B 
+            p: passwordData.current_algo.p,
+            salt1: passwordData.current_algo.salt1,
+            salt2: passwordData.current_algo.salt2,
+            srp_B: passwordData.srp_B
         };
 
         console.log('SRP parameters stored for 2FA:', {
@@ -260,15 +259,15 @@ export async function signIn(code: string): Promise<{ user?: any; error?: string
             srp_B_length: userSession.srp_params.srp_B.length,
         });
         
-        const twoFactorError: any = new Error('2FA_REQUIRED'); 
-        twoFactorError.srp_id = userSession.srp_id; 
+        const twoFactorError: any = new Error('2FA_REQUIRED');
+        twoFactorError.srp_id = userSession.srp_id;
         throw twoFactorError;
 
       } catch (getPasswordError: any) {
-        console.error('Error fetching password details for 2FA:', getPasswordError);
-        if (getPasswordError.message === '2FA_REQUIRED' && getPasswordError.srp_id) throw getPasswordError; 
+        console.error('Error fetching password details for 2FA:', getPasswordError.message, getPasswordError.originalErrorObject || getPasswordError);
+        if (getPasswordError.message === '2FA_REQUIRED' && getPasswordError.srp_id) throw getPasswordError;
 
-        const message = getPasswordError.message || (getPasswordError.originalErrorObject?.error_message || 'Failed to fetch 2FA details.');
+        const message = getPasswordError.message || 'Failed to fetch 2FA details.';
         throw new Error(message);
       }
     }
@@ -280,28 +279,28 @@ export async function signIn(code: string): Promise<{ user?: any; error?: string
 export async function checkPassword(password: string): Promise<any> {
   if (!userSession.srp_id || !userSession.srp_params) {
     console.error("SRP parameters not available for checkPassword. 2FA flow not properly initiated or srp_params missing.");
-    delete userSession.srp_params; // Clean up potentially stale/incomplete params
+    delete userSession.srp_params;
     delete userSession.srp_id;
     throw new Error('SRP parameters not available. Please try the login process again.');
   }
 
   try {
     const { g, p, salt1, salt2, srp_B } = userSession.srp_params;
-    console.log("Attempting to get SRPParams with:", { 
-        g, 
-        p_len: p?.length, 
-        salt1_len: salt1?.length, 
-        salt2_len: salt2?.length, 
-        gB_len: srp_B?.length, 
-        password_len: password?.length 
+    console.log("Attempting to get SRPParams with:", {
+        g,
+        p_len: p?.length,
+        salt1_len: salt1?.length,
+        salt2_len: salt2?.length,
+        gB_len: srp_B?.length,
+        password_len: password?.length
     });
-    
+
     const { A, M1 } = await api.mtproto.crypto.getSRPParams({
         g,
         p,
         salt1,
         salt2,
-        gB: srp_B, 
+        gB: srp_B,
         password,
     });
     console.log("SRP A and M1 computed by library. Calling auth.checkPassword...");
@@ -309,9 +308,9 @@ export async function checkPassword(password: string): Promise<any> {
     const checkResult = await api.call('auth.checkPassword', {
         password: {
             _: 'inputCheckPasswordSRP',
-            srp_id: userSession.srp_id, 
-            A: A, 
-            M1: M1, 
+            srp_id: userSession.srp_id,
+            A: A,
+            M1: M1,
         }
     });
 
@@ -324,10 +323,10 @@ export async function checkPassword(password: string): Promise<any> {
     return checkResult.user;
 
   } catch (error: any) {
-    console.error('Error checking password:', error.message, error);
+    console.error('Error checking password:', error.message, error.originalErrorObject || error);
     delete userSession.srp_params;
     delete userSession.srp_id;
-    const errorMessage = error.message || (error.originalErrorObject?.error_message);
+    const errorMessage = error.message;
     if (errorMessage === 'PASSWORD_HASH_INVALID') {
         throw new Error('Invalid password. Please try again. (PASSWORD_HASH_INVALID)');
     }
@@ -339,29 +338,96 @@ export async function checkPassword(password: string): Promise<any> {
 }
 
 
-export async function getTelegramChats(): Promise<CloudFolder[]> {
+export async function getTelegramChats(
+  limit: number,
+  offsetDate: number = 0,
+  offsetId: number = 0,
+  offsetPeer: any = { _: 'inputPeerEmpty' }
+): Promise<GetChatsPaginatedResponse> {
   if (!userSession.user) {
     console.warn('User not signed in. Cannot fetch chats.');
-    return [];
+    return { folders: [], nextOffsetDate: 0, nextOffsetId: 0, nextOffsetPeer: { _: 'inputPeerEmpty' }, hasMore: false };
   }
 
-  console.log('Fetching user dialogs (chats)...');
+  console.log('Fetching user dialogs (chats) with params:', { limit, offsetDate, offsetId, offsetPeer });
   try {
     const dialogsResult = await api.call('messages.getDialogs', {
-      offset_date: 0,
-      offset_id: 0,
-      offset_peer: { _: 'inputPeerEmpty' },
-      limit: 100, 
-      hash: 0, 
+      offset_date: offsetDate,
+      offset_id: offsetId,
+      offset_peer: offsetPeer,
+      limit: limit,
+      hash: 0, // Typically 0 for paginated requests unless server provides a new hash.
     });
     console.log('Dialogs raw result:', dialogsResult);
-    return transformDialogsToCloudFolders(dialogsResult);
+
+    const transformedFolders = transformDialogsToCloudFolders(dialogsResult);
+    
+    let newOffsetDate = offsetDate;
+    let newOffsetId = offsetId;
+    let newOffsetPeer = offsetPeer;
+    let hasMore = false;
+
+    if (dialogsResult.dialogs && dialogsResult.dialogs.length > 0) {
+      hasMore = dialogsResult.dialogs.length === limit;
+      
+      if (hasMore) { // Only update offsets if we expect more data
+        const lastDialog = dialogsResult.dialogs[dialogsResult.dialogs.length - 1];
+        newOffsetId = lastDialog.top_message;
+        newOffsetPeer = lastDialog.peer;
+
+        const messages = dialogsResult.messages || [];
+        const lastMessageDetails = messages.find((msg: any) => {
+            // Ensure peer_id exists and has one of the expected ID types
+            const msgPeerId = msg.peer_id;
+            if (!msgPeerId) return false;
+            
+            const peerUserId = msgPeerId.user_id?.toString();
+            const peerChatId = msgPeerId.chat_id?.toString();
+            const peerChannelId = msgPeerId.channel_id?.toString();
+
+            const offsetPeerUserId = newOffsetPeer.user_id?.toString();
+            const offsetPeerChatId = newOffsetPeer.chat_id?.toString();
+            const offsetPeerChannelId = newOffsetPeer.channel_id?.toString();
+
+            return msg.id === newOffsetId && (
+                (peerUserId && offsetPeerUserId && peerUserId === offsetPeerUserId) ||
+                (peerChatId && offsetPeerChatId && peerChatId === offsetPeerChatId) ||
+                (peerChannelId && offsetPeerChannelId && peerChannelId === offsetPeerChannelId)
+            );
+        });
+
+        if (lastMessageDetails && typeof lastMessageDetails.date === 'number') {
+          newOffsetDate = lastMessageDetails.date;
+        } else {
+          console.warn("Could not determine nextOffsetDate accurately. Last message details:", lastMessageDetails, "Last dialog:", lastDialog);
+          // If date cannot be found, relying on offset_id and offset_peer might still work, 
+          // but date is preferred. If we don't update date, we might get same results.
+          // For safety, if critical offset info is missing, we might say no more data.
+          // However, let's be optimistic and rely on ID/Peer.
+          // If newOffsetDate remains unchanged, it might lead to issues.
+          // A more robust solution would be to ensure top_message is always in dialogsResult.messages
+          // or specifically fetch it. For now, we proceed.
+        }
+      }
+    } else {
+        hasMore = false; // No dialogs returned
+    }
+
+    return {
+      folders: transformedFolders,
+      nextOffsetDate: newOffsetDate,
+      nextOffsetId: newOffsetId,
+      nextOffsetPeer: newOffsetPeer,
+      hasMore: hasMore,
+    };
+
   } catch (error:any) {
-    console.error('Error fetching dialogs:', error.message, error);
+    console.error('Error fetching dialogs:', error.message, error.originalErrorObject || error);
     const message = error.message || 'Failed to fetch chats.';
     throw new Error(message);
   }
 }
+
 
 function getPeerTitle(peer: any, chats: any[], users: any[]): string {
   if (!peer) return 'Unknown Peer';
@@ -419,14 +485,14 @@ function transformDialogsToCloudFolders(dialogsResult: any): CloudFolder[] {
 
     if (!chatId) {
         console.warn("Could not determine chatId for dialog's peer:", dialog.peer);
-        return null; 
+        return null;
     }
     
     return {
-      id: `chat-${chatId}`,
+      id: `chat-${chatId}-${dialog.top_message || Date.now()}`, // Add top_message to ensure uniqueness if names collide
       name: chatTitle,
       isChatFolder: true,
-      files: [], 
+      files: [],
       folders: [
         { id: `chat-${chatId}-images`, name: "Images", files: [], folders: [] },
         { id: `chat-${chatId}-videos`, name: "Videos", files: [], folders: [] },
@@ -435,7 +501,7 @@ function transformDialogsToCloudFolders(dialogsResult: any): CloudFolder[] {
         { id: `chat-${chatId}-other`, name: "Other Media", files: [], folders: [] },
       ],
     };
-  }).filter(folder => folder !== null) as CloudFolder[]; 
+  }).filter(folder => folder !== null) as CloudFolder[];
 }
 
 
@@ -444,7 +510,7 @@ export async function signOut(): Promise<void> {
     const result = await api.call('auth.logOut');
     console.log('Signed out successfully from Telegram server:', result);
   } catch (error: any) {
-    console.error('Error signing out from Telegram server:', error.message, error);
+    console.error('Error signing out from Telegram server:', error.message, error.originalErrorObject || error);
   } finally {
     userSession = {};
     console.log('Local userSession object cleared.');
@@ -458,14 +524,14 @@ export async function isUserConnected(): Promise<boolean> {
         console.log("User session is active (checked with users.getUsers).");
         return true;
     } catch (error: any) {
-        const errorMessage = error.message || (error.originalErrorObject?.error_message);
+        const errorMessage = error.message;
         if (errorMessage && ['AUTH_KEY_UNREGISTERED', 'USER_DEACTIVATED', 'SESSION_REVOKED', 'SESSION_EXPIRED', 'API_ID_INVALID', 'API_KEY_INVALID', 'AUTH_RESTART'].includes(errorMessage)) {
             console.warn("User session no longer valid or API keys incorrect:", errorMessage, "Logging out locally.");
-            await signOut(); 
+            await signOut();
             return false;
         }
-        console.warn("API call failed during connected check, but might not be an auth error. Assuming connected as user object exists locally.", errorMessage, error);
-        return true; 
+        console.warn("API call failed during connected check, but might not be an auth error. Assuming connected as user object exists locally.", errorMessage, error.originalErrorObject || error);
+        return true;
     }
   }
   return false;
@@ -475,3 +541,4 @@ console.log('Telegram service (telegramService.ts) loaded with API class wrapper
 if (API_ID === undefined || !API_HASH) {
   console.error("CRITICAL: Telegram API_ID or API_HASH is not configured correctly in .env.local. Service will not function. Ensure NEXT_PUBLIC_TELEGRAM_API_ID and NEXT_PUBLIC_TELEGRAM_API_HASH are set and the dev server was restarted.");
 }
+

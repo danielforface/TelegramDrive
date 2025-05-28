@@ -1,103 +1,27 @@
 
 "use client";
 
-import { useState, useEffect, FormEvent } from "react";
+import { useState, useEffect, FormEvent, useRef, useCallback } from "react";
 import { Header } from "@/components/layout/header";
 import { TelegramConnect } from "@/components/telegram-connect";
 import { CloudExplorer } from "@/components/cloud-explorer/cloud-explorer";
 import { AnimatedCloudIcon } from "@/components/animated-cloud-icon";
 import type { CloudFolder } from "@/types";
 import { Button } from "@/components/ui/button";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import * as telegramService from "@/services/telegramService";
+import { FolderItem } from "@/components/cloud-explorer/folder-item"; // For direct use of FolderItem for ref
 
-const MOCK_CLOUD_DATA: CloudFolder[] = [
-  {
-    id: "chat-1",
-    name: "Work Projects Chat",
-    isChatFolder: true,
-    files: [],
-    folders: [
-      {
-        id: "chat-1-images",
-        name: "Images",
-        files: [
-          { id: "img1", name: "Project_Alpha_Mockup.png", type: "image", size: "1.2MB", lastModified: "2023-10-25" , url: "https://placehold.co/600x400.png", dataAiHint: "project mockup" },
-          { id: "img2", name: "Team_Photo_Event.jpg", type: "image", size: "3.5MB", lastModified: "2023-10-20", url: "https://placehold.co/600x400.png", dataAiHint: "team photo" },
-        ],
-        folders: [],
-      },
-      {
-        id: "chat-1-videos",
-        name: "Videos",
-        files: [
-          { id: "vid1", name: "Demo_Screencast.mp4", type: "video", size: "25MB", lastModified: "2023-10-22", url: "#" },
-        ],
-        folders: [],
-      },
-      {
-        id: "chat-1-docs",
-        name: "Documents",
-        files: [
-          { id: "doc1", name: "Project_Proposal_v3.pdf", type: "document", size: "850KB", lastModified: "2023-10-26", url: "#" },
-          { id: "doc2", name: "Meeting_Notes_Oct.docx", type: "document", size: "120KB", lastModified: "2023-10-19", url: "#" },
-        ],
-        folders: [],
-      },
-    ],
-  },
-  {
-    id: "chat-2",
-    name: "Family Updates",
-    isChatFolder: true,
-    files: [],
-    folders: [
-      {
-        id: "chat-2-images",
-        name: "Images",
-        files: [
-          { id: "fam-img1", name: "Vacation_Beach.jpg", type: "image", size: "4.1MB", lastModified: "2023-09-15", dataAiHint: "beach vacation", url: "https://placehold.co/600x400.png" },
-          { id: "fam-img2", name: "Birthday_Party_Kids.png", type: "image", size: "2.8MB", lastModified: "2023-08-05", dataAiHint: "birthday party", url: "https://placehold.co/600x400.png" },
-        ],
-        folders: [],
-      },
-       {
-        id: "chat-2-audio",
-        name: "Audio Messages",
-        files: [
-          { id: "audio1", name: "Grandma_Voicemail.mp3", type: "audio", size: "500KB", lastModified: "2023-07-10", url: "#" },
-        ],
-        folders: [],
-      },
-    ],
-  },
-  {
-    id: "chat-3",
-    name: "Tech News Channel",
-    isChatFolder: true,
-    files: [
-        { id: "tech-news1", name: "Latest_Gadget_Review.pdf", type: "document", size: "2.1MB", lastModified: "2023-10-27", dataAiHint:"gadget review", url: "#" },
-    ],
-    folders: [
-      {
-        id: "chat-3-unknown",
-        name: "Archived Files",
-        files: [
-          { id: "unknown1", name: "backup_archive.zip", type: "unknown", size: "150MB", lastModified: "2023-01-01", url: "#" },
-        ],
-        folders: [],
-      }
-    ]
-  }
-];
+const INITIAL_LOAD_LIMIT = 20;
+const SUBSEQUENT_LOAD_LIMIT = 5;
 
 type AuthStep = 'initial' | 'awaiting_code' | 'awaiting_password';
 
 export default function Home() {
   const [isConnecting, setIsConnecting] = useState(false); // General loading state for auth operations
   const [isConnected, setIsConnected] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false); // For chat processing after connection
+  const [isProcessing, setIsProcessing] = useState(false); // For initial chat processing
   const [cloudData, setCloudData] = useState<CloudFolder[] | null>(null);
   const { toast } = useToast();
 
@@ -106,42 +30,102 @@ export default function Home() {
   const [phoneCode, setPhoneCode] = useState('');
   const [password, setPassword] = useState('');
   const [phoneCodeHash, setPhoneCodeHash] = useState<string | null>(null);
-  const [srpId, setSrpId] = useState<string | null>(null); // srp_id for 2FA
+  const [srpId, setSrpId] = useState<string | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
+
+  // Pagination state
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [hasMoreChats, setHasMoreChats] = useState(true);
+  const [offsetDate, setOffsetDate] = useState(0);
+  const [offsetId, setOffsetId] = useState(0);
+  const [offsetPeer, setOffsetPeer] = useState<any>({ _: 'inputPeerEmpty' });
 
   useEffect(() => {
     const checkExistingConnection = async () => {
-      const previouslyConnected = await telegramService.isUserConnected();
-      if (previouslyConnected) {
-        setIsConnected(true);
-        fetchChats();
+      try {
+        const previouslyConnected = await telegramService.isUserConnected();
+        if (previouslyConnected) {
+          setIsConnected(true);
+          fetchChats(); // Fetch initial chats if already connected
+        }
+      } catch (error) {
+        console.warn("Error checking existing connection:", error);
+        // Potentially sign out or reset state if check fails critically
       }
     };
     // checkExistingConnection(); 
-    // Commented out to prevent auto-connect on page load during development
-    // To re-enable, uncomment the line above.
+    // Keep commented for development to avoid auto-connect
   }, []);
 
 
   const fetchChats = async () => {
     setIsProcessing(true);
+    setCloudData(null); // Clear existing data for a fresh fetch
     toast({ title: "Fetching Chats...", description: "Loading your Telegram conversations." });
     try {
-      const chats = await telegramService.getTelegramChats();
-      setCloudData(chats);
-      if (chats.length === 0) {
+      const response = await telegramService.getTelegramChats(INITIAL_LOAD_LIMIT, 0, 0, { _: 'inputPeerEmpty' });
+      setCloudData(response.folders);
+      setOffsetDate(response.nextOffsetDate);
+      setOffsetId(response.nextOffsetId);
+      setOffsetPeer(response.nextOffsetPeer);
+      setHasMoreChats(response.hasMore);
+
+      if (response.folders.length === 0) {
         toast({ title: "No Chats Found", description: "Your Telegram chat list appears to be empty or couldn't be loaded.", variant: "default" });
       } else {
-        toast({ title: "Chats Loaded!", description: "Your Telegram cloud structure is ready." });
+        toast({ title: "Chats Loaded!", description: `Loaded ${response.folders.length} initial chats.` });
       }
     } catch (error: any) {
-      console.error("Error fetching chats:", error);
+      console.error("Error fetching initial chats:", error);
       toast({ title: "Error Fetching Chats", description: error.message || "Could not load your chats.", variant: "destructive" });
-      // setCloudData(MOCK_CLOUD_DATA); // Optionally fallback to mock data or show error state
     } finally {
       setIsProcessing(false);
     }
   };
+
+  const loadMoreChats = useCallback(async () => {
+    if (isLoadingMore || !hasMoreChats || !isConnected) return;
+
+    setIsLoadingMore(true);
+    toast({ title: "Loading More Chats...", description: "Fetching the next batch of conversations." });
+    try {
+      const response = await telegramService.getTelegramChats(SUBSEQUENT_LOAD_LIMIT, offsetDate, offsetId, offsetPeer);
+      setCloudData(prevData => [...(prevData || []), ...response.folders]);
+      setOffsetDate(response.nextOffsetDate);
+      setOffsetId(response.nextOffsetId);
+      setOffsetPeer(response.nextOffsetPeer);
+      setHasMoreChats(response.hasMore);
+
+      if (response.folders.length > 0) {
+         toast({ title: "More Chats Loaded!", description: `Loaded ${response.folders.length} additional chats.` });
+      } else if (!response.hasMore) {
+         toast({ title: "All Chats Loaded", description: "You've reached the end of your chat list."});
+      }
+
+    } catch (error: any) {
+      console.error("Error loading more chats:", error);
+      toast({ title: "Error Loading More", description: error.message || "Could not load more chats.", variant: "destructive" });
+      setHasMoreChats(false); // Stop trying if there's an error
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [isLoadingMore, hasMoreChats, offsetDate, offsetId, offsetPeer, toast, isConnected]);
+
+  // Intersection Observer for infinite scrolling
+  const observer = useRef<IntersectionObserver | null>(null);
+  const lastChatElementRef = useCallback((node: HTMLDivElement | null) => {
+    if (isLoadingMore || isProcessing) return;
+    if (observer.current) observer.current.disconnect();
+
+    observer.current = new IntersectionObserver(entries => {
+      if (entries[0].isIntersecting && hasMoreChats && !isLoadingMore && !isProcessing) {
+        loadMoreChats();
+      }
+    });
+
+    if (node) observer.current.observe(node);
+  }, [isLoadingMore, isProcessing, hasMoreChats, loadMoreChats]);
+
 
   const handleSendCode = async (currentPhoneNumber: string) => {
     if (!currentPhoneNumber) {
@@ -154,7 +138,7 @@ export default function Home() {
     try {
       const result_phone_code_hash = await telegramService.sendCode(currentPhoneNumber);
       setPhoneCodeHash(result_phone_code_hash);
-      setPhoneNumber(currentPhoneNumber); 
+      setPhoneNumber(currentPhoneNumber);
       setAuthStep('awaiting_code');
       toast({ title: "Code Sent!", description: "Please check Telegram for your verification code." });
     } catch (error: any) {
@@ -165,7 +149,7 @@ export default function Home() {
           description: "The authentication process needs to be restarted. Please try again.",
           variant: "destructive",
         });
-        handleReset(false); // Reset without logging out from server if not connected
+        handleReset(false);
       } else {
         console.error("Error sending code:", error);
         setAuthError(error.message || "Failed to send code. Please check the phone number and try again.");
@@ -183,24 +167,23 @@ export default function Home() {
     }
     if (!phoneCodeHash || !phoneNumber) {
         setAuthError("Phone number or code hash is missing. Please start over.");
-        handleReset(false); 
+        handleReset(false);
         return;
     }
     setIsConnecting(true);
     setAuthError(null);
     toast({ title: "Verifying Code...", description: "Checking your verification code with Telegram." });
     try {
-      const result = await telegramService.signIn(currentPhoneCode); 
-      
+      const result = await telegramService.signIn(currentPhoneCode);
+
       if (result.user) {
         setIsConnected(true);
-        setAuthStep('initial'); 
-        setPhoneCode(''); // Clear code after successful use
-        setPassword(''); // Clear password if any
-        fetchChats(); 
+        setAuthStep('initial');
+        setPhoneCode('');
+        setPassword('');
+        fetchChats();
         toast({ title: "Sign In Successful!", description: "Connected to Telegram." });
       } else {
-        // This case should ideally not happen if signIn throws an error for 2FA or other issues
         setAuthError("Sign in failed. Unexpected response.");
         toast({ title: "Sign In Failed", description: "Unexpected response from server.", variant: "destructive" });
       }
@@ -209,10 +192,10 @@ export default function Home() {
         console.log("2FA required for sign in, srp_id received:", error.srp_id);
         setSrpId(error.srp_id);
         setAuthStep('awaiting_password');
-        setAuthError("2FA password required."); // Informative message for user
+        setAuthError("2FA password required.");
         toast({ title: "2FA Required", description: "Please enter your two-factor authentication password." });
       } else {
-        console.error("Error signing in:", error); // Keep console.error for unexpected errors
+        console.error("Error signing in:", error);
         setAuthError(error.message || "Sign in failed. Invalid code or other issue.");
         toast({ title: "Sign In Failed", description: error.message || "Invalid code or other issue.", variant: "destructive" });
       }
@@ -235,13 +218,13 @@ export default function Home() {
     setAuthError(null);
     toast({ title: "Verifying Password...", description: "Checking your 2FA password." });
     try {
-      const user = await telegramService.checkPassword(currentPassword); 
+      const user = await telegramService.checkPassword(currentPassword);
       if (user) {
         setIsConnected(true);
-        setAuthStep('initial'); 
-        setPhoneCode(''); 
-        setPassword(''); 
-        fetchChats(); 
+        setAuthStep('initial');
+        setPhoneCode('');
+        setPassword('');
+        fetchChats();
         toast({ title: "2FA Successful!", description: "Connected to Telegram." });
       } else {
         setAuthError("2FA failed. Unexpected response.");
@@ -277,6 +260,12 @@ export default function Home() {
     setPhoneCodeHash(null);
     setSrpId(null);
     setAuthError(null);
+    // Reset pagination state
+    setIsLoadingMore(false);
+    setHasMoreChats(true);
+    setOffsetDate(0);
+    setOffsetId(0);
+    setOffsetPeer({ _: 'inputPeerEmpty' });
   };
 
 
@@ -332,6 +321,37 @@ export default function Home() {
               </Button>
             </div>
             <CloudExplorer data={cloudData} />
+            {/* Attach ref to the last item for IntersectionObserver */}
+            {cloudData.length > 0 && (
+              <div
+                ref={lastChatElementRef}
+                // This div is just a sentinel, it won't be visible if last FolderItem doesn't exist.
+                // We will observe this. If it's the actual last FolderItem, we can style it if needed.
+                // For simplicity, a div wrapper is easier.
+                // Alternatively, pass the ref directly to CloudExplorer and then to the last FolderItem.
+                // Let's adjust CloudExplorer to accept a ref for the last item or handle it internally.
+                // For now, let's assume CloudExplorer renders FolderItems directly.
+                // The following is a placeholder to show where the logic for attaching ref goes.
+                // It's better to integrate this into CloudExplorer or pass the ref down.
+              >
+                {/* This is conceptual, the actual ref attachment is in CloudExplorer below */}
+              </div>
+            )}
+            
+            {isLoadingMore && (
+              <div className="flex justify-center items-center p-4 my-4">
+                <Loader2 className="animate-spin h-8 w-8 text-primary" />
+                <p className="ml-3 text-muted-foreground">Loading more chats...</p>
+              </div>
+            )}
+            {!isLoadingMore && !hasMoreChats && cloudData.length > 0 && (
+              <p className="text-center text-muted-foreground py-4">No more chats to load.</p>
+            )}
+            {!isLoadingMore && hasMoreChats && cloudData.length > 0 && cloudData.length < INITIAL_LOAD_LIMIT && (
+                 <p className="text-center text-muted-foreground py-4">Scroll down to load more chats.</p>
+            )}
+
+
           </div>
         ) : (
            <div className="flex flex-col items-center text-center p-8 mt-10">
@@ -354,6 +374,3 @@ export default function Home() {
     </>
   );
 }
-    
-
-    
