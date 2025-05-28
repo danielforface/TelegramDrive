@@ -12,28 +12,29 @@ import { cn } from "@/lib/utils";
 interface ContentFileItemProps {
   file: CloudFile;
   style?: React.CSSProperties;
+  ref?: React.Ref<HTMLDivElement>; // Added to support ref forwarding for IntersectionObserver
 }
 
-const FileTypeIcon = ({ type, name }: { type: CloudFile['type'], name: string }) => {
+const FileTypeIcon = ({ type, name, dataAiHint }: { type: CloudFile['type'], name: string, dataAiHint?: string }) => {
   const iconProps = { className: "w-12 h-12 text-primary flex-shrink-0 mb-2", strokeWidth: 1.5 };
   switch (type) {
     case 'image':
-      return <ImageIcon {...iconProps} data-ai-hint={file.dataAiHint || "image file"}/>;
+      return <ImageIcon {...iconProps} data-ai-hint={dataAiHint || "image file"}/>;
     case 'video':
-      return <Video {...iconProps} data-ai-hint={file.dataAiHint || "video file"}/>;
+      return <Video {...iconProps} data-ai-hint={dataAiHint || "video file"}/>;
     case 'audio':
-      return <FileAudio {...iconProps} data-ai-hint={file.dataAiHint || "audio file"}/>;
+      return <FileAudio {...iconProps} data-ai-hint={dataAiHint || "audio file"}/>;
     case 'document':
-      if (name.endsWith('.pdf')) return <FileText {...iconProps} color="red" data-ai-hint={file.dataAiHint || "pdf document"}/>;
-      if (name.endsWith('.doc') || name.endsWith('.docx')) return <FileText {...iconProps} color="blue" data-ai-hint={file.dataAiHint || "word document"}/>;
-      if (name.endsWith('.xls') || name.endsWith('.xlsx')) return <FileText {...iconProps} color="green" data-ai-hint={file.dataAiHint || "excel spreadsheet"}/>;
-      return <FileText {...iconProps} data-ai-hint={file.dataAiHint || "document file"}/>;
+      if (name.endsWith('.pdf')) return <FileText {...iconProps} color="red" data-ai-hint={dataAiHint || "pdf document"}/>;
+      if (name.endsWith('.doc') || name.endsWith('.docx')) return <FileText {...iconProps} color="blue" data-ai-hint={dataAiHint || "word document"}/>;
+      if (name.endsWith('.xls') || name.endsWith('.xlsx')) return <FileText {...iconProps} color="green" data-ai-hint={dataAiHint || "excel spreadsheet"}/>;
+      return <FileText {...iconProps} data-ai-hint={dataAiHint || "document file"}/>;
     default:
-      return <FileQuestion {...iconProps} data-ai-hint={file.dataAiHint || "unknown file"}/>;
+      return <FileQuestion {...iconProps} data-ai-hint={dataAiHint || "unknown file"}/>;
   }
 };
 
-export function ContentFileItem({ file, style }: ContentFileItemProps) {
+export const ContentFileItem = React.forwardRef<HTMLDivElement, ContentFileItemProps>(({ file, style }, ref) => {
   const handleDownload = (e: React.MouseEvent) => {
     e.stopPropagation();
     console.log("Download requested for:", file.name, file.url);
@@ -46,6 +47,7 @@ export function ContentFileItem({ file, style }: ContentFileItemProps) {
 
   return (
     <Card
+      ref={ref} // Apply the ref here
       className={cn(
         "flex flex-col items-center justify-between p-3 hover:shadow-lg transition-shadow duration-200 animate-item-enter rounded-md h-48 w-full",
         "overflow-hidden"
@@ -57,7 +59,7 @@ export function ContentFileItem({ file, style }: ContentFileItemProps) {
         <Tooltip>
           <TooltipTrigger asChild>
             <CardContent className="flex flex-col items-center text-center pt-3 flex-grow w-full overflow-hidden">
-              <FileTypeIcon type={file.type} name={file.name} />
+              <FileTypeIcon type={file.type} name={file.name} dataAiHint={file.dataAiHint} />
               <p className="text-xs font-medium truncate w-full" title={file.name}>{file.name}</p>
               <div className="flex items-center gap-1 text-xs text-muted-foreground mt-1">
                 <span>{file.type.charAt(0).toUpperCase() + file.type.slice(1)}</span>
@@ -99,4 +101,6 @@ export function ContentFileItem({ file, style }: ContentFileItemProps) {
       </CardFooter>
     </Card>
   );
-}
+});
+
+ContentFileItem.displayName = "ContentFileItem";
