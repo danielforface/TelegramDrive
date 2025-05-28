@@ -13,10 +13,11 @@ import { cn } from "@/lib/utils";
 interface ContentFileItemProps {
   file: CloudFile;
   style?: React.CSSProperties;
+  onClick: (file: CloudFile) => void;
 }
 
 const FileTypeIcon = ({ type, name, dataAiHint }: { type: CloudFile['type'], name: string, dataAiHint?: string }) => {
-  const iconProps = { className: "w-12 h-12 text-primary flex-shrink-0", strokeWidth: 1.5 }; // Removed mb-2, margin will be handled by parent
+  const iconProps = { className: "w-12 h-12 text-primary flex-shrink-0", strokeWidth: 1.5 };
   switch (type) {
     case 'image':
       return <ImageIcon {...iconProps} data-ai-hint={dataAiHint || "image file"}/>;
@@ -34,75 +35,40 @@ const FileTypeIcon = ({ type, name, dataAiHint }: { type: CloudFile['type'], nam
   }
 };
 
-export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(({ file, style }, ref) => {
-  const handleDownload = (e: MouseEvent<HTMLButtonElement>) => {
-    e.stopPropagation();
-    console.log("Download requested for:", file.name, file.url);
-    if (!file.url) {
-      alert("No download URL available for this file.");
-    } else {
-      window.open(file.url, '_blank');
-    }
+export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(({ file, style, onClick }, ref) => {
+  
+  const handleItemClick = () => {
+    onClick(file);
   };
 
   return (
     <Card
       ref={ref}
       className={cn(
-        "flex flex-col h-48 w-full overflow-hidden rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200 animate-item-enter"
+        "flex flex-col h-40 w-full overflow-hidden rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200 animate-item-enter cursor-pointer",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
       )}
       style={style}
-      aria-label={`File: ${file.name}, Type: ${file.type}${file.size ? `, Size: ${file.size}` : ''}`}
+      onClick={handleItemClick}
+      onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && handleItemClick()}
+      tabIndex={0}
+      aria-label={`File: ${file.name}, Type: ${file.type}`}
     >
       <TooltipProvider delayDuration={300}>
         <Tooltip>
           <TooltipTrigger asChild>
-            <CardContent className="flex flex-col items-center text-center p-4 flex-grow w-full overflow-hidden">
+            <CardContent className="flex flex-col items-center justify-center text-center p-3 flex-grow w-full overflow-hidden">
               <FileTypeIcon type={file.type} name={file.name} dataAiHint={file.dataAiHint} />
-              <p className="text-sm font-medium mt-2 mb-1 truncate w-full" title={file.name}>{file.name}</p>
-              <div className="flex flex-wrap justify-center items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground w-full">
-                <span>{file.type.charAt(0).toUpperCase() + file.type.slice(1)}</span>
-                {file.size && (
-                  <>
-                    <span className="text-muted-foreground/60 mx-0.5">&bull;</span>
-                    <span>{file.size}</span>
-                  </>
-                )}
-              </div>
+              <p className="text-xs font-medium mt-2 truncate w-full" title={file.name}>{file.name}</p>
             </CardContent>
           </TooltipTrigger>
           <TooltipContent side="bottom" align="center">
             <p className="font-semibold">{file.name}</p>
             <p>Type: {file.type}</p>
             {file.size && <p>Size: {file.size}</p>}
-            {file.lastModified && <p>Modified: {file.lastModified}</p>}
-            {file.url ? <Badge variant="secondary" className="mt-1">Downloadable</Badge> : <Badge variant="outline" className="mt-1">No URL</Badge>}
           </TooltipContent>
         </Tooltip>
       </TooltipProvider>
-
-      <CardFooter className="p-3 w-full border-t flex-shrink-0 bg-card">
-        {file.url ? (
-          <Button variant="ghost" size="sm" onClick={handleDownload} className="w-full text-xs font-medium">
-            <Download className="w-3.5 h-3.5 mr-1.5" />
-            Download
-          </Button>
-        ) : (
-          <TooltipProvider delayDuration={300}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <div className="flex items-center justify-center text-muted-foreground p-1 text-xs w-full font-medium">
-                  <AlertCircle className="w-3.5 h-3.5 mr-1.5 text-amber-500" />
-                  No URL
-                </div>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Download not available for this file.</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        )}
-      </CardFooter>
     </Card>
   );
 });

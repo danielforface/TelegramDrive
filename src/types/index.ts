@@ -8,6 +8,7 @@ export interface CloudFile {
   url?: string; // Optional URL for linking or viewing (requires further implementation)
   dataAiHint?: string;
   messageId: number; // Keep original message ID for offset
+  telegramMessage?: any; // To store the original Telegram message object
 }
 
 export interface CloudFolder { // Represents a Chat

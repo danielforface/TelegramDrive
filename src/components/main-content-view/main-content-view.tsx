@@ -10,11 +10,13 @@ import { useState, useMemo, useEffect } from "react";
 interface MainContentViewProps {
   folderName: string | null;
   files: CloudFile[];
-  isLoading: boolean;
+  isLoading: boolean; // For initial load state of media for the folder
   hasMore: boolean;
   lastItemRef?: (node: HTMLDivElement | null) => void;
+  onFileClick: (file: CloudFile) => void;
 }
 
+// Debounce function
 function debounce<F extends (...args: any[]) => any>(func: F, waitFor: number) {
   let timeout: ReturnType<typeof setTimeout> | null = null;
   const debounced = (...args: Parameters<F>) => {
@@ -23,18 +25,20 @@ function debounce<F extends (...args: any[]) => any>(func: F, waitFor: number) {
     }
     timeout = setTimeout(() => func(...args), waitFor);
   };
-  return debounced as (...args: Parameters<F>) => ReturnType<F>;
+  return debounced as (...args: Parameters<F>) => ReturnType<F>; // Cast to original function type
 }
 
-export function MainContentView({ folderName, files, isLoading, hasMore, lastItemRef }: MainContentViewProps) {
+export function MainContentView({ folderName, files, isLoading, hasMore, lastItemRef, onFileClick }: MainContentViewProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
 
+  // Reset search term when folder changes
   useEffect(() => {
     setSearchTerm("");
     setDebouncedSearchTerm("");
   }, [folderName]);
 
+  // Debounced update for search term
   const updateDebouncedSearchTerm = useMemo(
     () => debounce((term: string) => setDebouncedSearchTerm(term.toLowerCase()), 300),
     []
@@ -48,6 +52,7 @@ export function MainContentView({ folderName, files, isLoading, hasMore, lastIte
   const filteredFiles = useMemo(() => {
     if (!files) return [];
     const term = debouncedSearchTerm;
+    // Filter by name or type (case-insensitive)
     return files.filter(file =>
       file.name.toLowerCase().includes(term) ||
       file.type.toLowerCase().includes(term)
@@ -69,7 +74,8 @@ export function MainContentView({ folderName, files, isLoading, hasMore, lastIte
 
 
   return (
-    <div className="space-y-6 h-full flex flex-col p-1 md:p-2 lg:p-4">
+    <div className="space-y-6 h-full flex flex-col p-1 md:p-2 lg:p-4"> {/* Added padding for breathing room */}
+      {/* Header and Search */}
       <div className="flex-shrink-0">
         <h1 className="text-3xl font-bold text-primary mb-2 pb-2 border-b">{folderName}</h1>
         <div className="relative">
@@ -77,14 +83,15 @@ export function MainContentView({ folderName, files, isLoading, hasMore, lastIte
           <Input
             type="search"
             placeholder={`Search in ${folderName}... (e.g., "photo", ".jpg", "report")`}
-            className="pl-10 pr-4 py-2 text-base"
+            className="pl-10 pr-4 py-2 text-base" // Standard input size
             value={searchTerm}
             onChange={handleSearchChange}
           />
         </div>
       </div>
 
-      {isLoading && displayFiles.length === 0 ? (
+      {/* Content Area */}
+      {isLoading && displayFiles.length === 0 ? ( // Show loader only if loading and no files yet displayed
          <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center">
           <Loader2 className="animate-spin h-12 w-12 text-primary mb-4" />
           <p className="text-lg">Loading media...</p>
@@ -94,31 +101,36 @@ export function MainContentView({ folderName, files, isLoading, hasMore, lastIte
           <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
           <p className="text-lg">No media items matching "{searchTerm}".</p>
         </div>
-      ) : noMediaAtAll ? (
+      ) : noMediaAtAll ? ( // If no search term, no files, not loading, and no more to load
          <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center">
           <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
           <p className="text-lg">This chat contains no media items.</p>
         </div>
       ) : (
-        <div className="flex-grow overflow-y-auto space-y-0 pr-1">
+        // Grid for files
+        <div className="flex-grow overflow-y-auto space-y-0 pr-1"> {/* Allow this part to scroll, add little padding for scrollbar */}
           {displayFiles.length > 0 && (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
               {displayFiles.map((file, index) => (
                 <ContentFileItem
                   key={file.id + '-' + index} // Ensure unique key if IDs can repeat across different loads
                   file={file}
-                  style={{ animationDelay: `${index * 30}ms` }}
+                  style={{ animationDelay: `${index * 30}ms` }} // Staggered animation
+                  // Pass ref to the last item for intersection observer
                   ref={index === displayFiles.length - 1 ? lastItemRef : null}
+                  onClick={onFileClick}
                 />
               ))}
             </div>
           )}
-          {isLoading && displayFiles.length > 0 && ( // Loading more indicator
+          {/* Loading more indicator (when files are already displayed) */}
+          {isLoading && displayFiles.length > 0 && ( 
             <div className="flex justify-center items-center p-4 mt-4">
               <Loader2 className="animate-spin h-8 w-8 text-primary" />
               <p className="ml-3 text-muted-foreground">Loading more media...</p>
             </div>
           )}
+          {/* No more media to load indicator */}
           {!isLoading && !hasMore && displayFiles.length > 0 && (
              <p className="text-center text-sm text-muted-foreground py-4 mt-4">No more media to load.</p>
           )}
