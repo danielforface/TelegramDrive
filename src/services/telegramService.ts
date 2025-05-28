@@ -2,9 +2,7 @@
 'use client';
 
 import MTProto from '@mtproto/core/envs/browser';
-// import { sha256 } from '@cryptography/sha256'; // No longer directly needed for SRP
-// import bigInt from 'big-integer'; // No longer directly needed for SRP, but mtproto-core might use it or we might later.
-import type { CloudFolder, CloudFile } from '@/types';
+import type { CloudFolder } from '@/types';
 
 // Ensure NEXT_PUBLIC_ variables are loaded
 const API_ID_STRING = process.env.NEXT_PUBLIC_TELEGRAM_API_ID;
@@ -31,43 +29,30 @@ if (!API_HASH) {
   );
 }
 
-
-let mtprotoClient: MTProto | null = null;
-
-// --- SRP Helper Types ---
-// SRPParameters are now implicitly handled by mtproto-core's getSRPParams
-// interface SRPParameters {
-//   g: number;
-//   p: Uint8Array;
-//   salt1: Uint8Array;
-//   salt2: Uint8Array;
-//   srp_B: Uint8Array;
-// }
-
-// interface ComputedSRPValues {
-//   A: Uint8Array;
-//   M1: Uint8Array;
-// }
-
 // --- User Session ---
 let userSession: {
   phone?: string;
   phone_code_hash?: string;
   user?: any;
-  srp_id?: string; // Still need to store srp_id
-  // Store individual SRP parameters as received from account.getPassword
+  srp_id?: string;
   srp_params?: {
     g: number;
     p: Uint8Array;
     salt1: Uint8Array;
     salt2: Uint8Array;
-    srp_B: Uint8Array; // This is gB in getSRPParams context
+    srp_B: Uint8Array;
   };
 } = {};
 
+// Helper for sleep
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
-function getClient(): MTProto {
-  if (!mtprotoClient) {
+class API {
+  public mtproto: MTProto;
+
+  constructor() {
     if (API_ID === undefined || !API_HASH) {
       const errorMessage = "CRITICAL: Telegram API_ID or API_HASH is missing or invalid. \n" +
                          "Please ensure NEXT_PUBLIC_TELEGRAM_API_ID (as a number) and NEXT_PUBLIC_TELEGRAM_API_HASH (as a string) \n" +
@@ -76,119 +61,109 @@ function getClient(): MTProto {
       console.error(errorMessage);
       throw new Error(errorMessage);
     }
-    mtprotoClient = new MTProto({
+    this.mtproto = new MTProto({
       api_id: API_ID,
       api_hash: API_HASH,
+      // For browser environment, localStorage is used by default. No storageOptions needed for path.
     });
-    console.log('MTProto client initialized for browser environment.');
-  }
-  return mtprotoClient;
-}
+    console.log('MTProto client initialized via API class for browser environment.');
 
-// --- SRP Utility Functions (Mostly removed as mtproto-core handles them) ---
-
-// These might still be useful for other purposes or if mtproto-core expects BigInts somewhere.
-// For now, keeping them commented out or minimal if not directly used by current logic.
-/*
-function bytesToBigInt(bytes: Uint8Array): bigInt.BigInteger {
-  let hex = '';
-  bytes.forEach(byte => {
-    hex += byte.toString(16).padStart(2, '0');
-  });
-  return bigInt(hex, 16);
-}
-
-function bigIntToBytes(num: bigInt.BigInteger, expectedLength: number = 0): Uint8Array {
-  let hex = num.toString(16);
-  if (hex.length % 2) {
-    hex = '0' + hex;
+    // Optional: Listen for updates (e.g., new messages)
+    this.mtproto.updates.on('updates', (updateInfo: any) => {
+      console.log('Received updates:', updateInfo);
+      // Process updates here, e.g., new messages, chat changes
+    });
   }
 
-  const byteLength = Math.max(expectedLength, hex.length / 2);
-  const u8 = new Uint8Array(byteLength);
+  async call(method: string, params: any = {}, options: any = {}): Promise<any> {
+    try {
+      const result = await this.mtproto.call(method, params, options);
+      return result;
+    } catch (error: any) {
+      console.warn(`${method} error:`, error);
 
-  const hexByteLength = hex.length / 2;
-  let startIdx = byteLength - hexByteLength;
-  if (startIdx < 0) startIdx = 0;
+      const { error_code, error_message } = error;
 
-  for (let i = 0, j = 0; i < hexByteLength; i++, j++) {
-     u8[startIdx + j] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+      if (error_code === 420) { // FLOOD_WAIT_X
+        const seconds = Number(error_message.split('FLOOD_WAIT_')[1]);
+        if (!isNaN(seconds)) {
+            const ms = seconds * 1000;
+            console.log(`Flood wait: waiting ${seconds}s before retrying ${method}.`);
+            await sleep(ms);
+            return this.call(method, params, options);
+        } else {
+            console.error(`Could not parse flood wait time from: ${error_message}`);
+        }
+      }
+
+      if (error_code === 303) { // *_MIGRATE_X
+        const migrateMatch = error_message.match(/([A-Z_]+)_MIGRATE_(\d+)/);
+        if (migrateMatch && migrateMatch[1] && migrateMatch[2]) {
+            const type = migrateMatch[1];
+            const dcId = Number(migrateMatch[2]);
+
+            console.log(`${type}_MIGRATE_X error. Migrating to DC ${dcId} for ${method}...`);
+
+            if (type === 'PHONE') {
+              // For auth.sendCode, we need to change the default DC for subsequent calls like auth.signIn
+              await this.mtproto.setDefaultDc(dcId);
+            } else {
+              // For other calls, we pass the dcId in options for this specific call
+              Object.assign(options, { dcId });
+            }
+            return this.call(method, params, options);
+        } else {
+            console.error(`Could not parse migrate DC from: ${error_message}`);
+        }
+      }
+      // For other errors, re-throw them to be handled by the calling function
+      return Promise.reject(error);
+    }
   }
-  return u8;
 }
-*/
+
+const api = new API();
 
 // --- API Service Functions ---
 
 export async function sendCode(phoneNumber: string): Promise<string> {
-  const client = getClient();
-  userSession = { phone: phoneNumber };
-  console.log(`Attempting to send code to ${phoneNumber} with API_ID: ${API_ID}`);
+  userSession = { phone: phoneNumber }; // Reset user session for new phone number
+  console.log(`Attempting to send code to ${phoneNumber} via API class`);
 
   const sendCodePayload = {
     phone_number: phoneNumber,
-    api_id: API_ID!,
-    api_hash: API_HASH!,
+    api_id: API_ID!, // API_ID is checked in API constructor
+    api_hash: API_HASH!, // API_HASH is checked in API constructor
     settings: {
       _: 'codeSettings',
     },
   };
 
   try {
-    const result = await client.call('auth.sendCode', sendCodePayload);
+    const result = await api.call('auth.sendCode', sendCodePayload);
     if (!result.phone_code_hash) throw new Error("phone_code_hash not received from Telegram.");
     userSession.phone_code_hash = result.phone_code_hash;
     console.log('Verification code sent, phone_code_hash:', result.phone_code_hash);
     return result.phone_code_hash;
   } catch (error: any) {
-    console.warn('Error sending code (initial attempt):', error);
-    if (error.error_message && error.error_message.startsWith('PHONE_MIGRATE_')) {
-      const migrateMatch = error.error_message.match(/PHONE_MIGRATE_(\d+)/);
-      if (migrateMatch && migrateMatch[1]) {
-        const migrateToDc = parseInt(migrateMatch[1], 10);
-        if (!isNaN(migrateToDc)) {
-          console.log(`PHONE_MIGRATE_X error. Migrating to DC ${migrateToDc}...`);
-          try {
-            const freshClient = getClient();
-            await freshClient.setDefaultDc(migrateToDc);
-            console.log(`Successfully set default DC to ${migrateToDc}. Retrying sendCode...`);
-            const result = await freshClient.call('auth.sendCode', sendCodePayload);
-            if (!result.phone_code_hash) throw new Error("phone_code_hash not received from Telegram after DC migration.");
-            userSession.phone_code_hash = result.phone_code_hash;
-            console.log('Verification code sent after DC migration, phone_code_hash:', result.phone_code_hash);
-            return result.phone_code_hash;
-          } catch (retryError: any) {
-            console.error('Error sending code (after DC migration attempt):', retryError);
-            const message = retryError.error_message || (retryError.message || 'Failed to send code after DC migration.');
-            if (message === 'AUTH_RESTART') {
-                 throw new Error('AUTH_RESTART');
-            }
-            throw new Error(message);
-          }
-        } else {
-           console.error('Could not parse DC number from PHONE_MIGRATE_X error:', error.error_message);
-        }
-      } else {
-        console.error('Could not parse DC number from PHONE_MIGRATE_X error structure:', error.error_message);
-      }
-    }
+    // Errors like AUTH_RESTART, PHONE_NUMBER_INVALID etc. will be propagated here by api.call
+    console.error('Error in sendCode function after api.call:', error);
     const message = error.error_message || (error.message || 'Failed to send code.');
-     if (message === 'AUTH_RESTART') {
-        throw new Error('AUTH_RESTART');
+    if (message === 'AUTH_RESTART') { // Explicitly handle AUTH_RESTART if needed by UI
+         throw new Error('AUTH_RESTART');
     }
     throw new Error(message);
   }
 }
 
-export async function signIn(code: string): Promise<{ user?: any, error?: string, srp_id?: string }> {
-  const client = getClient();
+export async function signIn(code: string): Promise<{ user?: any; error?: string; srp_id?: string }> {
   if (!userSession.phone || !userSession.phone_code_hash) {
     console.error('Phone number or phone_code_hash missing for signIn. Call sendCode first.');
     throw new Error('Phone number and phone_code_hash not set. Call sendCode first.');
   }
 
   try {
-    const result = await client.call('auth.signIn', {
+    const result = await api.call('auth.signIn', {
       phone_number: userSession.phone,
       phone_code_hash: userSession.phone_code_hash,
       phone_code: code,
@@ -205,11 +180,11 @@ export async function signIn(code: string): Promise<{ user?: any, error?: string
     return { user: result.user };
 
   } catch (error: any) {
-    console.warn('Error in signIn:', error);
+    console.warn('Error in signIn function after api.call:', error);
     if (error.error_message === 'SESSION_PASSWORD_NEEDED') {
       console.log('2FA password needed. Fetching password details...');
       try {
-        const passwordData = await client.call('account.getPassword');
+        const passwordData = await api.call('account.getPassword');
         console.log('Password data received (account.getPassword):', passwordData);
 
         if (!passwordData.srp_id || !passwordData.current_algo || !passwordData.srp_B) {
@@ -237,14 +212,13 @@ export async function signIn(code: string): Promise<{ user?: any, error?: string
             throw new Error("Failed to initialize 2FA: SRP parameter 'salt2' is missing or empty.");
         }
 
-
-        userSession.srp_id = passwordData.srp_id.toString();
-        userSession.srp_params = { // Store all necessary params for getSRPParams
+        userSession.srp_id = passwordData.srp_id.toString(); // srp_id might be BigInt-like
+        userSession.srp_params = {
             g: passwordData.current_algo.g,
             p: passwordData.current_algo.p,
             salt1: passwordData.current_algo.salt1,
             salt2: passwordData.current_algo.salt2,
-            srp_B: passwordData.srp_B // This is gB for getSRPParams
+            srp_B: passwordData.srp_B
         };
 
         console.log('SRP parameters stored for 2FA:', {
@@ -262,12 +236,13 @@ export async function signIn(code: string): Promise<{ user?: any, error?: string
 
       } catch (getPasswordError: any) {
         console.error('Error fetching password details for 2FA:', getPasswordError);
-        if (getPasswordError.message === '2FA_REQUIRED' && getPasswordError.srp_id) throw getPasswordError;
+        if (getPasswordError.message === '2FA_REQUIRED' && getPasswordError.srp_id) throw getPasswordError; // Re-throw if it's already our custom error
 
         const message = getPasswordError.error_message || (getPasswordError.message || 'Failed to fetch 2FA details.');
         throw new Error(message);
       }
     }
+    // Propagate other errors
     const message = error.error_message || (error.message || 'Failed to sign in.');
     throw new Error(message);
   }
@@ -275,7 +250,6 @@ export async function signIn(code: string): Promise<{ user?: any, error?: string
 
 
 export async function checkPassword(password: string): Promise<any> {
-  const client = getClient();
   if (!userSession.srp_id || !userSession.srp_params) {
     console.error("SRP parameters not available for checkPassword. 2FA flow not properly initiated or srp_params missing.");
     throw new Error('SRP parameters not available. Please try the login process again.');
@@ -283,23 +257,22 @@ export async function checkPassword(password: string): Promise<any> {
 
   try {
     const { g, p, salt1, salt2, srp_B } = userSession.srp_params;
-    console.log("Calling client.mtproto.crypto.getSRPParams with:", { g, p_len: p.length, salt1_len: salt1.length, salt2_len: salt2.length, gB_len: srp_B.length, password_len: password.length });
+    console.log("Calling api.mtproto.crypto.getSRPParams with:", { g, p_len: p.length, salt1_len: salt1.length, salt2_len: salt2.length, gB_len: srp_B.length, password_len: password.length });
 
-    // Use the library's getSRPParams method
-    const { A, M1 } = await client.mtproto.crypto.getSRPParams({
-      g,
-      p,
-      salt1,
-      salt2,
-      gB: srp_B, // srp_B from account.getPassword is gB here
-      password,
+    const { A, M1 } = await api.mtproto.crypto.getSRPParams({
+        g,
+        p,
+        salt1,
+        salt2,
+        gB: srp_B,
+        password,
     });
     console.log("SRP A and M1 computed by library. Calling auth.checkPassword...");
 
-    const checkResult = await client.call('auth.checkPassword', {
+    const checkResult = await api.call('auth.checkPassword', {
         password: {
             _: 'inputCheckPasswordSRP',
-            srp_id: userSession.srp_id,
+            srp_id: userSession.srp_id, // Ensure srp_id is string here
             A: A,
             M1: M1,
         }
@@ -309,14 +282,14 @@ export async function checkPassword(password: string): Promise<any> {
     if (checkResult.user) {
         userSession.user = checkResult.user;
     }
-    // Clear SRP params after successful or attempted 2FA to prevent reuse with old/wrong password
+    // Clear SRP params after successful or attempted 2FA
     delete userSession.srp_params;
     delete userSession.srp_id;
     return checkResult.user;
 
   } catch (error: any) {
     console.error('Error checking password:', error);
-    // Clear SRP params on error as well, as they might be stale or invalid
+    // Clear SRP params on error as well
     delete userSession.srp_params;
     delete userSession.srp_id;
     const message = error.error_message || (error.message || 'Failed to check 2FA password.');
@@ -332,7 +305,6 @@ export async function checkPassword(password: string): Promise<any> {
 
 
 export async function getTelegramChats(): Promise<CloudFolder[]> {
-  const client = getClient();
   if (!userSession.user) {
     console.warn('User not signed in. Cannot fetch chats.');
     return [];
@@ -340,13 +312,14 @@ export async function getTelegramChats(): Promise<CloudFolder[]> {
 
   console.log('Fetching user dialogs (chats)...');
   try {
-    const dialogsResult = await client.call('messages.getDialogs', {
+    // Note: hash is typically a BigInt for subsequent calls, but 0 for the first.
+    // mtproto-core should handle number 0 correctly for the initial call.
+    const dialogsResult = await api.call('messages.getDialogs', {
       offset_date: 0,
       offset_id: 0,
       offset_peer: { _: 'inputPeerEmpty' },
-      limit: 100,
-      hash: 0, // Using 0 for initial fetch as BigInt might not be directly available/needed here anymore
-                // mtproto-core might handle BigInt conversion internally for 'hash' field if required.
+      limit: 100, // Adjust limit as needed
+      hash: 0, // For initial fetch
     });
     console.log('Dialogs raw result:', dialogsResult);
     return transformDialogsToCloudFolders(dialogsResult);
@@ -357,12 +330,10 @@ export async function getTelegramChats(): Promise<CloudFolder[]> {
   }
 }
 
-
 function getPeerTitle(peer: any, chats: any[], users: any[]): string {
   if (!peer) return 'Unknown Peer';
 
   try {
-    // Ensure IDs are treated as strings for comparison, as they can be BigInts or numbers
     const peerUserIdStr = peer.user_id?.toString();
     const peerChatIdStr = peer.chat_id?.toString();
     const peerChannelIdStr = peer.channel_id?.toString();
@@ -417,11 +388,12 @@ function transformDialogsToCloudFolders(dialogsResult: any): CloudFolder[] {
         return null;
     }
 
+    // Basic structure, media sorting will be a more complex task for later
     return {
       id: `chat-${chatId}`,
       name: chatTitle,
       isChatFolder: true,
-      files: [],
+      files: [], // Will be populated by fetching messages & media
       folders: [
         { id: `chat-${chatId}-images`, name: "Images", files: [], folders: [] },
         { id: `chat-${chatId}-videos`, name: "Videos", files: [], folders: [] },
@@ -435,50 +407,43 @@ function transformDialogsToCloudFolders(dialogsResult: any): CloudFolder[] {
 
 
 export async function signOut(): Promise<void> {
-  const client = getClient();
   try {
-    const result = await client.call('auth.logOut');
+    const result = await api.call('auth.logOut');
     console.log('Signed out successfully from Telegram server:', result);
   } catch (error: any) {
     console.error('Error signing out from Telegram server:', error);
+    // Even if server logout fails, clear local session
   } finally {
     userSession = {};
-    // mtprotoClient = null; // Consider resetting client if full re-initialization is desired on next getClient()
-    if (typeof window !== 'undefined' && window.localStorage) {
-        // mtproto-core browser env should handle its own localStorage cleanup on logout or errors.
-        // Manually clearing specific keys is risky.
-        console.log('Local userSession object cleared.');
-    }
+    // Note: mtproto-core (browser env) handles its own localStorage.
+    // If specific app-level localStorage needs clearing, do it here.
+    console.log('Local userSession object cleared.');
   }
 }
 
 export async function isUserConnected(): Promise<boolean> {
   if (userSession.user) {
-    const client = getClient();
     try {
-        await client.call('users.getUsers', {id: [{_: 'inputUserSelf'}]});
+        // A lightweight call to check session validity
+        await api.call('users.getUsers', {id: [{_: 'inputUserSelf'}]});
         console.log("User session is active (checked with users.getUsers).");
         return true;
     } catch (error: any) {
-        if (['AUTH_KEY_UNREGISTERED', 'USER_DEACTIVATED', 'SESSION_REVOKED', 'SESSION_EXPIRED', 'API_ID_INVALID', 'API_KEY_INVALID', 'AUTH_RESTART'].includes(error.error_message)) {
+        // Check for specific auth-related error messages
+        if (error.error_message && ['AUTH_KEY_UNREGISTERED', 'USER_DEACTIVATED', 'SESSION_REVOKED', 'SESSION_EXPIRED', 'API_ID_INVALID', 'API_KEY_INVALID', 'AUTH_RESTART'].includes(error.error_message)) {
             console.warn("User session no longer valid or API keys incorrect:", error.error_message, "Logging out locally.");
-            await signOut();
+            await signOut(); // Perform local and server logout
             return false;
         }
-        console.warn("API call failed during connected check, but might not be an auth error. Assuming connected if user object exists.", error.error_message);
+        console.warn("API call failed during connected check, but might not be an auth error. Assuming connected as user object exists.", error.error_message);
         return true; // Or false, depending on desired strictness
     }
   }
   return false;
 }
 
-console.log('Telegram service (telegramService.ts) loaded in browser environment.');
+console.log('Telegram service (telegramService.ts) loaded with API class wrapper.');
 if (API_ID === undefined || !API_HASH) {
   console.error("CRITICAL: Telegram API_ID or API_HASH is not configured correctly in .env.local. Service will not function. Ensure NEXT_PUBLIC_TELEGRAM_API_ID and NEXT_PUBLIC_TELEGRAM_API_HASH are set and the dev server was restarted.");
 }
-
-// For debugging:
-// if (typeof window !== 'undefined') {
-//   (window as any).getTelegramUserSession = () => userSession;
-//   (window as any).getTelegramMtprotoClient = () => mtprotoClient;
-// }
+    
