@@ -1,6 +1,7 @@
 
 "use client";
 
+import React, { forwardRef, type MouseEvent } from "react";
 import type { CloudFile } from "@/types";
 import { FileText, Image as ImageIcon, Video, FileAudio, FileQuestion, Download, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -12,7 +13,7 @@ import { cn } from "@/lib/utils";
 interface ContentFileItemProps {
   file: CloudFile;
   style?: React.CSSProperties;
-  ref?: React.Ref<HTMLDivElement>; // Added to support ref forwarding for IntersectionObserver
+  // ref is implicitly part of ForwardRefExoticComponent
 }
 
 const FileTypeIcon = ({ type, name, dataAiHint }: { type: CloudFile['type'], name: string, dataAiHint?: string }) => {
@@ -34,8 +35,8 @@ const FileTypeIcon = ({ type, name, dataAiHint }: { type: CloudFile['type'], nam
   }
 };
 
-export const ContentFileItem = React.forwardRef<HTMLDivElement, ContentFileItemProps>(({ file, style }, ref) => {
-  const handleDownload = (e: React.MouseEvent) => {
+export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(({ file, style }, ref) => {
+  const handleDownload = (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     console.log("Download requested for:", file.name, file.url);
     if (!file.url) {
