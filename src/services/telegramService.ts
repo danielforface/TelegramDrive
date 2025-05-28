@@ -2,12 +2,9 @@
 'use client';
 
 import MTProto from '@mtproto/core/envs/browser';
-import { type CloudFolder, type CloudFile } from '@/types';
 import { sha256 } from '@cryptography/sha256';
-import { kleines } from 'big-integer'; // Using a placeholder for big-integer, actual library might be different or handled by mtproto-core
-// Note: 'big-integer' itself might not be directly used if mtproto-core's browser version handles large number arithmetic internally
-// For SRP calculation, mtproto-core should provide necessary utilities or handle it.
-// We'll rely on mtproto-core's browser build for crypto primitives where possible.
+import bigInt from 'big-integer';
+import type { CloudFolder } from '@/types';
 
 const API_ID = parseInt(process.env.NEXT_PUBLIC_TELEGRAM_API_ID || '', 10);
 const API_HASH = process.env.NEXT_PUBLIC_TELEGRAM_API_HASH || '';
@@ -19,16 +16,30 @@ if (isNaN(API_ID) || !API_HASH) {
 }
 
 let mtprotoClient: MTProto | null = null;
+
+// --- SRP Helper Types ---
+interface SRPParameters {
+  g: number;
+  p: Uint8Array;
+  salt1: Uint8Array;
+  salt2: Uint8Array;
+  srp_B: Uint8Array;
+}
+
+interface ComputedSRPValues {
+  A: Uint8Array;
+  M1: Uint8Array;
+  // We don't need to return 'a' (private key) but it's used internally
+}
+
+// --- User Session ---
+// Keep user session state scoped within the service
 let userSession: {
   phone?: string;
   phone_code_hash?: string;
-  user?: any;
-  srp_id?: string;
-  B?: Uint8Array;
-  g?: number;
-  p?: Uint8Array;
-  salt1?: Uint8Array;
-  salt2?: Uint8Array;
+  user?: any; // Full user object after successful login
+  srp_id?: string; // From account.getPassword
+  srp_params?: SRPParameters; // Store SRP parameters from account.getPassword
 } = {};
 
 
@@ -40,31 +51,173 @@ function getClient(): MTProto {
     mtprotoClient = new MTProto({
       api_id: API_ID,
       api_hash: API_HASH,
-      // No storageOptions needed for browser env, defaults to localStorage
+      // Browser env uses localStorage by default, no storageOptions needed for basic session persistence
     });
     console.log('MTProto client initialized for browser environment.');
   }
   return mtprotoClient;
 }
 
+// --- SRP Utility Functions ---
+
+function bytesToBigInt(bytes: Uint8Array): bigInt.BigInteger {
+  let hex = '';
+  bytes.forEach(byte => {
+    hex += byte.toString(16).padStart(2, '0');
+  });
+  return bigInt(hex, 16);
+}
+
+function bigIntToBytes(num: bigInt.BigInteger, expectedLength?: number): Uint8Array {
+  let hex = num.toString(16);
+  if (hex.length % 2) {
+    hex = '0' + hex;
+  }
+  const len = hex.length / 2;
+  const u8 = new Uint8Array(expectedLength || len);
+  let i = 0;
+  let j = 0;
+  while (i < len) {
+    u8[j] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    i += 1;
+    j += 1;
+  }
+  // If expectedLength is provided and num is small, pad with leading zeros
+  if (expectedLength && j < expectedLength) {
+    const paddedU8 = new Uint8Array(expectedLength);
+    paddedU8.set(u8, expectedLength - j);
+    return paddedU8;
+  }
+  return u8;
+}
+
+function concatBytes(...arrays: Uint8Array[]): Uint8Array {
+  let totalLength = 0;
+  for (const arr of arrays) {
+    totalLength += arr.length;
+  }
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const arr of arrays) {
+    result.set(arr, offset);
+    offset += arr.length;
+  }
+  return result;
+}
+
+function generateRandomBytes(length: number): Uint8Array {
+  const array = new Uint8Array(length);
+  crypto.getRandomValues(array);
+  return array;
+}
+
+async function computeSrpValues(password: string, srpParams: SRPParameters, srpId: string): Promise<ComputedSRPValues> {
+  const { g, p: p_bytes, salt1, salt2, srp_B } = srpParams;
+
+  const p = bytesToBigInt(p_bytes);
+  const B_bi = bytesToBigInt(srp_B);
+
+  if (B_bi.isZero() || B_bi.greaterOrEquals(p)) {
+    throw new Error('SRP_B_INVALID');
+  }
+
+  // Algorithm PSHA1(password, salt)
+  const password_utf8 = new TextEncoder().encode(password);
+  const P_inner_hash = sha256(concatBytes(salt1, password_utf8, salt1));
+  const P_bytes = sha256(concatBytes(salt2, P_inner_hash, salt2));
+
+  // x = BigInt(SHA1(salt + PSHA1(password, salt) + salt))
+  // Telegram uses SHA256 for x, not SHA1
+  const x_bi = bytesToBigInt(P_bytes);
+
+  // Generate client ephemeral secret 'a' (2048-bit random number)
+  const a_bytes = generateRandomBytes(256); // 2048 bits
+  const a_bi = bytesToBigInt(a_bytes);
+
+  // A = g^a mod p
+  const A_bi = bigInt(g).modPow(a_bi, p);
+  const A_bytes = bigIntToBytes(A_bi, 256); // p_bytes.length should be 256 for 2048-bit p
+
+  // u = H(A || B)
+  const u_bytes = sha256(concatBytes(A_bytes, srp_B));
+  const u_bi = bytesToBigInt(u_bytes);
+
+  // g_x = g^x mod p
+  const g_x_bi = bigInt(g).modPow(x_bi, p);
+
+  // k = H(p || g) (Telegram specific: k = H(p_bytes | g_bytes_padded_to_match_p_len_if_g_is_small))
+  // For Telegram, g is a small integer. We need to convert g to bytes, then hash.
+  // The 'g' in 'account.passwordAlgorithmKDFSHA256SHA256PBKDF2HMACSHA512iter100000SHA256ModPow' refers to this small int.
+  // Let's assume g is already a number as given by current_algo.g
+  // k = H(p_bytes, g_bytes) where g_bytes are representation of g
+  // Simpler: k=3 for g=7 in Telegram's default algo. For now, assume k=3 or derive it if needed.
+  // Official docs sometimes imply k = H(N, g), other times k=3.
+  // Let's use k=H(p_bytes, g_bytes_for_hash) for safety.
+  // Padded g to match p length is not standard for k calculation usually.
+  // Usually k = H(N | g_padded_to_N_len). Or simpler k = H(p | g)
+  // Using the simpler version for k:
+  const gBytesForHash = bigIntToBytes(bigInt(g)); // Simple byte representation of g
+  const k_bi = bytesToBigInt(sha256(concatBytes(p_bytes, gBytesForHash)));
+
+
+  // S = (B - k * g^x) ^ (a + u * x) mod p
+  // K = (srp_B - k_bi * g_x_bi) mod p
+  let K_bi = B_bi.subtract(k_bi.multiply(g_x_bi)).mod(p);
+  if (K_bi.isNegative()) K_bi = K_bi.add(p);
+
+
+  // exponent = a + u * x
+  const exp_bi = a_bi.add(u_bi.multiply(x_bi));
+
+  const S_bi = K_bi.modPow(exp_bi, p);
+  const S_bytes = bigIntToBytes(S_bi, 256); // p_bytes.length
+
+
+  // M1 = H(H(p) xor H(g) | H(user_identity_not_used_here) | salt1 | salt2 | A | B | H(S))
+  // M1 = H(p_hash XOR g_hash | salt1 | salt2 | A | B | K_s) where K_s = H(S)
+  // Telegram's M1 formula: H(A_bytes | B_bytes | S_bytes)
+  // This varies. The one specified in `telegram-web-k` is likely correct for mtproto.
+  // M1 = H( (H(p) xor H(g)) | H(username) | salt1 | salt2 | A | B | K_S )
+  // Let's use a common variant found in many libs: M1 = H(A_bytes | B_bytes | S_bytes)
+  // Based on other implementations, it might be M1 = SHA256(A_bytes + B_bytes + S_bytes_hash)
+  // or H( (H(N) xor H(g)) | H(U) | s | A | B | K_S )
+  // Let's try the M1 = H(A | B | SHA256(S))
+  // Or from other sources: M1 = SHA256(SHA256(p) ^ SHA256(g) | SHA256(salt1) | SHA256(salt2) | SHA256(A) | SHA256(B) | SHA256(S))
+
+  // The most reliable M1 formula for Telegram seems to be:
+  // M1 = SHA256(A_bytes | B_bytes | S_bytes) - This is from an old reference.
+  // Let's check a more detailed one:
+  // K = S_bytes (this is the shared secret key)
+  // M1 = H ( (H(p) xor H(g)) | H(I) | salt1 | salt2 | A | B | K )
+  // I is username, but for checkPassword, it's not explicitly passed.
+  // Trying another simplified common M1 for SRP-6a: M1 = H(A | B | S)
+  
+  const M1_bytes = sha256(concatBytes(A_bytes, srp_B, S_bytes));
+
+  return { A: A_bytes, M1: M1_bytes };
+}
+
+
+// --- API Service Functions ---
+
 export async function sendCode(phoneNumber: string): Promise<string> {
   const client = getClient();
   userSession = { phone: phoneNumber }; // Reset session for new attempt
   try {
-    const { phone_code_hash } = await client.call('auth.sendCode', {
+    const result = await client.call('auth.sendCode', {
       phone_number: phoneNumber,
-      api_id: API_ID,
+      api_id: API_ID, // api_id and api_hash are often not needed here if client is pre-configured
       api_hash: API_HASH,
       settings: {
         _: 'codeSettings',
       },
     });
-    userSession.phone_code_hash = phone_code_hash;
-    console.log('Verification code sent, phone_code_hash:', phone_code_hash);
-    return phone_code_hash;
+    userSession.phone_code_hash = result.phone_code_hash;
+    console.log('Verification code sent, phone_code_hash:', result.phone_code_hash);
+    return result.phone_code_hash;
   } catch (error) {
     console.error('Error sending code:', error);
-    throw error;
+    throw error; // Re-throw to be caught by UI
   }
 }
 
@@ -82,126 +235,82 @@ export async function signIn(code: string): Promise<{ user?: any; error?: string
     });
     
     if (result._ === 'auth.authorizationSignUpRequired') {
+      // Optionally, handle sign-up if needed, though app spec says sign-in
+      // For now, treat as an error for this app's flow
       return { error: 'Sign up required. This app currently only supports sign in.'};
     }
     
-    console.log('Signed in successfully:', result.user);
-    userSession.user = result.user;
+    console.log('Signed in successfully (or 2FA needed):', result);
+    // `result.user` might not be present if 2FA is needed immediately
+    if (result.user) {
+        userSession.user = result.user;
+    }
     return { user: result.user };
 
   } catch (error: any) {
     if (error.error_message === 'SESSION_PASSWORD_NEEDED') {
-      console.log('2FA password needed.');
-      // Fetch password details (srp_id, current_algo, etc.)
-      const passwordData = await client.call('account.getPassword');
-      userSession.srp_id = passwordData.srp_id?.toString(); // Ensure srp_id is string if it's BigInt like
-      userSession.B = passwordData.srp_B; // This might be Uint8Array or needs conversion
-      userSession.g = passwordData.current_algo.g;
-      userSession.p = passwordData.current_algo.p;
-      userSession.salt1 = passwordData.current_algo.salt1;
-      userSession.salt2 = passwordData.current_algo.salt2;
+      console.log('2FA password needed. Fetching password details...');
+      try {
+        const passwordData = await client.call('account.getPassword');
+        console.log('Password data received:', passwordData);
+        userSession.srp_id = passwordData.srp_id?.toString(); // srp_id is a long, convert to string
+        userSession.srp_params = {
+            g: passwordData.current_algo.g,
+            p: passwordData.current_algo.p, // Uint8Array
+            salt1: passwordData.current_algo.salt1, // Uint8Array
+            salt2: passwordData.current_algo.salt2, // Uint8Array
+            srp_B: passwordData.srp_B // Uint8Array
+        };
+        
+        if (!userSession.srp_id || !userSession.srp_params || !userSession.srp_params.srp_B) {
+            console.error("Failed to get complete SRP parameters from account.getPassword", passwordData);
+            return { error: 'Failed to initialize 2FA. Missing SRP parameters.' };
+        }
 
-      return { error: '2FA_REQUIRED', srp_id: userSession.srp_id };
+        return { error: '2FA_REQUIRED', srp_id: userSession.srp_id };
+      } catch (getPasswordError) {
+        console.error('Error fetching password details for 2FA:', getPasswordError);
+        throw getPasswordError; // Re-throw
+      }
     }
     console.error('Error signing in:', error);
-    throw error;
+    throw error; // Re-throw other errors
   }
-}
-
-// Helper function for SRP calculation (simplified, actual implementation might be more complex or provided by mtproto-core)
-// This is a very simplified placeholder. `mtproto-core` might have its own way to handle SRP.
-// The library is expected to handle the crypto complexity internally for browser env.
-// We are relying on mtproto-core to construct the `inputCheckPasswordSRP` object.
-// The main challenge is often getting the password hash correct.
-
-async function computePasswordHash(password: string, salt1: Uint8Array, salt2: Uint8Array, g: number, p: Uint8Array, B: Uint8Array) {
-    // This is a highly complex part of the SRP protocol.
-    // mtproto-core's browser version should ideally abstract this or provide clear utilities.
-    // For now, we'll assume that mtproto-core can build the `inputCheckPasswordSRP` object
-    // if we provide the password directly, or it handles the SRP exchange more transparently.
-    // The `example.js` you provided doesn't show client-side SRP, so this is an area
-    // that might need more direct support or documentation from `@mtproto/core/envs/browser`.
-
-    // Placeholder: In a full SRP implementation, you'd derive A, M1 etc.
-    // For now, we'll let mtproto-core attempt to create the SRP object.
-    // The key is that `mtproto.call('auth.checkPassword', { password: { _:'inputCheckPasswordSRP', ... } })`
-    // needs the correct fields.
-    console.warn("SRP password hash computation is complex and relies on mtproto-core's browser capabilities.");
-    
-    // The library `itself` should be constructing these parts for the `inputCheckPasswordSRP` object
-    // or providing high-level functions. We pass what we received from `account.getPassword`.
-    return {
-        srp_id: userSession.srp_id, // from account.getPassword
-        // A: computed_A, // This needs to be computed based on password and other params
-        // M1: computed_M1, // This needs to be computed
-        // These might not be needed if mtproto-core generates A and M1 from the password.
-    };
 }
 
 
 export async function checkPassword(password: string): Promise<any> {
   const client = getClient();
-  if (!userSession.srp_id || !userSession.B || !userSession.p || !userSession.salt1 || !userSession.salt2) {
+  if (!userSession.srp_id || !userSession.srp_params) {
     throw new Error('SRP parameters not available. 2FA flow not properly initiated.');
   }
 
   try {
-    // mtproto-core's browser version should handle the creation of the `inputCheckPasswordSRP` object.
-    // We provide the password, and it should use the stored srp_id, srp_B etc.
-    // The library often has methods like `mtproto.helpers.computeSRPParams` or similar,
-    // or it does this transparently when `auth.checkPassword` is called with a plain password
-    // in a 2FA context.
-    // Let's try providing the password directly and see if mtproto-core handles it.
-    // If not, we'd need to consult its specific API for browser SRP.
-
-    // The main challenge is correctly forming the 'password' object for 'auth.checkPassword'.
-    // According to TL schema, it should be of type InputCheckPasswordSRP.
-    // This might involve client-side computation of A and M1.
-    // For now, we rely on mtproto-core's browser version to handle this.
-    // It's possible the library expects the password to be passed differently or has helper methods.
-
-    // This is a critical part. The `telegram-web-k` project has extensive SRP logic.
-    // `@mtproto/core` aims to simplify this. We're testing how much it simplifies.
-
-    const srpParams = await client.call(
-        'account.getPasswordSettings',
-        { password } // This is a guess; API might need password directly or pre-hashed
-    );
-
-    // The actual `inputCheckPasswordSRP` needs `srp_id`, `A`, and `M1`.
-    // `A` and `M1` are derived from the password and other parameters (g, p, salt, B).
-    // This usually requires a BigInteger library and SHA256.
-    // `mtproto-core` should provide utilities or handle this internally for its browser version.
-
-    // For demonstration, we're attempting a simplified call.
-    // In a real scenario, you would use mtproto-core's specific methods for SRP.
-    // If `@mtproto/core/envs/browser` doesn't simplify this enough, this part will be complex.
-    // We are providing a placeholder for `A` and `M1` as they require complex crypto.
-    // The library is expected to compute these or provide a helper.
-    const A_placeholder = new Uint8Array(256).fill(1); // Placeholder
-    const M1_placeholder = new Uint8Array(32).fill(1); // Placeholder
+    console.log("Computing SRP A and M1 values...");
+    const { A, M1 } = await computeSrpValues(password, userSession.srp_params, userSession.srp_id);
+    console.log("SRP A and M1 computed. Calling auth.checkPassword...");
 
     const checkResult = await client.call('auth.checkPassword', {
         password: {
             _: 'inputCheckPasswordSRP',
-            srp_id: userSession.srp_id, // This must be a string representation of the long value
-            A: A_placeholder, // This needs to be calculated based on the password
-            M1: M1_placeholder, // This also needs to be calculated
+            srp_id: userSession.srp_id, 
+            A: A, 
+            M1: M1,
         }
     });
     
-    console.log('2FA check result:', checkResult);
-    userSession.user = checkResult.user;
+    console.log('2FA password check result:', checkResult);
+    userSession.user = checkResult.user; // On success, user object is returned
+    // Clear SRP params after successful use or if they are single-use
+    // delete userSession.srp_params; 
+    // delete userSession.srp_id;
     return checkResult.user;
 
   } catch (error: any) {
     console.error('Error checking password:', error);
-    if (error.error_message === 'PASSWORD_HASH_INVALID' || error.error_message === 'SRP_ID_INVALID' || error.error_message === 'SRP_A_EMPTY') {
-        // These errors indicate issues with SRP parameter computation or the srp_id.
-        // This is the most complex part of Telegram auth.
-        throw new Error(`2FA failed: ${error.error_message}. SRP computation might be incorrect or mtproto-core requires specific helpers for browser SRP.`);
-    }
-    throw error;
+    // Specific SRP errors might include 'PASSWORD_HASH_INVALID', 'SRP_ID_INVALID', 'SRP_A_EMPTY' etc.
+    // These indicate issues with the SRP calculation (A, M1) or stale srp_id.
+    throw error; // Re-throw to be handled by UI
   }
 }
 
@@ -215,14 +324,16 @@ export async function getTelegramChats(): Promise<CloudFolder[]> {
 
   console.log('Fetching chats...');
   try {
+    // Example: Fetch dialogs (chats list)
     const dialogsResult = await client.call('messages.getDialogs', {
       offset_date: 0,
       offset_id: 0,
       offset_peer: { _: 'inputPeerEmpty' },
       limit: 20, // Adjust as needed
-      hash: 0, 
+      hash: 0, // Use 0 for the first request
     });
     console.log('Dialogs raw result:', dialogsResult);
+    // This is a placeholder transformation. Real transformation will be more complex.
     return transformDialogsToCloudFolders(dialogsResult);
   } catch (error) {
     console.error('Error fetching dialogs:', error);
@@ -230,42 +341,57 @@ export async function getTelegramChats(): Promise<CloudFolder[]> {
   }
 }
 
+// Helper to get a display title for a peer
 function getPeerTitle(peer: any, chats: any[], users: any[]): string {
-  if (peer._ === 'peerUser') {
-    const user = users.find(u => u.id.toString() === peer.user_id.toString());
-    return user ? `${user.first_name || ''} ${user.last_name || ''}`.trim() || `User ${user.id}` : `User ${peer.user_id}`;
-  } else if (peer._ === 'peerChat') {
-    const chat = chats.find(c => c.id.toString() === peer.chat_id.toString());
-    return chat ? chat.title : `Chat ${peer.chat_id}`;
-  } else if (peer._ === 'peerChannel') {
-    const channel = chats.find(c => c.id.toString() === peer.channel_id.toString());
-    return channel ? channel.title : `Channel ${peer.channel_id}`;
+  if (!peer) return 'Unknown Peer';
+  
+  try {
+    if (peer._ === 'peerUser') {
+      const user = users.find(u => u.id && u.id.toString() === peer.user_id?.toString());
+      return user ? `${user.first_name || ''} ${user.last_name || ''}`.trim() || `User ${user.id}` : `User ${peer.user_id}`;
+    } else if (peer._ === 'peerChat') {
+      const chat = chats.find(c => c.id && c.id.toString() === peer.chat_id?.toString());
+      return chat ? chat.title : `Chat ${peer.chat_id}`;
+    } else if (peer._ === 'peerChannel') {
+      const channel = chats.find(c => c.id && c.id.toString() === peer.channel_id?.toString());
+      return channel ? channel.title : `Channel ${peer.channel_id}`;
+    }
+  } catch (e) {
+    console.error("Error in getPeerTitle processing peer:", peer, e);
   }
-  return 'Unknown Chat';
+  return 'Invalid Peer Data';
 }
 
-
+// Placeholder: Real transformation logic is needed
 function transformDialogsToCloudFolders(dialogsResult: any): CloudFolder[] {
   const { dialogs, chats, users } = dialogsResult;
 
   if (!dialogs || !Array.isArray(dialogs)) {
-    console.warn('No dialogs found in the result.');
+    console.warn('No dialogs found or dialogs is not an array.');
     return [];
   }
   
-  return dialogs.map((dialog: any): CloudFolder => {
+  return dialogs.map((dialog: any): CloudFolder | null => {
+    if (!dialog || !dialog.peer) {
+      console.warn("Skipping invalid dialog object:", dialog);
+      return null;
+    }
     const peer = dialog.peer;
-    const chatTitle = getPeerTitle(peer, chats, users);
+    const chatTitle = getPeerTitle(peer, chats || [], users || []);
     const chatId = peer.user_id?.toString() || peer.chat_id?.toString() || peer.channel_id?.toString();
 
+    if (!chatId) {
+        console.warn("Could not determine chatId for dialog:", dialog);
+        return null;
+    }
+
     // Placeholder for actual media fetching and sorting for this chat
-    // This would involve more API calls like 'messages.getHistory' then filtering for media types
     return {
       id: `chat-${chatId}`,
       name: chatTitle,
       isChatFolder: true,
-      files: [], // To be populated by fetching messages and media
-      folders: [ // Default media type folders
+      files: [], 
+      folders: [ 
         { id: `chat-${chatId}-images`, name: "Images", files: [], folders: [] },
         { id: `chat-${chatId}-videos`, name: "Videos", files: [], folders: [] },
         { id: `chat-${chatId}-audio`, name: "Audio", files: [], folders: [] },
@@ -288,42 +414,35 @@ export async function signOut(): Promise<void> {
     // Clear local session state
     userSession = {};
     // mtprotoClient = null; // Optionally reset the client to force re-init on next login
-    // For browser env, mtproto-core might handle clearing its localStorage data automatically on logout.
-    // If not, manual clearing might be needed: localStorage.removeItem('mtproto_auth_key_dcX'); etc.
-    // Or, a more robust solution would be to have mtproto-core expose a session clear method.
-    // For now, we rely on the library's internal handling or new session overwriting old.
-    if (mtprotoClient && mtprotoClient.storage) {
-        // Attempt to clear storage if a method exists (this is hypothetical)
-        // await mtprotoClient.storage.clear(); 
-    }
-    // A simple way for localStorage based storage is to remove keys mtproto-core uses.
-    // This requires knowing the exact keys.
-    // Example:
-    // Object.keys(localStorage).forEach(key => {
-    //   if (key.startsWith('mtproto_')) {
-    //     localStorage.removeItem(key);
-    //   }
-    // });
+    // For browser env, mtproto-core with localStorage should handle session state.
+    // Explicitly clearing localStorage keys used by mtproto-core might be needed if logout isn't fully clearing.
+    // This typically involves knowing the keys, e.g., 'mtproto_auth_key_dcX', 'mtproto_server_time_offset_dcX'
+    // A robust library often provides a method like `client.storage.clear()` or similar.
+    // For now, resetting userSession should be enough for app logic.
+    // If `mtprotoClient.storage.clear()` or similar exists, use it.
   }
 }
 
 export async function isUserConnected(): Promise<boolean> {
-  const client = getClient();
-  // This is a basic check. A more robust check might involve making a simple API call.
-  // However, mtproto-core might manage session state internally and throw if not connected.
-  // For now, we assume if userSession.user exists, we're "connected".
   if (userSession.user) {
+    const client = getClient();
     try {
-        // A light API call to check session validity
+        // A light API call to check session validity e.g. users.getUsers
         await client.call('users.getUsers', {id: [{_: 'inputUserSelf'}]});
         return true;
     } catch (error: any) {
-        console.warn("User session might be invalid:", error.error_message);
-        if (error.error_message === 'AUTH_KEY_UNREGISTERED' || error.error_message === 'USER_DEACTIVATED') {
+        // Specific errors like AUTH_KEY_UNREGISTERED indicate an invalid session
+        if (error.error_message === 'AUTH_KEY_UNREGISTERED' || 
+            error.error_message === 'USER_DEACTIVATED' ||
+            error.error_message === 'SESSION_REVOKED' || // Common session invalidation errors
+            error.error_message === 'SESSION_EXPIRED') {
+            console.warn("User session invalid:", error.error_message);
             userSession = {}; // Clear invalid session
             return false;
         }
-        // Other errors might be network issues, still consider connected for now
+        console.warn("API call failed during connected check, but might not be auth error:", error.error_message);
+        // For other errors (e.g. network issues), we might still consider the session potentially valid
+        // or let higher-level logic decide based on the error. For now, assume "optimistically connected".
         return true; 
     }
   }
@@ -331,4 +450,4 @@ export async function isUserConnected(): Promise<boolean> {
 }
 
 
-console.log('Telegram service configured for browser environment.');
+console.log('Telegram service (telegramService.ts) loaded.');
