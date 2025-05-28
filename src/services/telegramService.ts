@@ -21,13 +21,13 @@ if (API_ID_STRING) {
   }
 } else {
    console.warn(
-    'NEXT_PUBLIC_TELEGRAM_API_ID is not set in environment variables. Real connection will fail.'
+    'NEXT_PUBLIC_TELEGRAM_API_ID is not set in environment variables. Real connection will fail. Please ensure it is set in your .env.local file and you have restarted your development server.'
   );
 }
 
 if (!API_HASH) {
   console.warn(
-    'NEXT_PUBLIC_TELEGRAM_API_HASH is not set in environment variables. Real connection will fail.'
+    'NEXT_PUBLIC_TELEGRAM_API_HASH is not set in environment variables. Real connection will fail. Please ensure it is set in your .env.local file and you have restarted your development server.'
   );
 }
 
@@ -40,15 +40,12 @@ interface SRPParameters {
   p: Uint8Array;
   salt1: Uint8Array;
   salt2: Uint8Array;
-  srp_B: Uint8Array; // Server's public ephemeral
-  // The following are part of current_algo in account.Password, but might not be needed if srp_id is enough.
-  // They are part of the "new_algo" structure within current_algo.
-  // For current_algo (version 6a/7), these are directly in current_algo.
+  srp_B: Uint8Array; 
 }
 
 interface ComputedSRPValues {
-  A: Uint8Array; // Client's public ephemeral (g^a mod p)
-  M1: Uint8Array; // Client's proof of password
+  A: Uint8Array; 
+  M1: Uint8Array; 
 }
 
 // --- User Session ---
@@ -56,9 +53,8 @@ let userSession: {
   phone?: string;
   phone_code_hash?: string;
   user?: any;
-  srp_id?: string; // Stored as string because it's a 'long' from API
+  srp_id?: string; 
   srp_params?: SRPParameters;
-  // We might not need to store 'a' (client private ephemeral) globally if computeSrpValues handles it.
 } = {};
 
 
@@ -71,7 +67,6 @@ function getClient(): MTProto {
     mtprotoClient = new MTProto({
       api_id: API_ID,
       api_hash: API_HASH,
-      // Browser env uses localStorage by default, no storageOptions needed
     });
     console.log('MTProto client initialized for browser environment.');
   }
@@ -80,7 +75,6 @@ function getClient(): MTProto {
 
 // --- SRP Utility Functions ---
 
-// Helper to convert Uint8Array to BigInteger
 function bytesToBigInt(bytes: Uint8Array): bigInt.BigInteger {
   let hex = '';
   bytes.forEach(byte => {
@@ -89,8 +83,6 @@ function bytesToBigInt(bytes: Uint8Array): bigInt.BigInteger {
   return bigInt(hex, 16);
 }
 
-// Helper to convert BigInteger to Uint8Array
-// Ensures the byte array has a minimum length (e.g., 256 bytes for p, A, B, S)
 function bigIntToBytes(num: bigInt.BigInteger, expectedLength: number = 0): Uint8Array {
   let hex = num.toString(16);
   if (hex.length % 2) {
@@ -98,11 +90,11 @@ function bigIntToBytes(num: bigInt.BigInteger, expectedLength: number = 0): Uint
   }
 
   const byteLength = Math.max(expectedLength, hex.length / 2);
-  const u8 = new Uint8Array(byteLength); // Ensure it's at least expectedLength
+  const u8 = new Uint8Array(byteLength); 
 
   const hexByteLength = hex.length / 2;
   let startIdx = byteLength - hexByteLength;
-  if (startIdx < 0) startIdx = 0; // Should not happen if byteLength is correct
+  if (startIdx < 0) startIdx = 0; 
 
   for (let i = 0, j = 0; i < hexByteLength; i++, j++) {
      u8[startIdx + j] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
@@ -111,7 +103,6 @@ function bigIntToBytes(num: bigInt.BigInteger, expectedLength: number = 0): Uint
 }
 
 
-// Helper to concatenate Uint8Arrays
 function concatBytes(...arrays: Uint8Array[]): Uint8Array {
   let totalLength = 0;
   for (const arr of arrays) {
@@ -126,15 +117,12 @@ function concatBytes(...arrays: Uint8Array[]): Uint8Array {
   return result;
 }
 
-// Helper to generate random bytes
 function generateRandomBytes(length: number): Uint8Array {
   const array = new Uint8Array(length);
   crypto.getRandomValues(array);
   return array;
 }
 
-// Computes SRP values A and M1 based on password and server parameters
-// This is a complex cryptographic function and needs to be precise.
 async function computeSrpValues(password: string, srpParams: SRPParameters, srpIdString: string): Promise<ComputedSRPValues> {
   const { g, p: p_bytes, salt1, salt2, srp_B } = srpParams;
 
@@ -144,69 +132,42 @@ async function computeSrpValues(password: string, srpParams: SRPParameters, srpI
   const p_bi = bytesToBigInt(p_bytes);
   const B_bi = bytesToBigInt(srp_B);
 
-  // Validation: 0 < B < p
   if (B_bi.isZero() || B_bi.geq(p_bi)) {
     console.error("SRP_B_INVALID: B is 0 or B >= p", { B_bi: B_bi.toString(), p_bi: p_bi.toString() });
     throw new Error('SRP_B_INVALID');
   }
 
   const g_bi = bigInt(g);
-
-  // Algorithm PSHA(password, salt1, salt2) from TL Schema for inputClientPassword (for current_algo)
-  // P = H(salt2 | H(salt1 | password | salt1) | salt2)
   const password_utf8 = new TextEncoder().encode(password);
+  
   const inner_hash_buf = await crypto.subtle.digest('SHA-256', concatBytes(salt1, password_utf8, salt1));
   const P_bytes_buf = await crypto.subtle.digest('SHA-256', concatBytes(salt2, new Uint8Array(inner_hash_buf), salt2));
-  const P_bytes = new Uint8Array(P_bytes_buf); // This is `x_H` in some notations
+  const P_bytes = new Uint8Array(P_bytes_buf); 
 
-  const x_bi = bytesToBigInt(P_bytes); // This is `x`
+  const x_bi = bytesToBigInt(P_bytes); 
 
-  const a_bytes = generateRandomBytes(256); // Client's private ephemeral value `a`
+  const a_bytes = generateRandomBytes(256); 
   const a_bi = bytesToBigInt(a_bytes);
 
-  const A_bi = g_bi.modPow(a_bi, p_bi); // A = g^a mod p
-  const A_bytes = bigIntToBytes(A_bi, 256); // Ensure A is 256 bytes
+  const A_bi = g_bi.modPow(a_bi, p_bi); 
+  const A_bytes = bigIntToBytes(A_bi, 256); 
 
-  // u = H(A | B)
-  // Ensure A_bytes and srp_B are padded to 256 bytes if necessary for hashing, or use their actual lengths.
-  // Telegram typically expects fixed-size byte arrays for these hashes in SRP.
-  // Let's assume A_bytes and srp_B are already correctly sized (e.g. 256 bytes from API/generation).
   const u_hash_buf = await crypto.subtle.digest('SHA-256', concatBytes(A_bytes, srp_B));
   const u_bi = bytesToBigInt(new Uint8Array(u_hash_buf));
 
-  // g_x = g^x mod p
   const g_x_bi = g_bi.modPow(x_bi, p_bi);
-
-  // k = H(p | g_bytes_for_hash) where g_bytes_for_hash is g represented as bytes.
-  // Telegram's specific way of deriving k can vary, but H(N, g) is common.
-  // The method for 'inputCheckPasswordSRP' with 'passwordSrp' algo:
-  // The server provides algo.g, algo.p.
-  // k = H(algo.p | H(algo.g)) - this form is not standard SRP; often k=3 or H(N,g)
-  // Let's use k = H(p_bytes | g_bytes_for_hash_padded_to_p_length) or simpler H(p | g) if g is small
-  // For Telegram's current_algo (SRP v7, based on passwordKdfAlgoSHA256SHA256PBKDF2HMACSHA512iter100000SHA256ModPow)
-  // k is derived based on the KDF, but for older algos it's simpler.
-  // Let's use a common interpretation: k = H(p | g_as_bytes)
-  // We need to be careful how g (an int) is converted to bytes for hashing.
-  // Let's try k = H(p_bytes | g_bytes_for_k_hash)
-  // g_bytes_for_k_hash: convert g to its byte representation.
-  // It must be a fixed-width representation if that's what the spec implies.
-  // Let's assume g_bytes is just the minimal byte representation of g.
-  const g_bytes_for_k_hash = bigIntToBytes(g_bi); // minimal representation
+  
+  const g_bytes_for_k_hash = bigIntToBytes(g_bi);
   const k_hash_buf = await crypto.subtle.digest('SHA-256', concatBytes(p_bytes, g_bytes_for_k_hash));
   const k_bi = bytesToBigInt(new Uint8Array(k_hash_buf));
-
-  // S = (B - k * g^x) ^ (a + u * x) mod p
+  
   let tmp_bi = B_bi.subtract(k_bi.multiply(g_x_bi)).mod(p_bi);
-  if (tmp_bi.isNegative()) tmp_bi = tmp_bi.add(p_bi); // Ensure positive before pow
+  if (tmp_bi.isNegative()) tmp_bi = tmp_bi.add(p_bi); 
 
   const exp_bi = a_bi.add(u_bi.multiply(x_bi));
   const S_bi = tmp_bi.modPow(exp_bi, p_bi);
-  const S_bytes = bigIntToBytes(S_bi, 256); // Ensure S is 256 bytes
+  const S_bytes = bigIntToBytes(S_bi, 256); 
 
-  // M1 = H(H(p) XOR H(g) | H(I) | s1 | s2 | A | B | K) where K is S
-  // For Telegram's `inputCheckPasswordSRP`, it's M1 = H(A | B | S_bytes_hash) or H(A | B | S)
-  // From example, `M1` is passed directly. It's usually `H(A_bytes | B_bytes | S_bytes)`
-  // Let's use: M1 = H(A_bytes | B_bytes | S_bytes)
   const M1_hash_buf = await crypto.subtle.digest('SHA-256', concatBytes(A_bytes, srp_B, S_bytes));
   const M1_bytes = new Uint8Array(M1_hash_buf);
 
@@ -218,23 +179,49 @@ async function computeSrpValues(password: string, srpParams: SRPParameters, srpI
 
 export async function sendCode(phoneNumber: string): Promise<string> {
   const client = getClient();
-  userSession = { phone: phoneNumber }; // Reset session for new attempt
-  console.log(`Sending code to ${phoneNumber} with API_ID: ${API_ID}`);
+  userSession = { phone: phoneNumber }; 
+  console.log(`Attempting to send code to ${phoneNumber} with API_ID: ${API_ID}`);
+  
+  const sendCodePayload = {
+    phone_number: phoneNumber,
+    api_id: API_ID!, 
+    api_hash: API_HASH!,
+    settings: {
+      _: 'codeSettings',
+    },
+  };
+
   try {
-    const result = await client.call('auth.sendCode', {
-      phone_number: phoneNumber,
-      api_id: API_ID, // Explicitly pass API_ID and API_HASH if client is not pre-configured or to be sure
-      api_hash: API_HASH,
-      settings: {
-        _: 'codeSettings',
-      },
-    });
+    const result = await client.call('auth.sendCode', sendCodePayload);
     if (!result.phone_code_hash) throw new Error("phone_code_hash not received from Telegram.");
     userSession.phone_code_hash = result.phone_code_hash;
     console.log('Verification code sent, phone_code_hash:', result.phone_code_hash);
     return result.phone_code_hash;
   } catch (error: any) {
-    console.error('Error sending code:', error);
+    console.error('Error sending code (initial attempt):', error);
+    if (error.error_message && error.error_message.startsWith('PHONE_MIGRATE_')) {
+      const migrateToDc = parseInt(error.error_message.split('_').pop() || '', 10);
+      if (!isNaN(migrateToDc)) {
+        console.log(`PHONE_MIGRATE_X error. Migrating to DC ${migrateToDc}...`);
+        try {
+          await client.setDefaultDc(migrateToDc);
+          console.log(`Successfully set default DC to ${migrateToDc}. Retrying sendCode...`);
+          // Retry sending the code
+          const result = await client.call('auth.sendCode', sendCodePayload);
+          if (!result.phone_code_hash) throw new Error("phone_code_hash not received from Telegram after DC migration.");
+          userSession.phone_code_hash = result.phone_code_hash;
+          console.log('Verification code sent after DC migration, phone_code_hash:', result.phone_code_hash);
+          return result.phone_code_hash;
+        } catch (retryError: any) {
+          console.error('Error sending code (after DC migration attempt):', retryError);
+          const message = retryError.error_message || (retryError.message || 'Failed to send code after DC migration.');
+          throw new Error(message);
+        }
+      } else {
+        console.error('Could not parse DC number from PHONE_MIGRATE_X error:', error.error_message);
+      }
+    }
+    // If not a PHONE_MIGRATE_X error, or if parsing DC failed, or if retry failed
     const message = error.error_message || (error.message || 'Failed to send code.');
     throw new Error(message);
   }
@@ -254,7 +241,6 @@ export async function signIn(code: string): Promise<{ user?: any, error?: string
     });
 
     if (result._ === 'auth.authorizationSignUpRequired') {
-      // For this app, we can treat sign-up as an error or unsupported path.
       throw new Error('Sign up required. This app currently only supports sign in for existing accounts.');
     }
 
@@ -285,8 +271,7 @@ export async function signIn(code: string): Promise<{ user?: any, error?: string
             throw new Error("Failed to initialize 2FA: SRP parameter 'srp_B' is missing or empty.");
         }
 
-
-        userSession.srp_id = passwordData.srp_id.toString(); // srp_id is a BigInt/long, convert to string
+        userSession.srp_id = passwordData.srp_id.toString(); 
         userSession.srp_params = {
             g: passwordData.current_algo.g,
             p: passwordData.current_algo.p,
@@ -304,21 +289,18 @@ export async function signIn(code: string): Promise<{ user?: any, error?: string
             srp_B_length: userSession.srp_params.srp_B.length,
         });
 
-        // Throw a custom error object or structure that page.tsx can check
-        const twoFactorError: any = new Error('2FA_REQUIRED'); // Standardize error message
-        twoFactorError.srp_id = userSession.srp_id; // Pass srp_id for context if needed by UI
+        const twoFactorError: any = new Error('2FA_REQUIRED'); 
+        twoFactorError.srp_id = userSession.srp_id; 
         throw twoFactorError;
 
       } catch (getPasswordError: any) {
         console.error('Error fetching password details for 2FA:', getPasswordError);
-        // Rethrow or handle: if getPasswordError is already the '2FA_REQUIRED' error, just rethrow
         if (getPasswordError.message === '2FA_REQUIRED' && getPasswordError.srp_id) throw getPasswordError;
 
         const message = getPasswordError.error_message || (getPasswordError.message || 'Failed to fetch 2FA details.');
         throw new Error(message);
       }
     }
-    // For other errors from auth.signIn
     const message = error.error_message || (error.message || 'Failed to sign in.');
     throw new Error(message);
   }
@@ -336,14 +318,11 @@ export async function checkPassword(password: string): Promise<any> {
     console.log("Computing SRP A and M1 values for checkPassword...");
     const { A, M1 } = await computeSrpValues(password, userSession.srp_params, userSession.srp_id);
     console.log("SRP A and M1 computed. Calling auth.checkPassword...");
-    console.log("  srp_id:", userSession.srp_id);
-    // console.log("  A (hex):", Buffer.from(A).toString('hex')); // For debugging if needed
-    // console.log("  M1 (hex):", Buffer.from(M1).toString('hex'));
-
+    
     const checkResult = await client.call('auth.checkPassword', {
         password: {
             _: 'inputCheckPasswordSRP',
-            srp_id: userSession.srp_id, // Ensure this is the string representation of the long
+            srp_id: userSession.srp_id, 
             A: A,
             M1: M1,
         }
@@ -353,15 +332,11 @@ export async function checkPassword(password: string): Promise<any> {
     if (checkResult.user) {
         userSession.user = checkResult.user;
     }
-    // Successfully checked password, clear SRP params?
-    // userSession.srp_id = undefined;
-    // userSession.srp_params = undefined;
     return checkResult.user;
 
   } catch (error: any) {
     console.error('Error checking password:', error);
     const message = error.error_message || (error.message || 'Failed to check 2FA password.');
-    // Specific error handling for common SRP issues
     if (message === 'PASSWORD_HASH_INVALID') {
         throw new Error('Invalid password. Please try again. (PASSWORD_HASH_INVALID)');
     }
@@ -377,21 +352,17 @@ export async function getTelegramChats(): Promise<CloudFolder[]> {
   const client = getClient();
   if (!userSession.user) {
     console.warn('User not signed in. Cannot fetch chats.');
-    // throw new Error('User not authenticated. Please sign in first.'); // Or return empty
     return [];
   }
 
   console.log('Fetching user dialogs (chats)...');
   try {
-    // messages.getDialogs is common for fetching chat list
     const dialogsResult = await client.call('messages.getDialogs', {
       offset_date: 0,
       offset_id: 0,
       offset_peer: { _: 'inputPeerEmpty' },
-      limit: 100, // Fetch a reasonable number of dialogs
-      hash: bigInt.zero, // Or 0 if number, use bigInt for safety with mtproto-core
-      // exclude_pinned: false, // Optional
-      // folder_id: 0, // Optional: for specific folders
+      limit: 100, 
+      hash: bigInt.zero, 
     });
     console.log('Dialogs raw result:', dialogsResult);
     return transformDialogsToCloudFolders(dialogsResult);
@@ -426,7 +397,6 @@ function getPeerTitle(peer: any, chats: any[], users: any[]): string {
     }
   } catch (e) {
     console.error("Error in getPeerTitle processing peer:", peer, e);
-    // Try to return something based on peer data if possible
     if(peer.user_id) return `User ${peer.user_id.toString()}`;
     if(peer.chat_id) return `Chat ${peer.chat_id.toString()}`;
     if(peer.channel_id) return `Channel ${peer.channel_id.toString()}`;
@@ -458,15 +428,14 @@ function transformDialogsToCloudFolders(dialogsResult: any): CloudFolder[] {
 
     if (!chatId) {
         console.warn("Could not determine chatId for dialog's peer:", dialog.peer);
-        return null; // Skip this dialog if no ID can be determined
+        return null; 
     }
 
-    // For now, media folders are empty. Actual media fetching needs to be implemented.
     return {
-      id: `chat-${chatId}`, // Unique ID for the folder
+      id: `chat-${chatId}`, 
       name: chatTitle,
       isChatFolder: true,
-      files: [], // Root files in this chat (e.g., non-media or recent items not yet sorted)
+      files: [], 
       folders: [
         { id: `chat-${chatId}-images`, name: "Images", files: [], folders: [] },
         { id: `chat-${chatId}-videos`, name: "Videos", files: [], folders: [] },
@@ -475,63 +444,41 @@ function transformDialogsToCloudFolders(dialogsResult: any): CloudFolder[] {
         { id: `chat-${chatId}-other`, name: "Other Media", files: [], folders: [] },
       ],
     };
-  }).filter(folder => folder !== null) as CloudFolder[]; // Filter out any nulls from problematic dialogs
+  }).filter(folder => folder !== null) as CloudFolder[]; 
 }
 
 
 export async function signOut(): Promise<void> {
   const client = getClient();
   try {
-    // auth.logOut is the method to end the session on the server
     const result = await client.call('auth.logOut');
     console.log('Signed out successfully from Telegram server:', result);
   } catch (error: any) {
     console.error('Error signing out from Telegram server:', error);
-    // Not critical to re-throw usually, client-side session will be cleared anyway
-    // const message = error.error_message || (error.message || 'Failed to sign out from server.');
-    // throw new Error(message);
   } finally {
-    // Clear local session state regardless of server logout success
     userSession = {};
-    // mtprotoClient = null; // This would force re-init on next getClient(), good for full reset
-    // MTProto browser env uses localStorage, which should persist unless cleared.
-    // For a true "logout" experience, you might need to clear MTProto's localStorage keys
-    // or the library might handle this upon auth.logOut.
-    // Check mtproto-core docs for how it handles session storage on logout.
-    // For now, just clearing our userSession object.
+    // mtprotoClient = null; // Consider this if you want to force re-initialization on next getClient()
     if (typeof window !== 'undefined' && window.localStorage) {
-        // mtproto-core might store session data in localStorage.
-        // Example: clear keys prefixed with 'mtproto:' - this is speculative.
-        // Object.keys(window.localStorage).forEach(key => {
-        //   if (key.startsWith('mtproto:')) { // Or whatever prefix the library uses
-        //     window.localStorage.removeItem(key);
-        //   }
-        // });
-        console.log('Local userSession object cleared. MTProto localStorage may need manual clearing if persistence is an issue after logout.');
+        // Consider clearing specific mtproto-core localStorage keys if necessary
+        console.log('Local userSession object cleared. MTProto localStorage may need manual clearing for full logout if session persists across page reloads.');
     }
   }
 }
 
-// Check if the user is considered connected based on our session object
-// and optionally by making a lightweight API call.
 export async function isUserConnected(): Promise<boolean> {
   if (userSession.user) {
     const client = getClient();
     try {
-        // A lightweight call to check if the session is still valid
         await client.call('users.getUsers', {id: [{_: 'inputUserSelf'}]});
         console.log("User session is active (checked with users.getUsers).");
         return true;
     } catch (error: any) {
-        // Common errors indicating session invalidity
         if (['AUTH_KEY_UNREGISTERED', 'USER_DEACTIVATED', 'SESSION_REVOKED', 'SESSION_EXPIRED', 'API_ID_INVALID', 'API_KEY_INVALID'].includes(error.error_message)) {
             console.warn("User session no longer valid or API keys incorrect:", error.error_message, "Logging out locally.");
-            await signOut(); // Attempt to clear local state thoroughly
+            await signOut(); 
             return false;
         }
-        console.warn("API call failed during connected check, but might not be an auth error (e.g., network). Assuming connected if user object exists.", error.error_message);
-        // For other errors (like network issues), if user object exists,
-        // we might optimistically assume they are still connected or the issue is temporary.
+        console.warn("API call failed during connected check, but might not be an auth error. Assuming connected if user object exists.", error.error_message);
         return true;
     }
   }
@@ -539,7 +486,7 @@ export async function isUserConnected(): Promise<boolean> {
 }
 
 console.log('Telegram service (telegramService.ts) loaded in browser environment.');
-// Basic check for API credentials on load of this module
 if (API_ID === undefined || !API_HASH) {
   console.error("CRITICAL: Telegram API_ID or API_HASH is not configured correctly in .env.local. Service will not function. Ensure NEXT_PUBLIC_TELEGRAM_API_ID and NEXT_PUBLIC_TELEGRAM_API_HASH are set and the dev server was restarted.");
 }
+
