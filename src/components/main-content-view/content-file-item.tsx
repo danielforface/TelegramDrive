@@ -13,11 +13,10 @@ import { cn } from "@/lib/utils";
 interface ContentFileItemProps {
   file: CloudFile;
   style?: React.CSSProperties;
-  // ref is implicitly part of ForwardRefExoticComponent
 }
 
 const FileTypeIcon = ({ type, name, dataAiHint }: { type: CloudFile['type'], name: string, dataAiHint?: string }) => {
-  const iconProps = { className: "w-12 h-12 text-primary flex-shrink-0 mb-2", strokeWidth: 1.5 };
+  const iconProps = { className: "w-12 h-12 text-primary flex-shrink-0", strokeWidth: 1.5 }; // Removed mb-2, margin will be handled by parent
   switch (type) {
     case 'image':
       return <ImageIcon {...iconProps} data-ai-hint={dataAiHint || "image file"}/>;
@@ -48,10 +47,9 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
 
   return (
     <Card
-      ref={ref} // Apply the ref here
+      ref={ref}
       className={cn(
-        "flex flex-col items-center justify-between p-3 hover:shadow-lg transition-shadow duration-200 animate-item-enter rounded-md h-48 w-full",
-        "overflow-hidden"
+        "flex flex-col h-48 w-full overflow-hidden rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200 animate-item-enter"
       )}
       style={style}
       aria-label={`File: ${file.name}, Type: ${file.type}${file.size ? `, Size: ${file.size}` : ''}`}
@@ -59,12 +57,17 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
       <TooltipProvider delayDuration={300}>
         <Tooltip>
           <TooltipTrigger asChild>
-            <CardContent className="flex flex-col items-center text-center pt-3 flex-grow w-full overflow-hidden">
+            <CardContent className="flex flex-col items-center text-center p-4 flex-grow w-full overflow-hidden">
               <FileTypeIcon type={file.type} name={file.name} dataAiHint={file.dataAiHint} />
-              <p className="text-xs font-medium truncate w-full" title={file.name}>{file.name}</p>
-              <div className="flex items-center gap-1 text-xs text-muted-foreground mt-1">
+              <p className="text-sm font-medium mt-2 mb-1 truncate w-full" title={file.name}>{file.name}</p>
+              <div className="flex flex-wrap justify-center items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground w-full">
                 <span>{file.type.charAt(0).toUpperCase() + file.type.slice(1)}</span>
-                {file.size && <><span>&bull;</span><span>{file.size}</span></>}
+                {file.size && (
+                  <>
+                    <span className="text-muted-foreground/60 mx-0.5">&bull;</span>
+                    <span>{file.size}</span>
+                  </>
+                )}
               </div>
             </CardContent>
           </TooltipTrigger>
@@ -78,18 +81,18 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
         </Tooltip>
       </TooltipProvider>
 
-      <CardFooter className="p-2 w-full mt-auto border-t">
+      <CardFooter className="p-3 w-full border-t flex-shrink-0 bg-card">
         {file.url ? (
-          <Button variant="ghost" size="sm" onClick={handleDownload} className="w-full text-xs">
-            <Download className="w-4 h-4 mr-1" />
+          <Button variant="ghost" size="sm" onClick={handleDownload} className="w-full text-xs font-medium">
+            <Download className="w-3.5 h-3.5 mr-1.5" />
             Download
           </Button>
         ) : (
           <TooltipProvider delayDuration={300}>
             <Tooltip>
               <TooltipTrigger asChild>
-                <div className="flex items-center justify-center text-muted-foreground p-1 text-xs w-full">
-                  <AlertCircle className="w-4 h-4 mr-1 text-amber-500" />
+                <div className="flex items-center justify-center text-muted-foreground p-1 text-xs w-full font-medium">
+                  <AlertCircle className="w-3.5 h-3.5 mr-1.5 text-amber-500" />
                   No URL
                 </div>
               </TooltipTrigger>

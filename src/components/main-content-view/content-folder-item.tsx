@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 interface ContentFolderItemProps {
   folder: CloudFolder;
   style?: React.CSSProperties;
-  onClick?: () => void; // For future navigation/filtering
+  onClick?: () => void; 
 }
 
 export function ContentFolderItem({ folder, style, onClick }: ContentFolderItemProps) {
@@ -24,7 +24,7 @@ export function ContentFolderItem({ folder, style, onClick }: ContentFolderItemP
   return (
     <Card
       className={cn(
-        "overflow-hidden transition-all duration-300 ease-in-out animate-item-enter rounded-lg shadow-sm hover:shadow-md cursor-pointer flex flex-col h-48 w-full",
+        "flex flex-col h-48 w-full overflow-hidden rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200 animate-item-enter cursor-pointer",
       )}
       style={style}
       onClick={onClick}
@@ -32,17 +32,17 @@ export function ContentFolderItem({ folder, style, onClick }: ContentFolderItemP
       onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && onClick?.()}
       aria-label={`Folder: ${folder.name}`}
     >
-      <CardContent className="flex-grow flex flex-col items-center justify-center p-4">
+      <CardContent className="flex-grow flex flex-col items-center justify-center p-4 text-center">
         <FolderIcon 
           className="w-16 h-16 text-primary mb-2" 
           strokeWidth={1.5} 
           data-ai-hint={folderTypeHint}
         />
-        <p className="font-medium text-center text-sm truncate w-full" title={folder.name}>
+        <p className="text-sm font-medium mt-2 truncate w-full" title={folder.name}>
           {folder.name}
         </p>
       </CardContent>
-      <CardFooter className="p-2 border-t bg-muted/30">
+      <CardFooter className="p-3 w-full border-t bg-muted/20 flex-shrink-0">
         <Badge variant="outline" className="text-xs w-full justify-center truncate">
           {totalItems === 0 && "Empty"}
           {totalItems > 0 && `${totalItems} item${totalItems > 1 ? 's' : ''}`}
