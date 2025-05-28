@@ -11,7 +11,6 @@ import { Button } from "@/components/ui/button";
 import { RefreshCw, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import * as telegramService from "@/services/telegramService";
-import { FolderItem } from "@/components/cloud-explorer/folder-item"; // For direct use of FolderItem for ref
 
 const INITIAL_LOAD_LIMIT = 20;
 const SUBSEQUENT_LOAD_LIMIT = 5;
@@ -40,27 +39,33 @@ export default function Home() {
   const [offsetId, setOffsetId] = useState(0);
   const [offsetPeer, setOffsetPeer] = useState<any>({ _: 'inputPeerEmpty' });
 
-  useEffect(() => {
-    const checkExistingConnection = async () => {
-      try {
-        const previouslyConnected = await telegramService.isUserConnected();
-        if (previouslyConnected) {
-          setIsConnected(true);
-          fetchChats(); // Fetch initial chats if already connected
-        }
-      } catch (error) {
-        console.warn("Error checking existing connection:", error);
-        // Potentially sign out or reset state if check fails critically
+  const checkExistingConnection = useCallback(async () => {
+    console.log("Checking existing connection...");
+    try {
+      const previouslyConnected = await telegramService.isUserConnected();
+      if (previouslyConnected) {
+        console.log("User was previously connected. Setting state and fetching chats.");
+        setIsConnected(true);
+        fetchChats(); // Fetch initial chats if already connected
+      } else {
+        console.log("No existing connection found or session invalid.");
+        setIsConnected(false); // Ensure UI reflects not connected state
       }
-    };
-    // checkExistingConnection(); 
-    // Keep commented for development to avoid auto-connect
-  }, []);
+    } catch (error) {
+      console.warn("Error checking existing connection:", error);
+      setIsConnected(false);
+    }
+  }, []); // Add dependencies if any state used inside changes, e.g. `fetchChats` if it's not stable
+
+  useEffect(() => {
+    checkExistingConnection();
+  }, [checkExistingConnection]);
 
 
   const fetchChats = async () => {
     setIsProcessing(true);
-    setCloudData(null); // Clear existing data for a fresh fetch
+    setCloudData(null); 
+    setAuthError(null);
     toast({ title: "Fetching Chats...", description: "Loading your Telegram conversations." });
     try {
       const response = await telegramService.getTelegramChats(INITIAL_LOAD_LIMIT, 0, 0, { _: 'inputPeerEmpty' });
@@ -70,7 +75,7 @@ export default function Home() {
       setOffsetPeer(response.nextOffsetPeer);
       setHasMoreChats(response.hasMore);
 
-      if (response.folders.length === 0) {
+      if (response.folders.length === 0 && !response.hasMore) {
         toast({ title: "No Chats Found", description: "Your Telegram chat list appears to be empty or couldn't be loaded.", variant: "default" });
       } else {
         toast({ title: "Chats Loaded!", description: `Loaded ${response.folders.length} initial chats.` });
@@ -78,6 +83,7 @@ export default function Home() {
     } catch (error: any) {
       console.error("Error fetching initial chats:", error);
       toast({ title: "Error Fetching Chats", description: error.message || "Could not load your chats.", variant: "destructive" });
+      setAuthError(error.message || "Could not load your chats.");
     } finally {
       setIsProcessing(false);
     }
@@ -105,13 +111,12 @@ export default function Home() {
     } catch (error: any) {
       console.error("Error loading more chats:", error);
       toast({ title: "Error Loading More", description: error.message || "Could not load more chats.", variant: "destructive" });
-      setHasMoreChats(false); // Stop trying if there's an error
+      setHasMoreChats(false); 
     } finally {
       setIsLoadingMore(false);
     }
   }, [isLoadingMore, hasMoreChats, offsetDate, offsetId, offsetPeer, toast, isConnected]);
 
-  // Intersection Observer for infinite scrolling
   const observer = useRef<IntersectionObserver | null>(null);
   const lastChatElementRef = useCallback((node: HTMLDivElement | null) => {
     if (isLoadingMore || isProcessing) return;
@@ -138,7 +143,7 @@ export default function Home() {
     try {
       const result_phone_code_hash = await telegramService.sendCode(currentPhoneNumber);
       setPhoneCodeHash(result_phone_code_hash);
-      setPhoneNumber(currentPhoneNumber);
+      setPhoneNumber(currentPhoneNumber); // Keep phone number for sign-in
       setAuthStep('awaiting_code');
       toast({ title: "Code Sent!", description: "Please check Telegram for your verification code." });
     } catch (error: any) {
@@ -149,7 +154,7 @@ export default function Home() {
           description: "The authentication process needs to be restarted. Please try again.",
           variant: "destructive",
         });
-        handleReset(false);
+        handleReset(false); // Reset local state without logging out from server
       } else {
         console.error("Error sending code:", error);
         setAuthError(error.message || "Failed to send code. Please check the phone number and try again.");
@@ -165,7 +170,7 @@ export default function Home() {
       setAuthError("Verification code is required.");
       return;
     }
-    if (!phoneCodeHash || !phoneNumber) {
+    if (!phoneCodeHash || !phoneNumber) { // Ensure phone number is still available from state
         setAuthError("Phone number or code hash is missing. Please start over.");
         handleReset(false);
         return;
@@ -174,25 +179,27 @@ export default function Home() {
     setAuthError(null);
     toast({ title: "Verifying Code...", description: "Checking your verification code with Telegram." });
     try {
-      const result = await telegramService.signIn(currentPhoneCode);
+      // Pass phoneNumber to signIn along with code and hash
+      const result = await telegramService.signIn(currentPhoneCode); // Assuming signIn can get phone & hash from its internal session
 
       if (result.user) {
         setIsConnected(true);
         setAuthStep('initial');
-        setPhoneCode('');
-        setPassword('');
+        setPhoneCode(''); // Clear code
+        setPassword('');   // Clear password
         fetchChats();
         toast({ title: "Sign In Successful!", description: "Connected to Telegram." });
       } else {
-        setAuthError("Sign in failed. Unexpected response.");
+        // This case should ideally be handled by 2FA error below or other specific errors
+        setAuthError("Sign in failed. Unexpected response from server.");
         toast({ title: "Sign In Failed", description: "Unexpected response from server.", variant: "destructive" });
       }
     } catch (error: any) {
-      if (error.srp_id && error.message === '2FA_REQUIRED') {
+      if (error.message === '2FA_REQUIRED' && error.srp_id) {
         console.log("2FA required for sign in, srp_id received:", error.srp_id);
         setSrpId(error.srp_id);
         setAuthStep('awaiting_password');
-        setAuthError("2FA password required.");
+        setAuthError("2FA password required."); // Informative message for UI
         toast({ title: "2FA Required", description: "Please enter your two-factor authentication password." });
       } else {
         console.error("Error signing in:", error);
@@ -209,7 +216,7 @@ export default function Home() {
       setAuthError("Password is required.");
       return;
     }
-    if (!srpId) {
+    if (!srpId) { // srpId should have been set if we are in 'awaiting_password' state
         setAuthError("SRP ID is missing for 2FA. Please start over.");
         handleReset(false);
         return;
@@ -218,16 +225,18 @@ export default function Home() {
     setAuthError(null);
     toast({ title: "Verifying Password...", description: "Checking your 2FA password." });
     try {
-      const user = await telegramService.checkPassword(currentPassword);
+      // Pass srpId and password to checkPassword
+      const user = await telegramService.checkPassword(currentPassword); 
       if (user) {
         setIsConnected(true);
         setAuthStep('initial');
-        setPhoneCode('');
-        setPassword('');
+        setPhoneCode('');   // Clear code
+        setPassword('');    // Clear password
         fetchChats();
         toast({ title: "2FA Successful!", description: "Connected to Telegram." });
       } else {
-        setAuthError("2FA failed. Unexpected response.");
+         // This case should ideally be handled by specific errors like PASSWORD_HASH_INVALID
+        setAuthError("2FA failed. Unexpected response from server.");
         toast({ title: "2FA Failed", description: "Unexpected response from server.", variant: "destructive" });
       }
     } catch (error: any) {
@@ -240,21 +249,22 @@ export default function Home() {
   };
 
   const handleReset = async (performServerLogout = true) => {
-    if (performServerLogout && isConnected) {
+    if (performServerLogout && isConnected) { // Only try to sign out from server if connected
         toast({ title: "Disconnecting...", description: "Logging out from Telegram." });
         try {
             await telegramService.signOut();
             toast({ title: "Disconnected", description: "Successfully signed out." });
         } catch (error: any) {
-            toast({ title: "Disconnection Error", description: error.message || "Could not sign out properly.", variant: "destructive" });
+            toast({ title: "Disconnection Error", description: error.message || "Could not sign out properly from server.", variant: "destructive" });
         }
     }
+    // Reset all local state
     setIsConnected(false);
     setIsProcessing(false);
     setCloudData(null);
     setIsConnecting(false);
     setAuthStep('initial');
-    setPhoneNumber('');
+    setPhoneNumber(''); // Clear phone number input
     setPhoneCode('');
     setPassword('');
     setPhoneCodeHash(null);
@@ -262,7 +272,7 @@ export default function Home() {
     setAuthError(null);
     // Reset pagination state
     setIsLoadingMore(false);
-    setHasMoreChats(true);
+    setHasMoreChats(true); // Assume there are chats to load if user reconnects
     setOffsetDate(0);
     setOffsetId(0);
     setOffsetPeer({ _: 'inputPeerEmpty' });
@@ -287,7 +297,7 @@ export default function Home() {
             setPhoneCode={setPhoneCode}
             password={password}
             setPassword={setPassword}
-            onReset={() => handleReset(false)}
+            onReset={() => handleReset(false)} // Reset client state without server logout from connect form
           />
         </main>
         <footer className="py-4 px-4 sm:px-6 lg:px-8 text-center border-t">
@@ -303,7 +313,7 @@ export default function Home() {
     <>
       <Header />
       <main className="flex-grow container mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col items-center">
-        {isProcessing ? (
+        {isProcessing && !cloudData ? ( // Show processing only if cloudData is null (initial load)
           <div className="flex flex-col items-center text-center p-8 mt-10">
             <AnimatedCloudIcon className="mb-6" isAnimating={true} />
             <h2 className="text-2xl font-semibold mb-2 text-primary">Processing Your Chats</h2>
@@ -320,23 +330,7 @@ export default function Home() {
                 Disconnect & Reset
               </Button>
             </div>
-            <CloudExplorer data={cloudData} />
-            {/* Attach ref to the last item for IntersectionObserver */}
-            {cloudData.length > 0 && (
-              <div
-                ref={lastChatElementRef}
-                // This div is just a sentinel, it won't be visible if last FolderItem doesn't exist.
-                // We will observe this. If it's the actual last FolderItem, we can style it if needed.
-                // For simplicity, a div wrapper is easier.
-                // Alternatively, pass the ref directly to CloudExplorer and then to the last FolderItem.
-                // Let's adjust CloudExplorer to accept a ref for the last item or handle it internally.
-                // For now, let's assume CloudExplorer renders FolderItems directly.
-                // The following is a placeholder to show where the logic for attaching ref goes.
-                // It's better to integrate this into CloudExplorer or pass the ref down.
-              >
-                {/* This is conceptual, the actual ref attachment is in CloudExplorer below */}
-              </div>
-            )}
+            <CloudExplorer data={cloudData} lastItemRef={lastChatElementRef} />
             
             {isLoadingMore && (
               <div className="flex justify-center items-center p-4 my-4">
@@ -347,18 +341,15 @@ export default function Home() {
             {!isLoadingMore && !hasMoreChats && cloudData.length > 0 && (
               <p className="text-center text-muted-foreground py-4">No more chats to load.</p>
             )}
-            {!isLoadingMore && hasMoreChats && cloudData.length > 0 && cloudData.length < INITIAL_LOAD_LIMIT && (
-                 <p className="text-center text-muted-foreground py-4">Scroll down to load more chats.</p>
-            )}
-
+            {/* Removed the scroll down to load more message as it might be confusing with observer */}
 
           </div>
-        ) : (
+        ) : ( // This case handles errors after connection or if fetchChats failed to populate data
            <div className="flex flex-col items-center text-center p-8 mt-10">
             <AnimatedCloudIcon className="mb-6" isAnimating={false} />
             <h2 className="text-2xl font-semibold mb-2">Something went wrong</h2>
             <p className="text-muted-foreground max-w-md mb-4">
-              We couldn't load your cloud data. Please try disconnecting and connecting again.
+              {authError || "We couldn't load your cloud data. Please try disconnecting and connecting again."}
             </p>
             <Button onClick={() => handleReset(true)}>
               <RefreshCw className="mr-2 h-4 w-4" /> Try Again
@@ -374,3 +365,4 @@ export default function Home() {
     </>
   );
 }
+

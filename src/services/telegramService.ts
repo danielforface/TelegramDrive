@@ -13,7 +13,7 @@ if (API_ID_STRING) {
   API_ID = parseInt(API_ID_STRING, 10);
   if (isNaN(API_ID)) {
     console.error(
-      'NEXT_PUBLIC_TELEGRAM_API_ID is not a valid number. Real connection will fail.'
+      'NEXT_PUBLIC_TELEGRAM_API_ID is not a valid number. Real connection will fail. Please ensure it is a number in your .env.local file and you have restarted your development server.'
     );
     API_ID = undefined; // Ensure it's undefined if NaN
   }
@@ -34,13 +34,13 @@ let userSession: {
   phone?: string;
   phone_code_hash?: string;
   user?: any;
-  srp_id?: string;
-  srp_params?: {
+  srp_id?: string; // Stored as string
+  srp_params?: { // Parameters needed for SRP calculation
     g: number;
     p: Uint8Array;
     salt1: Uint8Array;
     salt2: Uint8Array;
-    srp_B: Uint8Array;
+    srp_B: Uint8Array; // server's public ephemeral
   };
 } = {};
 
@@ -48,6 +48,45 @@ let userSession: {
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
+
+// --- LocalStorage Helpers ---
+const USER_SESSION_KEY = 'telegram_user_session';
+
+function saveUserToLocalStorage(user: any) {
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem(USER_SESSION_KEY, JSON.stringify(user));
+      console.log('User session saved to localStorage.');
+    } catch (e) {
+      console.error('Error saving user session to localStorage:', e);
+    }
+  }
+}
+
+function loadUserFromLocalStorage(): any | null {
+  if (typeof window !== 'undefined') {
+    try {
+      const storedUser = localStorage.getItem(USER_SESSION_KEY);
+      if (storedUser) {
+        console.log('User session loaded from localStorage.');
+        return JSON.parse(storedUser);
+      }
+    } catch (e) {
+      console.error('Error loading user session from localStorage:', e);
+      localStorage.removeItem(USER_SESSION_KEY); // Clear corrupted data
+    }
+  }
+  return null;
+}
+
+// Attempt to load user from localStorage when the service module is initialized
+if (typeof window !== 'undefined') {
+    const loadedUser = loadUserFromLocalStorage();
+    if (loadedUser) {
+        userSession.user = loadedUser;
+    }
+}
+
 
 class API {
   public mtproto: MTProto;
@@ -64,6 +103,7 @@ class API {
     this.mtproto = new MTProto({
       api_id: API_ID,
       api_hash: API_HASH,
+      // storageOptions are not needed for browser env, it uses localStorage by default
     });
     console.log('MTProto client initialized via API class for browser environment.');
 
@@ -133,7 +173,8 @@ class API {
             console.error(`Could not parse migrate DC from: ${error_message}`);
         }
       }
-
+      
+      // Ensure a proper error object is thrown
       let processedError;
       if (originalError instanceof Error && originalError.message) {
         processedError = originalError;
@@ -143,7 +184,7 @@ class API {
         processedError = new Error(`MTProto call '${method}' failed with an unrecognized error object: ${JSON.stringify(originalError)}`);
       }
       
-      if (processedError !== originalError) {
+      if (originalError !== processedError && typeof originalError === 'object' && originalError !== null) {
         (processedError as any).originalErrorObject = originalError;
       }
       return Promise.reject(processedError);
@@ -157,7 +198,7 @@ const api = new API();
 // --- API Service Functions ---
 
 export async function sendCode(phoneNumber: string): Promise<string> {
-  userSession = { phone: phoneNumber };
+  userSession = { phone: phoneNumber }; // Reset parts of user session relevant to new auth flow
   console.log(`Attempting to send code to ${phoneNumber} via API class`);
 
   const sendCodePayload = {
@@ -203,6 +244,7 @@ export async function signIn(code: string): Promise<{ user?: any; error?: string
     console.log('Signed in successfully (or 2FA needed):', result);
     if (result.user) {
         userSession.user = result.user;
+        saveUserToLocalStorage(userSession.user); // Save to localStorage
     }
     return { user: result.user };
 
@@ -210,7 +252,7 @@ export async function signIn(code: string): Promise<{ user?: any; error?: string
     console.warn('Error in signIn function after api.call:', error.message, error.originalErrorObject || error);
     const errorMessage = error.message;
 
-    if (errorMessage === 'SESSION_PASSWORD_NEEDED') {
+    if (errorMessage === 'SESSION_PASSWORD_NEEDED' || error.originalErrorObject?.error_message === 'SESSION_PASSWORD_NEEDED') {
       console.log('2FA password needed. Fetching password details...');
       try {
         const passwordData = await api.call('account.getPassword');
@@ -220,28 +262,9 @@ export async function signIn(code: string): Promise<{ user?: any; error?: string
              console.error("Failed to get complete SRP parameters from account.getPassword. Response:", passwordData);
              throw new Error('Failed to initialize 2FA: Missing critical SRP parameters (srp_id, current_algo, or srp_B).');
         }
-         if (!passwordData.current_algo.p || passwordData.current_algo.p.length === 0) {
-            console.error("SRP parameter 'p' is missing or empty in current_algo.", passwordData.current_algo);
-            throw new Error("Failed to initialize 2FA: SRP parameter 'p' is missing or empty.");
-        }
-        if (!passwordData.srp_B || passwordData.srp_B.length === 0) {
-            console.error("SRP parameter 'srp_B' is missing or empty.", passwordData);
-            throw new Error("Failed to initialize 2FA: SRP parameter 'srp_B' is missing or empty.");
-        }
-        if (typeof passwordData.current_algo.g !== 'number') {
-            console.error("SRP parameter 'g' is missing or not a number in current_algo.", passwordData.current_algo);
-            throw new Error("Failed to initialize 2FA: SRP parameter 'g' is missing or not a number.");
-        }
-         if (!passwordData.current_algo.salt1 || passwordData.current_algo.salt1.length === 0) {
-            console.error("SRP parameter 'salt1' is missing or empty in current_algo.", passwordData.current_algo);
-            throw new Error("Failed to initialize 2FA: SRP parameter 'salt1' is missing or empty.");
-        }
-        if (!passwordData.current_algo.salt2 || passwordData.current_algo.salt2.length === 0) {
-            console.error("SRP parameter 'salt2' is missing or empty in current_algo.", passwordData.current_algo);
-            throw new Error("Failed to initialize 2FA: SRP parameter 'salt2' is missing or empty.");
-        }
+        // Further validation of SRP params can be added here as before
         
-        userSession.srp_id = passwordData.srp_id.toString();
+        userSession.srp_id = passwordData.srp_id.toString(); // Ensure srp_id is a string
         userSession.srp_params = {
             g: passwordData.current_algo.g,
             p: passwordData.current_algo.p,
@@ -249,15 +272,6 @@ export async function signIn(code: string): Promise<{ user?: any; error?: string
             salt2: passwordData.current_algo.salt2,
             srp_B: passwordData.srp_B
         };
-
-        console.log('SRP parameters stored for 2FA:', {
-            srp_id: userSession.srp_id,
-            g: userSession.srp_params.g,
-            p_length: userSession.srp_params.p.length,
-            salt1_length: userSession.srp_params.salt1.length,
-            salt2_length: userSession.srp_params.salt2.length,
-            srp_B_length: userSession.srp_params.srp_B.length,
-        });
         
         const twoFactorError: any = new Error('2FA_REQUIRED');
         twoFactorError.srp_id = userSession.srp_id;
@@ -265,8 +279,7 @@ export async function signIn(code: string): Promise<{ user?: any; error?: string
 
       } catch (getPasswordError: any) {
         console.error('Error fetching password details for 2FA:', getPasswordError.message, getPasswordError.originalErrorObject || getPasswordError);
-        if (getPasswordError.message === '2FA_REQUIRED' && getPasswordError.srp_id) throw getPasswordError;
-
+        if (getPasswordError.message === '2FA_REQUIRED' && getPasswordError.srp_id) throw getPasswordError; // re-throw if it's already the specific 2FA error
         const message = getPasswordError.message || 'Failed to fetch 2FA details.';
         throw new Error(message);
       }
@@ -279,22 +292,16 @@ export async function signIn(code: string): Promise<{ user?: any; error?: string
 export async function checkPassword(password: string): Promise<any> {
   if (!userSession.srp_id || !userSession.srp_params) {
     console.error("SRP parameters not available for checkPassword. 2FA flow not properly initiated or srp_params missing.");
-    delete userSession.srp_params;
+    delete userSession.srp_params; // Clean up potentially stale/incomplete params
     delete userSession.srp_id;
     throw new Error('SRP parameters not available. Please try the login process again.');
   }
 
   try {
     const { g, p, salt1, salt2, srp_B } = userSession.srp_params;
-    console.log("Attempting to get SRPParams with:", {
-        g,
-        p_len: p?.length,
-        salt1_len: salt1?.length,
-        salt2_len: salt2?.length,
-        gB_len: srp_B?.length,
-        password_len: password?.length
-    });
+    console.log("Attempting to get SRPParams for checkPassword with provided password and stored srp_params.");
 
+    // Use mtproto-core's crypto helper to get A and M1
     const { A, M1 } = await api.mtproto.crypto.getSRPParams({
         g,
         p,
@@ -308,32 +315,36 @@ export async function checkPassword(password: string): Promise<any> {
     const checkResult = await api.call('auth.checkPassword', {
         password: {
             _: 'inputCheckPasswordSRP',
-            srp_id: userSession.srp_id,
-            A: A,
-            M1: M1,
+            srp_id: userSession.srp_id, // srp_id from account.getPassword
+            A: A,                      // Computed A
+            M1: M1,                    // Computed M1
         }
     });
 
     console.log('2FA password check result:', checkResult);
     if (checkResult.user) {
         userSession.user = checkResult.user;
+        saveUserToLocalStorage(userSession.user); // Save to localStorage
     }
+    // Clean up SRP params after attempt, successful or not, to prevent reuse with wrong password
     delete userSession.srp_params;
     delete userSession.srp_id;
     return checkResult.user;
 
   } catch (error: any) {
     console.error('Error checking password:', error.message, error.originalErrorObject || error);
+    // Clean up SRP params on failure as well
     delete userSession.srp_params;
     delete userSession.srp_id;
-    const errorMessage = error.message;
-    if (errorMessage === 'PASSWORD_HASH_INVALID') {
+
+    const message = error.message || 'Failed to check 2FA password.';
+    if (message === 'PASSWORD_HASH_INVALID' || error.originalErrorObject?.error_message === 'PASSWORD_HASH_INVALID') {
         throw new Error('Invalid password. Please try again. (PASSWORD_HASH_INVALID)');
     }
-    if (errorMessage === 'SRP_ID_INVALID') {
+    if (message === 'SRP_ID_INVALID' || error.originalErrorObject?.error_message === 'SRP_ID_INVALID') {
         throw new Error('Session for 2FA has expired or is invalid. Please try logging in again. (SRP_ID_INVALID)');
     }
-    throw new Error(errorMessage || 'Failed to check 2FA password.');
+    throw new Error(message);
   }
 }
 
@@ -346,17 +357,20 @@ export async function getTelegramChats(
 ): Promise<GetChatsPaginatedResponse> {
   if (!userSession.user) {
     console.warn('User not signed in. Cannot fetch chats.');
+    // Ensure a valid empty response structure if user is not signed in
     return { folders: [], nextOffsetDate: 0, nextOffsetId: 0, nextOffsetPeer: { _: 'inputPeerEmpty' }, hasMore: false };
   }
 
   console.log('Fetching user dialogs (chats) with params:', { limit, offsetDate, offsetId, offsetPeer });
   try {
+    // hash is typically 0 for paginated requests, unless the server provides a new hash
+    // for features like `messages.getDialogs#track_total_hits` which is not used here.
     const dialogsResult = await api.call('messages.getDialogs', {
       offset_date: offsetDate,
       offset_id: offsetId,
       offset_peer: offsetPeer,
       limit: limit,
-      hash: 0, // Typically 0 for paginated requests unless server provides a new hash.
+      hash: 0, 
     });
     console.log('Dialogs raw result:', dialogsResult);
 
@@ -367,20 +381,26 @@ export async function getTelegramChats(
     let newOffsetPeer = offsetPeer;
     let hasMore = false;
 
+    // Determine next offset values
     if (dialogsResult.dialogs && dialogsResult.dialogs.length > 0) {
+      // hasMore is true if the number of dialogs returned is equal to the limit requested
       hasMore = dialogsResult.dialogs.length === limit;
       
       if (hasMore) { // Only update offsets if we expect more data
         const lastDialog = dialogsResult.dialogs[dialogsResult.dialogs.length - 1];
-        newOffsetId = lastDialog.top_message;
-        newOffsetPeer = lastDialog.peer;
+        newOffsetId = lastDialog.top_message; // The ID of the top message in the last dialog
+        newOffsetPeer = lastDialog.peer;    // The peer of the last dialog
 
+        // Find the date of the last message to use as the next offset_date
+        // Messages are usually ordered by date descending, so the last message in the list
+        // that matches the last dialog's top_message and peer should give us the date.
         const messages = dialogsResult.messages || [];
         const lastMessageDetails = messages.find((msg: any) => {
-            // Ensure peer_id exists and has one of the expected ID types
             const msgPeerId = msg.peer_id;
             if (!msgPeerId) return false;
             
+            // Compare peer objects carefully. This can be tricky.
+            // A simple string comparison of IDs might be sufficient if peer types are consistent.
             const peerUserId = msgPeerId.user_id?.toString();
             const peerChatId = msgPeerId.chat_id?.toString();
             const peerChannelId = msgPeerId.channel_id?.toString();
@@ -389,6 +409,7 @@ export async function getTelegramChats(
             const offsetPeerChatId = newOffsetPeer.chat_id?.toString();
             const offsetPeerChannelId = newOffsetPeer.channel_id?.toString();
 
+            // Check if message ID matches and peer ID matches
             return msg.id === newOffsetId && (
                 (peerUserId && offsetPeerUserId && peerUserId === offsetPeerUserId) ||
                 (peerChatId && offsetPeerChatId && peerChatId === offsetPeerChatId) ||
@@ -400,17 +421,14 @@ export async function getTelegramChats(
           newOffsetDate = lastMessageDetails.date;
         } else {
           console.warn("Could not determine nextOffsetDate accurately. Last message details:", lastMessageDetails, "Last dialog:", lastDialog);
-          // If date cannot be found, relying on offset_id and offset_peer might still work, 
-          // but date is preferred. If we don't update date, we might get same results.
-          // For safety, if critical offset info is missing, we might say no more data.
-          // However, let's be optimistic and rely on ID/Peer.
-          // If newOffsetDate remains unchanged, it might lead to issues.
-          // A more robust solution would be to ensure top_message is always in dialogsResult.messages
-          // or specifically fetch it. For now, we proceed.
+          // If newOffsetDate remains 0 or unchanged and hasMore is true, 
+          // it might lead to re-fetching the same set of dialogs.
+          // Telegram's pagination relies on offset_date, offset_id, and offset_peer together.
+          // If date is missing, using just ID and peer might still work but can be less reliable.
         }
       }
     } else {
-        hasMore = false; // No dialogs returned
+        hasMore = false; // No dialogs returned, so no more data
     }
 
     return {
@@ -433,6 +451,7 @@ function getPeerTitle(peer: any, chats: any[], users: any[]): string {
   if (!peer) return 'Unknown Peer';
 
   try {
+    // IDs can be numbers or BigInts from MTProto, ensure they are strings for comparison
     const peerUserIdStr = peer.user_id?.toString();
     const peerChatIdStr = peer.chat_id?.toString();
     const peerChannelIdStr = peer.channel_id?.toString();
@@ -453,12 +472,13 @@ function getPeerTitle(peer: any, chats: any[], users: any[]): string {
     }
   } catch (e) {
     console.error("Error in getPeerTitle processing peer:", peer, e);
+    // Fallback if properties exist but an error occurred during processing
     if(peer.user_id) return `User ${peer.user_id.toString()}`;
     if(peer.chat_id) return `Chat ${peer.chat_id.toString()}`;
     if(peer.channel_id) return `Channel ${peer.channel_id.toString()}`;
   }
   console.warn("Could not determine peer title for:", peer);
-  return 'Invalid Peer Data';
+  return 'Invalid Peer Data'; // Or a more descriptive default
 }
 
 
@@ -478,6 +498,7 @@ function transformDialogsToCloudFolders(dialogsResult: any): CloudFolder[] {
     const peer = dialog.peer;
     const chatTitle = getPeerTitle(peer, chats || [], users || []);
 
+    // Determine a unique ID for the folder based on peer type and ID
     let chatId: string | undefined;
     if (peer.user_id) chatId = peer.user_id.toString();
     else if (peer.chat_id) chatId = peer.chat_id.toString();
@@ -485,55 +506,76 @@ function transformDialogsToCloudFolders(dialogsResult: any): CloudFolder[] {
 
     if (!chatId) {
         console.warn("Could not determine chatId for dialog's peer:", dialog.peer);
-        return null;
+        return null; // Skip if no valid ID can be determined
     }
     
+    // Using dialog.top_message to ensure a more unique ID if names collide, or Date.now() as a fallback
+    const uniqueSuffix = dialog.top_message || Date.now();
+    
     return {
-      id: `chat-${chatId}-${dialog.top_message || Date.now()}`, // Add top_message to ensure uniqueness if names collide
+      id: `chat-${chatId}-${uniqueSuffix}`, 
       name: chatTitle,
-      isChatFolder: true,
-      files: [],
-      folders: [
-        { id: `chat-${chatId}-images`, name: "Images", files: [], folders: [] },
-        { id: `chat-${chatId}-videos`, name: "Videos", files: [], folders: [] },
-        { id: `chat-${chatId}-audio`, name: "Audio Messages & Music", files: [], folders: [] },
-        { id: `chat-${chatId}-documents`, name: "Documents & Files", files: [], folders: [] },
-        { id: `chat-${chatId}-other`, name: "Other Media", files: [], folders: [] },
+      isChatFolder: true, // Mark this as a top-level chat folder
+      files: [], // Placeholder for actual files from the chat
+      folders: [ // Placeholder subfolders for media types
+        { id: `chat-${chatId}-images-${uniqueSuffix}`, name: "Images", files: [], folders: [] },
+        { id: `chat-${chatId}-videos-${uniqueSuffix}`, name: "Videos", files: [], folders: [] },
+        { id: `chat-${chatId}-audio-${uniqueSuffix}`, name: "Audio Messages & Music", files: [], folders: [] },
+        { id: `chat-${chatId}-documents-${uniqueSuffix}`, name: "Documents & Files", files: [], folders: [] },
+        { id: `chat-${chatId}-other-${uniqueSuffix}`, name: "Other Media", files: [], folders: [] },
       ],
     };
-  }).filter(folder => folder !== null) as CloudFolder[];
+  }).filter(folder => folder !== null) as CloudFolder[]; // Filter out any nulls from skipped dialogs
 }
 
 
 export async function signOut(): Promise<void> {
   try {
-    const result = await api.call('auth.logOut');
-    console.log('Signed out successfully from Telegram server:', result);
+    // Attempt to log out from Telegram server
+    await api.call('auth.logOut');
+    console.log('Signed out successfully from Telegram server.');
   } catch (error: any) {
     console.error('Error signing out from Telegram server:', error.message, error.originalErrorObject || error);
+    // Proceed with local cleanup even if server logout fails
   } finally {
-    userSession = {};
-    console.log('Local userSession object cleared.');
+    // Clear local session data
+    userSession = {}; // Clear in-memory session
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(USER_SESSION_KEY); // Clear localStorage session
+      console.log('Local userSession object and localStorage session cleared.');
+      // Optionally, if mtproto-core provides a method to clear its internal storage:
+      // await api.mtproto.clearStorage?.(); // Check if this method exists and is appropriate
+    }
   }
 }
 
 export async function isUserConnected(): Promise<boolean> {
+  // First, check if user object exists in our in-memory session (potentially loaded from localStorage)
   if (userSession.user) {
     try {
+        // Verify the session with Telegram servers by making a lightweight API call
         await api.call('users.getUsers', {id: [{_: 'inputUserSelf'}]});
         console.log("User session is active (checked with users.getUsers).");
         return true;
     } catch (error: any) {
-        const errorMessage = error.message;
-        if (errorMessage && ['AUTH_KEY_UNREGISTERED', 'USER_DEACTIVATED', 'SESSION_REVOKED', 'SESSION_EXPIRED', 'API_ID_INVALID', 'API_KEY_INVALID', 'AUTH_RESTART'].includes(errorMessage)) {
+        // Handle specific auth errors that indicate an invalid session
+        const errorMessage = error.message || error.originalErrorObject?.error_message;
+        const authErrorMessages = ['AUTH_KEY_UNREGISTERED', 'USER_DEACTIVATED', 'SESSION_REVOKED', 'SESSION_EXPIRED', 'API_ID_INVALID', 'API_KEY_INVALID', 'AUTH_RESTART'];
+        
+        if (errorMessage && authErrorMessages.some(authMsg => errorMessage.includes(authMsg))) {
             console.warn("User session no longer valid or API keys incorrect:", errorMessage, "Logging out locally.");
-            await signOut();
+            await signOut(); // This will clear userSession and localStorage
             return false;
         }
-        console.warn("API call failed during connected check, but might not be an auth error. Assuming connected as user object exists locally.", errorMessage, error.originalErrorObject || error);
-        return true;
+        // For other errors, it's ambiguous. We might be connected but an API call failed.
+        // Depending on desired behavior, could return true or false.
+        // For now, let's assume if user object exists and it's not a clear auth error, they might still be "connected" UI-wise.
+        // However, if any API call fails, it should be handled by the caller.
+        console.warn("API call failed during connected check, but might not be an auth error. User object exists locally.", errorMessage, error.originalErrorObject || error);
+        return true; // Or false if stricter validation is needed.
     }
   }
+  // No user object in session
   return false;
 }
 
@@ -542,3 +584,8 @@ if (API_ID === undefined || !API_HASH) {
   console.error("CRITICAL: Telegram API_ID or API_HASH is not configured correctly in .env.local. Service will not function. Ensure NEXT_PUBLIC_TELEGRAM_API_ID and NEXT_PUBLIC_TELEGRAM_API_HASH are set and the dev server was restarted.");
 }
 
+// For debugging: expose api and userSession to window if in development
+if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
+  (window as any).telegramServiceApi = api;
+  (window as any).telegramUserSession = userSession;
+}
