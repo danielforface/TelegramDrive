@@ -110,8 +110,6 @@ export default function Home() {
   const [authError, setAuthError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Check if user was already connected (e.g. session persisted)
-    // This is a simplified check. A more robust check would involve an API call.
     const checkExistingConnection = async () => {
       const previouslyConnected = await telegramService.isUserConnected();
       if (previouslyConnected) {
@@ -119,7 +117,7 @@ export default function Home() {
         fetchChats();
       }
     };
-    // checkExistingConnection(); // You might enable this if session persistence is more robust
+    // checkExistingConnection(); 
   }, []);
 
 
@@ -137,7 +135,7 @@ export default function Home() {
     } catch (error: any) {
       console.error("Error fetching chats:", error);
       toast({ title: "Error Fetching Chats", description: error.message || "Could not load your chats.", variant: "destructive" });
-      setCloudData(MOCK_CLOUD_DATA); // Fallback to mock data on error for now
+      setCloudData(MOCK_CLOUD_DATA); 
     } finally {
       setIsProcessing(false);
     }
@@ -154,7 +152,7 @@ export default function Home() {
     try {
       const result_phone_code_hash = await telegramService.sendCode(currentPhoneNumber);
       setPhoneCodeHash(result_phone_code_hash);
-      setPhoneNumber(currentPhoneNumber); // Store phone number for sign in
+      setPhoneNumber(currentPhoneNumber); 
       setAuthStep('awaiting_code');
       toast({ title: "Code Sent!", description: "Please check Telegram for your verification code." });
     } catch (error: any) {
@@ -173,32 +171,32 @@ export default function Home() {
     }
     if (!phoneCodeHash || !phoneNumber) {
         setAuthError("Phone number or code hash is missing. Please start over.");
-        handleReset(); // Reset to initial state
+        handleReset(); 
         return;
     }
     setIsConnecting(true);
     setAuthError(null);
     toast({ title: "Verifying Code...", description: "Checking your verification code with Telegram." });
     try {
-      const result = await telegramService.signIn(currentPhoneCode); // Service function handles phone and hash
+      const result = await telegramService.signIn(currentPhoneCode); 
       
       if (result.user) {
         setIsConnected(true);
-        setAuthStep('initial'); // Reset auth step
-        fetchChats(); // Fetch chats immediately
+        setAuthStep('initial'); 
+        fetchChats(); 
       } else {
-        // This case should ideally not happen if signIn throws specific errors for 2FA
         setAuthError("Sign in failed. Unexpected response.");
         toast({ title: "Sign In Failed", description: "Unexpected response from server.", variant: "destructive" });
       }
     } catch (error: any) {
-      console.error("Error signing in:", error);
-      if (error.srp_id) { // Specific error structure from our service for 2FA
+      if (error.srp_id && error.message === '2FA_REQUIRED') {
+        console.log("2FA required for sign in, srp_id received:", error.srp_id);
         setSrpId(error.srp_id);
         setAuthStep('awaiting_password');
         setAuthError("2FA password required.");
         toast({ title: "2FA Required", description: "Please enter your two-factor authentication password." });
       } else {
+        console.error("Error signing in:", error);
         setAuthError(error.message || "Sign in failed. Invalid code or other issue.");
         toast({ title: "Sign In Failed", description: error.message || "Invalid code or other issue.", variant: "destructive" });
       }
@@ -221,11 +219,11 @@ export default function Home() {
     setAuthError(null);
     toast({ title: "Verifying Password...", description: "Checking your 2FA password." });
     try {
-      const user = await telegramService.checkPassword(currentPassword); // Service handles srpId
+      const user = await telegramService.checkPassword(currentPassword); 
       if (user) {
         setIsConnected(true);
-        setAuthStep('initial'); // Reset auth step
-        fetchChats(); // Fetch chats
+        setAuthStep('initial'); 
+        fetchChats(); 
       } else {
         setAuthError("2FA failed. Unexpected response.");
         toast({ title: "2FA Failed", description: "Unexpected response from server.", variant: "destructive" });
