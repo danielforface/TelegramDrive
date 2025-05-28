@@ -34,13 +34,13 @@ let userSession: {
   phone?: string;
   phone_code_hash?: string;
   user?: any;
-  srp_id?: string; // Stored as string because it can be a BigInt
-  srp_params?: { // Parameters needed for SRP checkPassword
+  srp_id?: string; 
+  srp_params?: { 
     g: number;
     p: Uint8Array;
     salt1: Uint8Array;
     salt2: Uint8Array;
-    srp_B: Uint8Array; // server's public ephemeral
+    srp_B: Uint8Array; 
   };
 } = {};
 
@@ -64,7 +64,6 @@ class API {
     this.mtproto = new MTProto({
       api_id: API_ID,
       api_hash: API_HASH,
-      // For browser environment, localStorage is used by default.
     });
     console.log('MTProto client initialized via API class for browser environment.');
 
@@ -74,27 +73,21 @@ class API {
     });
     this.mtproto.updates.on('updateShortMessage', (updateInfo: any) => {
       console.log('updateShortMessage:', updateInfo);
-      // Example: { _: 'updateShortMessage', out: false, mentioned: false, media_unread: false, silent: false, id: 12345, user_id: '123', message: 'Hello!', pts: 100, pts_count: 1, date: 1678886400, fwd_from: null, via_bot_id: null, reply_to: null, entities: [] }
     });
     this.mtproto.updates.on('updateShortChatMessage', (updateInfo: any) => {
       console.log('updateShortChatMessage:', updateInfo);
-      // Example: { _: 'updateShortChatMessage', out: false, mentioned: false, media_unread: false, silent: false, id: 12346, from_id: '123', chat_id: '456', message: 'Hi all!', pts: 101, pts_count: 1, date: 1678886500, fwd_from: null, via_bot_id: null, reply_to: null, entities: [] }
     });
     this.mtproto.updates.on('updateShort', (updateInfo: any) => {
       console.log('updateShort:', updateInfo);
-      // Example: { _: 'updateShort', update: { _: 'updateUserStatus', user_id: '123', status: { _: 'userStatusOnline', expires: 1678887000 } }, date: 1678886600 }
     });
     this.mtproto.updates.on('updatesCombined', (updateInfo: any) => {
       console.log('updatesCombined:', updateInfo);
-      // Example: { _: 'updatesCombined', updates: [ ... ], users: [ ... ], chats: [ ... ], date: 1678886700, seq_start: 10, seq: 12 }
     });
     this.mtproto.updates.on('updates', (updateInfo: any) => {
       console.log('updates:', updateInfo);
-      // Example: { _: 'updates', updates: [ ... ], users: [ ... ], chats: [ ... ], date: 1678886800, seq: 15 }
     });
     this.mtproto.updates.on('updateShortSentMessage', (updateInfo: any) => {
       console.log('updateShortSentMessage:', updateInfo);
-      // Example: { _: 'updateShortSentMessage', out: true, id: 12347, pts: 102, pts_count: 1, date: 1678886900, media: null, entities: [] }
     });
   }
 
@@ -102,10 +95,10 @@ class API {
     try {
       const result = await this.mtproto.call(method, params, options);
       return result;
-    } catch (error: any) {
-      console.warn(`MTProto call '${method}' error:`, error);
+    } catch (originalError: any) {
+      console.warn(`MTProto call '${method}' raw error object:`, JSON.stringify(originalError));
 
-      const { error_code, error_message } = error;
+      const { error_code, error_message } = originalError;
 
       if (error_code === 420) { // FLOOD_WAIT_X
         const secondsStr = error_message.split('FLOOD_WAIT_')[1];
@@ -129,11 +122,9 @@ class API {
             console.log(`${type}_MIGRATE_X error. Attempting to migrate to DC ${dcId} for ${method}...`);
 
             if (type === 'PHONE') {
-              // For auth.sendCode, we need to change the default DC for subsequent calls like auth.signIn
               console.log(`Setting default DC to ${dcId} due to PHONE_MIGRATE.`);
               await this.mtproto.setDefaultDc(dcId);
             } else {
-              // For other calls, we pass the dcId in options for this specific call
               console.log(`Retrying ${method} with dcId ${dcId}.`);
               Object.assign(options, { dcId });
             }
@@ -142,8 +133,21 @@ class API {
             console.error(`Could not parse migrate DC from: ${error_message}`);
         }
       }
-      // For other errors, re-throw them to be handled by the calling function
-      return Promise.reject(error);
+
+      // Ensure the rejected error is always an Error instance with a message
+      let processedError;
+      if (originalError instanceof Error && originalError.message) {
+        processedError = originalError;
+      } else if (typeof originalError === 'object' && originalError !== null && (originalError.error_message || originalError.message)) {
+        processedError = new Error(originalError.error_message || originalError.message);
+      } else {
+        processedError = new Error(`MTProto call '${method}' failed with an unrecognized error object: ${JSON.stringify(originalError)}`);
+      }
+      // Attach the original error object if it's not the same as the processed one
+      if (processedError !== originalError) {
+        (processedError as any).originalErrorObject = originalError;
+      }
+      return Promise.reject(processedError);
     }
   }
 }
@@ -154,12 +158,11 @@ const api = new API();
 // --- API Service Functions ---
 
 export async function sendCode(phoneNumber: string): Promise<string> {
-  userSession = { phone: phoneNumber }; // Reset user session for new phone number
+  userSession = { phone: phoneNumber }; 
   console.log(`Attempting to send code to ${phoneNumber} via API class`);
 
   const sendCodePayload = {
     phone_number: phoneNumber,
-    // api_id and api_hash are set in MTProto constructor, not needed here directly for api.call
     settings: {
       _: 'codeSettings',
     },
@@ -172,10 +175,9 @@ export async function sendCode(phoneNumber: string): Promise<string> {
     console.log('Verification code sent, phone_code_hash:', result.phone_code_hash);
     return result.phone_code_hash;
   } catch (error: any) {
-    // Errors like AUTH_RESTART, PHONE_NUMBER_INVALID etc. will be propagated here by api.call
-    console.error('Error in sendCode function after api.call:', error);
-    const message = error.error_message || (error.message || 'Failed to send code.');
-     if (message === 'AUTH_RESTART') {
+    console.error('Error in sendCode function after api.call:', error.message, error);
+    const message = error.message || 'Failed to send code.'; // error.message should now always exist
+     if (message === 'AUTH_RESTART' || (error.originalErrorObject?.error_message === 'AUTH_RESTART')) {
          throw new Error('AUTH_RESTART');
     }
     throw new Error(message);
@@ -206,8 +208,10 @@ export async function signIn(code: string): Promise<{ user?: any; error?: string
     return { user: result.user };
 
   } catch (error: any) {
-    console.warn('Error in signIn function after api.call:', error);
-    if (error.error_message === 'SESSION_PASSWORD_NEEDED') {
+    console.warn('Error in signIn function after api.call:', error.message, error);
+    const errorMessage = error.message || (error.originalErrorObject?.error_message);
+
+    if (errorMessage === 'SESSION_PASSWORD_NEEDED') {
       console.log('2FA password needed. Fetching password details...');
       try {
         const passwordData = await api.call('account.getPassword');
@@ -238,14 +242,13 @@ export async function signIn(code: string): Promise<{ user?: any; error?: string
             throw new Error("Failed to initialize 2FA: SRP parameter 'salt2' is missing or empty.");
         }
         
-        // srp_id can be a BigInt like object, convert to string for consistency
         userSession.srp_id = passwordData.srp_id.toString(); 
         userSession.srp_params = {
             g: passwordData.current_algo.g,
-            p: passwordData.current_algo.p, // Uint8Array
-            salt1: passwordData.current_algo.salt1, // Uint8Array
-            salt2: passwordData.current_algo.salt2, // Uint8Array
-            srp_B: passwordData.srp_B // Uint8Array
+            p: passwordData.current_algo.p, 
+            salt1: passwordData.current_algo.salt1, 
+            salt2: passwordData.current_algo.salt2, 
+            srp_B: passwordData.srp_B 
         };
 
         console.log('SRP parameters stored for 2FA:', {
@@ -257,21 +260,19 @@ export async function signIn(code: string): Promise<{ user?: any; error?: string
             srp_B_length: userSession.srp_params.srp_B.length,
         });
         
-        const twoFactorError: any = new Error('2FA_REQUIRED'); // This is intentionally thrown to signal UI
+        const twoFactorError: any = new Error('2FA_REQUIRED'); 
         twoFactorError.srp_id = userSession.srp_id; 
         throw twoFactorError;
 
       } catch (getPasswordError: any) {
         console.error('Error fetching password details for 2FA:', getPasswordError);
-        if (getPasswordError.message === '2FA_REQUIRED' && getPasswordError.srp_id) throw getPasswordError; // Re-throw if it's already our custom error
+        if (getPasswordError.message === '2FA_REQUIRED' && getPasswordError.srp_id) throw getPasswordError; 
 
-        const message = getPasswordError.error_message || (getPasswordError.message || 'Failed to fetch 2FA details.');
+        const message = getPasswordError.message || (getPasswordError.originalErrorObject?.error_message || 'Failed to fetch 2FA details.');
         throw new Error(message);
       }
     }
-    // Propagate other errors
-    const message = error.error_message || (error.message || 'Failed to sign in.');
-    throw new Error(message);
+    throw new Error(errorMessage || 'Failed to sign in.');
   }
 }
 
@@ -279,20 +280,28 @@ export async function signIn(code: string): Promise<{ user?: any; error?: string
 export async function checkPassword(password: string): Promise<any> {
   if (!userSession.srp_id || !userSession.srp_params) {
     console.error("SRP parameters not available for checkPassword. 2FA flow not properly initiated or srp_params missing.");
+    delete userSession.srp_params; // Clean up potentially stale/incomplete params
+    delete userSession.srp_id;
     throw new Error('SRP parameters not available. Please try the login process again.');
   }
 
   try {
     const { g, p, salt1, salt2, srp_B } = userSession.srp_params;
-    console.log("Attempting to get SRPParams with:", { g, p_len: p.length, salt1_len: salt1.length, salt2_len: salt2.length, gB_len: srp_B.length, password_len: password.length });
+    console.log("Attempting to get SRPParams with:", { 
+        g, 
+        p_len: p?.length, 
+        salt1_len: salt1?.length, 
+        salt2_len: salt2?.length, 
+        gB_len: srp_B?.length, 
+        password_len: password?.length 
+    });
     
-    // Use the library's crypto helper to get A and M1
     const { A, M1 } = await api.mtproto.crypto.getSRPParams({
         g,
         p,
         salt1,
         salt2,
-        gB: srp_B, // This is srp_B from account.getPassword
+        gB: srp_B, 
         password,
     });
     console.log("SRP A and M1 computed by library. Calling auth.checkPassword...");
@@ -300,9 +309,9 @@ export async function checkPassword(password: string): Promise<any> {
     const checkResult = await api.call('auth.checkPassword', {
         password: {
             _: 'inputCheckPasswordSRP',
-            srp_id: userSession.srp_id, // srp_id from account.getPassword
-            A: A, // Computed A
-            M1: M1, // Computed M1
+            srp_id: userSession.srp_id, 
+            A: A, 
+            M1: M1, 
         }
     });
 
@@ -310,24 +319,22 @@ export async function checkPassword(password: string): Promise<any> {
     if (checkResult.user) {
         userSession.user = checkResult.user;
     }
-    // Clear SRP params after successful or attempted 2FA
     delete userSession.srp_params;
     delete userSession.srp_id;
     return checkResult.user;
 
   } catch (error: any) {
-    console.error('Error checking password:', error);
-    // Clear SRP params on error as well, as they might be stale
+    console.error('Error checking password:', error.message, error);
     delete userSession.srp_params;
     delete userSession.srp_id;
-    const message = error.error_message || (error.message || 'Failed to check 2FA password.');
-    if (message === 'PASSWORD_HASH_INVALID') {
+    const errorMessage = error.message || (error.originalErrorObject?.error_message);
+    if (errorMessage === 'PASSWORD_HASH_INVALID') {
         throw new Error('Invalid password. Please try again. (PASSWORD_HASH_INVALID)');
     }
-    if (message === 'SRP_ID_INVALID') {
+    if (errorMessage === 'SRP_ID_INVALID') {
         throw new Error('Session for 2FA has expired or is invalid. Please try logging in again. (SRP_ID_INVALID)');
     }
-    throw new Error(message);
+    throw new Error(errorMessage || 'Failed to check 2FA password.');
   }
 }
 
@@ -350,8 +357,8 @@ export async function getTelegramChats(): Promise<CloudFolder[]> {
     console.log('Dialogs raw result:', dialogsResult);
     return transformDialogsToCloudFolders(dialogsResult);
   } catch (error:any) {
-    console.error('Error fetching dialogs:', error);
-    const message = error.error_message || (error.message || 'Failed to fetch chats.');
+    console.error('Error fetching dialogs:', error.message, error);
+    const message = error.message || 'Failed to fetch chats.';
     throw new Error(message);
   }
 }
@@ -360,7 +367,6 @@ function getPeerTitle(peer: any, chats: any[], users: any[]): string {
   if (!peer) return 'Unknown Peer';
 
   try {
-    // Ensure IDs are treated as strings for comparison, as they can be BigInts from the API
     const peerUserIdStr = peer.user_id?.toString();
     const peerChatIdStr = peer.chat_id?.toString();
     const peerChannelIdStr = peer.channel_id?.toString();
@@ -381,7 +387,6 @@ function getPeerTitle(peer: any, chats: any[], users: any[]): string {
     }
   } catch (e) {
     console.error("Error in getPeerTitle processing peer:", peer, e);
-    // Fallback ID display if possible
     if(peer.user_id) return `User ${peer.user_id.toString()}`;
     if(peer.chat_id) return `Chat ${peer.chat_id.toString()}`;
     if(peer.channel_id) return `Channel ${peer.channel_id.toString()}`;
@@ -414,7 +419,7 @@ function transformDialogsToCloudFolders(dialogsResult: any): CloudFolder[] {
 
     if (!chatId) {
         console.warn("Could not determine chatId for dialog's peer:", dialog.peer);
-        return null; // Skip this dialog if we can't get a unique ID
+        return null; 
     }
     
     return {
@@ -430,7 +435,7 @@ function transformDialogsToCloudFolders(dialogsResult: any): CloudFolder[] {
         { id: `chat-${chatId}-other`, name: "Other Media", files: [], folders: [] },
       ],
     };
-  }).filter(folder => folder !== null) as CloudFolder[]; // Ensure only valid CloudFolder objects are returned
+  }).filter(folder => folder !== null) as CloudFolder[]; 
 }
 
 
@@ -439,12 +444,9 @@ export async function signOut(): Promise<void> {
     const result = await api.call('auth.logOut');
     console.log('Signed out successfully from Telegram server:', result);
   } catch (error: any) {
-    console.error('Error signing out from Telegram server:', error);
-    // Even if server logout fails, clear local session
+    console.error('Error signing out from Telegram server:', error.message, error);
   } finally {
     userSession = {};
-    // mtproto-core (browser env) handles its own localStorage for session data.
-    // We clear our app-specific userSession object here.
     console.log('Local userSession object cleared.');
   }
 }
@@ -452,22 +454,18 @@ export async function signOut(): Promise<void> {
 export async function isUserConnected(): Promise<boolean> {
   if (userSession.user) {
     try {
-        // A lightweight call to check session validity without fetching extensive data
         await api.call('users.getUsers', {id: [{_: 'inputUserSelf'}]});
         console.log("User session is active (checked with users.getUsers).");
         return true;
     } catch (error: any) {
-        // Check for specific auth-related error messages that indicate an invalid session
-        if (error.error_message && ['AUTH_KEY_UNREGISTERED', 'USER_DEACTIVATED', 'SESSION_REVOKED', 'SESSION_EXPIRED', 'API_ID_INVALID', 'API_KEY_INVALID', 'AUTH_RESTART'].includes(error.error_message)) {
-            console.warn("User session no longer valid or API keys incorrect:", error.error_message, "Logging out locally.");
-            await signOut(); // Perform local and attempt server logout
+        const errorMessage = error.message || (error.originalErrorObject?.error_message);
+        if (errorMessage && ['AUTH_KEY_UNREGISTERED', 'USER_DEACTIVATED', 'SESSION_REVOKED', 'SESSION_EXPIRED', 'API_ID_INVALID', 'API_KEY_INVALID', 'AUTH_RESTART'].includes(errorMessage)) {
+            console.warn("User session no longer valid or API keys incorrect:", errorMessage, "Logging out locally.");
+            await signOut(); 
             return false;
         }
-        // For other errors, it's ambiguous. The user object exists, but an API call failed.
-        // Depending on strictness, could return true or false or try another check.
-        // For now, if user object exists but a simple call fails for other reasons, assume connection might still be partly valid or recoverable.
-        console.warn("API call failed during connected check, but might not be an auth error. Assuming connected as user object exists locally.", error.error_message);
-        return true; // Or false, if stricter validation is needed.
+        console.warn("API call failed during connected check, but might not be an auth error. Assuming connected as user object exists locally.", errorMessage, error);
+        return true; 
     }
   }
   return false;
@@ -477,4 +475,3 @@ console.log('Telegram service (telegramService.ts) loaded with API class wrapper
 if (API_ID === undefined || !API_HASH) {
   console.error("CRITICAL: Telegram API_ID or API_HASH is not configured correctly in .env.local. Service will not function. Ensure NEXT_PUBLIC_TELEGRAM_API_ID and NEXT_PUBLIC_TELEGRAM_API_HASH are set and the dev server was restarted.");
 }
-
