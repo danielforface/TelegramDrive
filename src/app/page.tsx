@@ -109,8 +109,9 @@ export default function Home() {
 
 
   const fetchInitialChats = useCallback(async () => {
-    if (isProcessingChats || isLoadingMoreChats) return;
+    if (isProcessingChats || isLoadingMoreChatsRequestInFlightRef.current) return;
     setIsProcessingChats(true);
+    isLoadingMoreChatsRequestInFlightRef.current = false; // Reset this specifically for initial fetch
     setAllChats([]);
     setSelectedFolder(null);
     setCurrentChatMedia([]);
@@ -119,7 +120,7 @@ export default function Home() {
     setChatsOffsetId(0);
     setChatsOffsetPeer({ _: 'inputPeerEmpty' });
     setHasMoreChats(true);
-    isLoadingMoreChatsRequestInFlightRef.current = false;
+    
     toast({ title: "Fetching Chats...", description: "Loading your Telegram conversations." });
 
     try {
@@ -139,7 +140,7 @@ export default function Home() {
     } finally {
       setIsProcessingChats(false);
     }
-  }, [toast, handleApiError, isProcessingChats, isLoadingMoreChats]);
+  }, [toast, handleApiError, isProcessingChats ]);
 
 
   const checkExistingConnection = useCallback(async () => {
@@ -180,15 +181,17 @@ export default function Home() {
           setAuthStep('initial');
           setAuthError(null);
           setAllChats([]); 
+      } else {
+         handleApiError(error, "Connection Check Error", `Failed to verify existing connection. ${error.message}`);
       }
       setIsConnected(false); 
     }
-  }, [toast, fetchInitialChats]); 
+  }, [toast, fetchInitialChats, handleApiError]); 
 
   useEffect(() => {
     checkExistingConnection();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, []); // Runs once on mount
 
   const handleReset = useCallback(async (performServerLogout = true) => {
     if (performServerLogout && isConnected) {
@@ -606,7 +609,7 @@ export default function Home() {
         });
         activeDownloadsRef.current.clear(); 
     };
-  }, []); 
+  }, []); // Empty dependency array to run only on mount and unmount
 
 
   const loadMoreChatsCallback = useCallback(async () => {
@@ -1060,8 +1063,14 @@ export default function Home() {
     try {
         await fetchVideoAndCreateStreamUrl(file, newController.signal);
     } catch (error) {
-        console.error("Error in prepareAndPlayVideoStream directly (should be handled by fetchVideo):", error);
+        // Errors from fetchVideoAndCreateStreamUrl are handled within it (toast, state updates)
+        // This catch is primarily for unexpected errors in prepareAndPlayVideoStream itself
+        console.error("Error in prepareAndPlayVideoStream directly:", error);
+         if (!newController.signal.aborted) { // Avoid double-toasting if already handled
+            toast({ title: "Video Preparation Error", description: `An unexpected error occurred while preparing ${file.name}.`, variant: "destructive" });
+        }
     } finally {
+        // Ensure isPreparingVideoStream is reset if this was the controller that finished/aborted
         if (videoStreamAbortControllerRef.current === newController) {
             setIsPreparingVideoStream(false);
             setPreparingVideoStreamForFileId(null);
@@ -1093,9 +1102,11 @@ export default function Home() {
     if (isPreparingVideoStream && videoStreamAbortControllerRef.current && !videoStreamAbortControllerRef.current.signal.aborted) {
         videoStreamAbortControllerRef.current.abort("Video player closed during preparation");
     }
+    // Reset states related to video preparation
     setIsPreparingVideoStream(false); 
     setPreparingVideoStreamForFileId(null);
 
+    // Revoke object URL and clear playingVideoUrl
     if (videoStreamUrl) { 
         URL.revokeObjectURL(videoStreamUrl);
         setVideoStreamUrl(null);
@@ -1103,11 +1114,13 @@ export default function Home() {
     setPlayingVideoUrl(null); 
   }, [isPreparingVideoStream, videoStreamUrl]);
 
+  // Cleanup effect for videoStreamUrl when the component unmounts
   useEffect(() => {
     return () => {
         if (videoStreamUrl) {
             URL.revokeObjectURL(videoStreamUrl);
         }
+        // Also ensure any active preparation is aborted on unmount
         if (videoStreamAbortControllerRef.current && !videoStreamAbortControllerRef.current.signal.aborted) {
             videoStreamAbortControllerRef.current.abort("Component unmounting");
         }
@@ -1132,12 +1145,12 @@ export default function Home() {
             isLoading={isConnecting}
             error={authError}
             phoneNumber={phoneNumber} 
-            setPhoneNumberProp={setPhoneNumber} 
+            setPhoneNumberProp={setPhoneNumber} // This prop allows TelegramConnect to suggest updates
             phoneCode={phoneCode}
             setPhoneCode={setPhoneCode}
             password={password}
             setPassword={setPassword}
-            onReset={() => handleReset(authStep !== 'initial')} 
+            onReset={() => handleReset(authStep !== 'initial')} // Pass false if reset is from initial step (e.g. bad env vars)
           />
         </main>
         <footer className="py-4 px-4 sm:px-6 lg:px-8 text-center border-t">
@@ -1156,7 +1169,7 @@ export default function Home() {
         onDisconnect={() => handleReset(true)} 
         onOpenDownloadManager={handleOpenDownloadManager}
       />
-      <div className="flex-1 flex container mx-auto px-0 sm:px-2 lg:px-4 py-4 overflow-hidden">
+      <div className="flex-1 flex container mx-auto px-0 sm:px-2 lg:px-4 overflow-hidden">
         {/* Sidebar for Chats */}
         <aside className="w-64 md:w-72 lg:w-80 p-4 border-r bg-card overflow-y-auto flex-shrink-0">
           <div className="flex justify-between items-center mb-4">
@@ -1257,5 +1270,7 @@ export default function Home() {
     </div>
   );
 }
+
+    
 
     
