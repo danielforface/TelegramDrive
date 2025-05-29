@@ -126,33 +126,7 @@ export default function Home() {
                 continue;
             }
             
-            const bytesToEndOfCurrent1MBBlock = ONE_MB - (currentOffset % ONE_MB);
-
-            let idealLimit = Math.min(
-                DOWNLOAD_CHUNK_SIZE, 
-                remainingBytes,      
-                bytesToEndOfCurrent1MBBlock 
-            );
-
             let actualLimit: number;
-            if (idealLimit >= KB_1) { 
-                actualLimit = Math.floor(idealLimit / KB_1) * KB_1;
-            } else { 
-                actualLimit = idealLimit; 
-            }
-            
-            if (actualLimit === 0 && remainingBytes > 0) {
-                actualLimit = remainingBytes;
-            }
-
-            if (actualLimit <= 0) { 
-               setDownloadQueue(prevQ => prevQ.map(q => q.id === item.id ? { ...q, status: 'completed', progress: 100, downloadedBytes: item.totalSizeInBytes } : q));
-               activeDownloadsRef.current.delete(item.id);
-               continue;
-            }
-            
-            console.log(`Downloading for ${item.name}: offset=${currentOffset}, limit=${actualLimit}, remaining=${remainingBytes}, totalSize=${item.totalSizeInBytes}`);
-
             let chunkResponse: telegramService.FileChunkResponse;
 
             if (item.cdnFileToken && item.cdnDcId && item.cdnFileHashes && item.cdnEncryptionKey && item.cdnEncryptionIv) {
@@ -163,8 +137,9 @@ export default function Home() {
                     continue;
                 }
                 const cdnBlock = item.cdnFileHashes[currentHashBlockIndex];
+                actualLimit = cdnBlock.limit; // For CDN, limit is determined by the hash block
                 
-                console.log(`Processing CDN download for ${item.name}, DC: ${item.cdnDcId}, Block ${currentHashBlockIndex}, Offset: ${cdnBlock.offset}, Limit: ${cdnBlock.limit}`);
+                console.log(`Processing CDN download for ${item.name}, DC: ${item.cdnDcId}, Block ${currentHashBlockIndex}, Offset: ${cdnBlock.offset}, Limit: ${actualLimit}`);
                 chunkResponse = await telegramService.downloadCdnFileChunk(
                     {
                         dc_id: item.cdnDcId,
@@ -174,25 +149,50 @@ export default function Home() {
                         file_hashes: item.cdnFileHashes, 
                     },
                     cdnBlock.offset, 
-                    cdnBlock.limit, 
+                    actualLimit, 
                     item.abortController?.signal
                 );
 
                 if (chunkResponse?.bytes) {
                     const downloadedHash = await telegramService.calculateSHA256(chunkResponse.bytes);
                     if (!telegramService.areUint8ArraysEqual(downloadedHash, cdnBlock.hash)) {
-                        console.error(`CDN Hash mismatch for ${item.name}, block ${currentHashBlockIndex}.`);
+                        console.error(`CDN Hash mismatch for ${item.name}, block ${currentHashBlockIndex}. Expected:`, cdnBlock.hash, "Got:", downloadedHash);
                         setDownloadQueue(prevQ => prevQ.map(q => q.id === item.id ? { ...q, status: 'failed', progress: item.progress, error_message: 'CDN Hash Mismatch' } : q));
                         activeDownloadsRef.current.delete(item.id);
                         continue;
                     }
                     console.log(`CDN Hash verified for ${item.name}, block ${currentHashBlockIndex}`);
                 }
-
-
             } else {
                 // Direct Download Path
-                console.log(`Processing direct download for ${item.name}, offset: ${currentOffset}, limit: ${actualLimit}`);
+                const bytesToEndOfCurrent1MBBlock = ONE_MB - (currentOffset % ONE_MB);
+                // Determine the maximum we can actually request in this turn based on file end, 1MB block end, and our preferred chunk size
+                const maxDataToFetchThisTurn = Math.min(remainingBytes, bytesToEndOfCurrent1MBBlock, DOWNLOAD_CHUNK_SIZE);
+
+                if (maxDataToFetchThisTurn <= 0) {
+                    actualLimit = 0; // No data to fetch or an error in logic.
+                } else if (maxDataToFetchThisTurn < KB_1) {
+                    // If what's left (or can be fetched in this 1MB block) is less than 1KB,
+                    // we still need to request a 'limit' that is a multiple of 1KB.
+                    // The server will return fewer bytes if that's all that's left.
+                    actualLimit = KB_1;
+                } else {
+                    // We can fetch 1KB or more. Round down to the nearest multiple of 1KB.
+                    actualLimit = Math.floor(maxDataToFetchThisTurn / KB_1) * KB_1;
+                    // Safety check: if rounding down made it zero (e.g. maxDataToFetchThisTurn was 1000, and KB_1 is 1024), make it KB_1.
+                    if (actualLimit === 0 && maxDataToFetchThisTurn > 0) { // maxDataToFetchThisTurn > 0 ensures we actually want to fetch
+                        actualLimit = KB_1;
+                    }
+                }
+                
+                console.log(`Processing direct download for ${item.name}, offset: ${currentOffset}, calculated limit: ${actualLimit}, maxDataThisTurn: ${maxDataToFetchThisTurn}, remainingInFile: ${remainingBytes}, remainingIn1MBBlock: ${bytesToEndOfCurrent1MBBlock}`);
+                
+                if (actualLimit <= 0) { 
+                   setDownloadQueue(prevQ => prevQ.map(q => q.id === item.id ? { ...q, status: 'completed', progress: 100, downloadedBytes: item.totalSizeInBytes } : q));
+                   activeDownloadsRef.current.delete(item.id);
+                   continue;
+                }
+
                 chunkResponse = await telegramService.downloadFileChunk(
                     item.location,
                     currentOffset,
@@ -223,7 +223,7 @@ export default function Home() {
                         hash: fh.hash,
                     })),
                     cdnCurrentFileHashIndex: 0, 
-                    currentOffset: 0, 
+                    currentOffset: 0, // Reset offset for CDN download based on hash blocks
                     downloadedBytes: 0, 
                     progress: 0, 
                     chunks: [], 
@@ -242,9 +242,16 @@ export default function Home() {
               let nextCdnHashIndex = item.cdnCurrentFileHashIndex;
 
               if(item.cdnFileToken && item.cdnFileHashes) { 
-                nextItemOffset = (item.cdnFileHashes[item.cdnCurrentFileHashIndex || 0].offset) + chunkSize; 
+                // For CDN, the next offset is determined by the next hash block, or completion
+                // currentOffset in item is total downloaded from CDN blocks.
+                // The actual offset for the *next* API call for CDN is from cdnFileHashes[nextCdnHashIndex].offset
+                // We only increment cdnCurrentFileHashIndex here. The offset for API call is derived at start of CDN block processing.
                 nextCdnHashIndex = (item.cdnCurrentFileHashIndex || 0) + 1;
+                // For progress, currentOffset should track total bytes downloaded from CDN.
+                // Let's ensure nextItemOffset is set to the total bytes downloaded for CDN for consistency.
+                nextItemOffset = newDownloadedBytes;
               } else { 
+                // For direct download, advance offset by chunk size
                 nextItemOffset = currentOffset + chunkSize;
               }
 
@@ -935,3 +942,5 @@ export default function Home() {
   );
 }
 
+
+    
