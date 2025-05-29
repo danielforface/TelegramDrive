@@ -1180,7 +1180,7 @@ export default function Home() {
         onDisconnect={() => handleReset(true)} 
         onOpenDownloadManager={handleOpenDownloadManager}
       />
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden min-h-0">
         <div className="flex container mx-auto w-full h-full px-0 sm:px-2 lg:px-4">
             <aside className="w-64 md:w-72 lg:w-80 p-4 border-r bg-card overflow-y-auto flex-shrink-0">
             <div className="flex justify-between items-center mb-4">
@@ -1281,5 +1281,7 @@ export default function Home() {
     </div>
   );
 }
+
+    
 
     
