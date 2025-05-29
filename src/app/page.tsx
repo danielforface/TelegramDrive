@@ -164,7 +164,7 @@ export default function Home() {
       }
       setIsConnected(false); 
     }
-  }, [toast, fetchInitialChats, handleApiError]); 
+  }, [toast, fetchInitialChats]); 
 
   useEffect(() => {
     checkExistingConnection();
@@ -251,15 +251,16 @@ export default function Home() {
 
           try {
             const remainingBytes = upToDateItem.totalSizeInBytes - upToDateItem.downloadedBytes;
+            let actualLimitForApi: number;
+            let chunkResponse: telegramService.FileChunkResponse;
 
-            if (remainingBytes <= 0) { 
+             if (remainingBytes <= 0) {
+                // This should ideally be caught before even adding to activeDownloadsRef or re-entering
                 setDownloadQueue(prevQ => prevQ.map(q => q.id === upToDateItem.id ? { ...q, status: 'completed', progress: 100, downloadedBytes: upToDateItem.totalSizeInBytes!, currentOffset: upToDateItem.totalSizeInBytes! } : q));
                 activeDownloadsRef.current.delete(upToDateItem.id);
                 continue;
             }
 
-            let actualLimitForApi: number;
-            let chunkResponse: telegramService.FileChunkResponse;
 
             if (upToDateItem.cdnFileToken && upToDateItem.cdnDcId && upToDateItem.cdnFileHashes && upToDateItem.cdnEncryptionKey && upToDateItem.cdnEncryptionIv) {
                 const currentHashBlockIndex = upToDateItem.cdnCurrentFileHashIndex || 0;
@@ -314,26 +315,18 @@ export default function Home() {
                 const offsetWithinCurrentBlock = upToDateItem.currentOffset % ONE_MB;
                 const bytesLeftInCurrentBlock = ONE_MB - offsetWithinCurrentBlock;
                 
-                // Determine the maximum number of bytes we can request in this call
                 let idealRequestSize = Math.min(bytesLeftInCurrentBlock, DOWNLOAD_CHUNK_SIZE);
 
                 if (bytesNeededForFile <= 0) {
-                    actualLimitForApi = 0; // No more bytes needed
-                } else if (idealRequestSize <= 0) { // Should ideally not happen if bytesLeftInCurrentBlock > 0
                     actualLimitForApi = 0; 
+                } else if (idealRequestSize <= 0) { 
+                    actualLimitForApi = bytesNeededForFile > 0 ? KB_1 : 0;
                 } else if (idealRequestSize < KB_1) {
-                    // If what we can ideally take is less than 1KB (e.g. 21 bytes left in 1MB block),
-                    // we must ask for at least 1KB. Server will return the actual remaining bytes.
                     actualLimitForApi = KB_1;
                 } else {
-                    // idealRequestSize is >= 1KB. Round it down to the nearest 1KB multiple.
                     actualLimitForApi = Math.floor(idealRequestSize / KB_1) * KB_1;
                 }
-
-                // If rounding down made actualLimitForApi zero, but we actually could request something (idealRequestSize > 0),
-                // it means idealRequestSize was positive but < KB_1. The 'else if (idealRequestSize < KB_1)'
-                // should have caught this and set actualLimitForApi to KB_1.
-                // This final check is a safeguard.
+                
                 if (actualLimitForApi === 0 && bytesNeededForFile > 0 && idealRequestSize > 0) {
                     actualLimitForApi = KB_1;
                 }
@@ -419,21 +412,24 @@ export default function Home() {
                     }
 
                     if (newDownloadedBytes >= q_item.totalSizeInBytes!) {
-                      const fullFileBlob = new Blob(newChunks, { type: q_item.telegramMessage?.mime_type || 'application/octet-stream' });
-                      const url = URL.createObjectURL(fullFileBlob);
-                      const a = document.createElement('a');
-                      a.href = url;
-                      a.download = q_item.name;
-                      document.body.appendChild(a);
-                      a.click();
-                      document.body.removeChild(a);
-                      URL.revokeObjectURL(url);
-                      console.log(`File ${q_item.name} downloaded and saved.`);
+                       // Guard against triggering download multiple times for the same completed item
+                      if (q_item.status !== 'completed') {
+                        const fullFileBlob = new Blob(newChunks, { type: q_item.telegramMessage?.mime_type || 'application/octet-stream' });
+                        const url = URL.createObjectURL(fullFileBlob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = q_item.name;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        console.log(`File ${q_item.name} downloaded and saved.`);
+                      }
                       return {
                         ...q_item,
                         status: 'completed',
                         progress: 100,
-                        downloadedBytes: newDownloadedBytes,
+                        downloadedBytes: q_item.totalSizeInBytes!, // Ensure it's capped at total size
                         chunks: [], 
                         cdnCurrentFileHashIndex: undefined, 
                         currentOffset: q_item.totalSizeInBytes! 
@@ -801,7 +797,7 @@ export default function Home() {
 
     if (existingItem && ['failed', 'cancelled'].includes(existingItem.status)) {
         setDownloadQueue(prevQ => prevQ.filter(q => q.id !== file.id));
-        await new Promise(resolve => setTimeout(resolve, 50));
+        await new Promise(resolve => setTimeout(resolve, 50)); // Allow state to update
     }
 
     toast({ title: "Preparing Download...", description: `Getting details for ${file.name}.` });
@@ -846,6 +842,8 @@ export default function Home() {
         console.log(`User cancelling download for ${itemToCancel.name}`);
         itemToCancel.abortController.abort("User cancelled download"); 
     }
+    // Status will be updated to 'cancelled' by the processQueue useEffect when it detects the abort signal.
+    // We can optimistically update here too if needed, but processQueue should handle it robustly.
     setDownloadQueue(prevQueue =>
       prevQueue.map(item =>
         item.id === itemId ? { ...item, status: 'cancelled', progress: 0, downloadedBytes: 0 } : item
@@ -855,6 +853,8 @@ export default function Home() {
   };
 
   const handlePauseDownload = (itemId: string) => {
+    // The processQueue will stop fetching chunks for this item when status is 'paused'.
+    // No need to directly abort here, as pausing implies resumability.
     setDownloadQueue(prevQueue =>
         prevQueue.map(item =>
             item.id === itemId && item.status === 'downloading' ? 
@@ -869,6 +869,7 @@ export default function Home() {
 
     if (itemToResume && (itemToResume.status === 'failed' || itemToResume.status === 'cancelled')) {
         console.log(`Retrying download for ${itemToResume.name}`);
+        // Re-queue the download. This will re-trigger prepareFileDownloadInfo.
         const originalFileProps: CloudFile = {
             id: itemToResume.id,
             name: itemToResume.name,
@@ -882,13 +883,16 @@ export default function Home() {
             totalSizeInBytes: itemToResume.totalSizeInBytes,
             inputPeer: itemToResume.inputPeer,
         };
+        // Remove the old failed/cancelled item, then add it back to re-trigger.
         setDownloadQueue(prevQ => prevQ.filter(q => q.id !== itemId));
+        // Short delay to ensure state updates before re-queueing
         setTimeout(() => {
             handleQueueDownload(originalFileProps);
         }, 50);
         return;
     }
 
+    // For 'paused' items, just set status to 'downloading'. processQueue will pick it up.
     setDownloadQueue(prevQueue =>
         prevQueue.map(item =>
             item.id === itemId && item.status === 'paused' ?
