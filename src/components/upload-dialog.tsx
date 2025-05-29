@@ -13,19 +13,39 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { UploadCloud, FileText, X, Loader2, CheckCircle, AlertTriangle } from "lucide-react"; // Added CheckCircle, AlertTriangle
+import { UploadCloud, FileText, X, Loader2, CheckCircle, AlertTriangle, RefreshCw, Hourglass } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { formatFileSize } from '@/lib/utils';
-import type { ExtendedFile } from '@/types'; // Import ExtendedFile
+import type { ExtendedFile } from '@/types';
 
 interface UploadDialogProps {
   isOpen: boolean;
   onClose: () => void;
   onFilesSelected: (files: FileList | null) => void;
   onUpload: () => void;
-  selectedFiles: ExtendedFile[]; // Use ExtendedFile here
-  isLoading?: boolean; 
+  selectedFiles: ExtendedFile[];
+  isLoading?: boolean;
 }
+
+const FileStatusIcon = ({ status }: { status: ExtendedFile['uploadStatus'] }) => {
+  switch (status) {
+    case 'uploading':
+      return <Loader2 className="w-4 h-4 text-primary animate-spin" />;
+    case 'processing':
+      return <Hourglass className="w-4 h-4 text-yellow-500 animate-pulse" />;
+    case 'completed':
+      return <CheckCircle className="w-4 h-4 text-green-500" />;
+    case 'failed':
+      return <AlertTriangle className="w-4 h-4 text-red-500" />;
+    case 'cancelled':
+      return <X className="w-4 h-4 text-orange-500" />;
+    case 'pending':
+      return <RefreshCw className="w-4 h-4 text-muted-foreground" />; // Or a clock icon
+    default:
+      return null;
+  }
+};
+
 
 export function UploadDialog({
   isOpen,
@@ -45,21 +65,22 @@ export function UploadDialog({
     if(event.target.files && event.target.files.length > 0) {
         toast({ title: "Files Selected", description: `${event.target.files.length} file(s) added to upload queue.`});
     }
-    // Clear the input value to allow selecting the same file again
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
   };
 
   const handleDropZoneClick = () => {
+    if (isLoading) return; // Prevent opening file dialog during upload
     fileInputRef.current?.click();
   };
 
   const handleDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     event.stopPropagation();
+    if (isLoading) return;
     setIsDraggingOver(true);
-  }, []);
+  }, [isLoading]);
 
   const handleDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -71,15 +92,16 @@ export function UploadDialog({
     event.preventDefault();
     event.stopPropagation();
     setIsDraggingOver(false);
+    if (isLoading) return;
     if (event.dataTransfer.files && event.dataTransfer.files.length > 0) {
       onFilesSelected(event.dataTransfer.files);
        toast({ title: "Files Dropped", description: `${event.dataTransfer.files.length} file(s) added to upload queue.`});
       event.dataTransfer.clearData();
     }
-  }, [onFilesSelected, toast]);
+  }, [onFilesSelected, toast, isLoading]);
 
   const handleUploadClick = () => {
-    if (selectedFiles.filter(f => f.uploadStatus !== 'completed' && f.uploadStatus !== 'uploading').length === 0) {
+    if (selectedFiles.filter(f => f.uploadStatus === 'pending' || f.uploadStatus === 'failed' || f.uploadStatus === 'cancelled').length === 0) {
       toast({
         title: "No new files to upload",
         description: "Please select new files or clear completed/failed ones to upload again.",
@@ -89,8 +111,8 @@ export function UploadDialog({
     }
     onUpload();
   };
-  
-  const filesReadyForUpload = selectedFiles.filter(f => f.uploadStatus !== 'completed' && f.uploadStatus !== 'uploading').length;
+
+  const filesReadyForUploadCount = selectedFiles.filter(f => f.uploadStatus === 'pending' || f.uploadStatus === 'failed' || f.uploadStatus === 'cancelled').length;
 
 
   return (
@@ -118,11 +140,12 @@ export function UploadDialog({
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
             className={`w-full p-8 border-2 border-dashed rounded-lg flex flex-col items-center justify-center text-center cursor-pointer transition-colors
-                        ${isDraggingOver ? "border-primary bg-primary/10" : "border-border hover:border-primary/50"}`}
+                        ${isLoading ? "bg-muted/30 cursor-not-allowed" :
+                        isDraggingOver ? "border-primary bg-primary/10" : "border-border hover:border-primary/50"}`}
           >
-            <UploadCloud className={`w-12 h-12 mb-3 ${isDraggingOver ? 'text-primary' : 'text-muted-foreground'}`} />
+            <UploadCloud className={`w-12 h-12 mb-3 ${isDraggingOver && !isLoading ? 'text-primary' : 'text-muted-foreground'}`} />
             <p className="text-sm text-muted-foreground">
-              {isDraggingOver ? "Drop files here" : "Drag & drop files or click to browse"}
+              {isLoading ? "Upload in progress..." : isDraggingOver ? "Drop files here" : "Drag & drop files or click to browse"}
             </p>
             <input
               type="file"
@@ -130,6 +153,7 @@ export function UploadDialog({
               onChange={handleFileChange}
               multiple
               className="hidden"
+              disabled={isLoading}
             />
           </div>
 
@@ -138,20 +162,18 @@ export function UploadDialog({
               <h4 className="text-sm font-medium text-muted-foreground">Selected files ({selectedFiles.length}):</h4>
               <ScrollArea className="h-40 border rounded-md p-2 bg-muted/20">
                 <ul className="space-y-1.5">
-                  {selectedFiles.map((file, index) => (
-                    <li key={`${file.name}-${file.lastModified}-${index}`} className="text-xs flex items-center justify-between p-2 bg-background rounded shadow-sm">
+                  {selectedFiles.map((file) => (
+                    <li key={file.id} className="text-xs flex items-center justify-between p-2 bg-background rounded shadow-sm">
                       <div className="flex items-center truncate flex-1 min-w-0 mr-2">
                         <FileText className="w-4 h-4 mr-2 flex-shrink-0 text-muted-foreground" />
                         <span className="truncate" title={file.name}>{file.name}</span>
                       </div>
                       <div className="flex items-center flex-shrink-0">
                         <span className="text-muted-foreground mr-2">{formatFileSize(file.size)}</span>
-                        {file.uploadStatus === 'uploading' && file.uploadProgress !== undefined && (
+                        {(file.uploadStatus === 'uploading' || file.uploadStatus === 'processing') && file.uploadProgress !== undefined && (
                            <span className="text-primary text-xs mr-1">({file.uploadProgress}%)</span>
                         )}
-                        {file.uploadStatus === 'uploading' && <Loader2 className="w-4 h-4 text-primary animate-spin" />}
-                        {file.uploadStatus === 'completed' && <CheckCircle className="w-4 h-4 text-green-500" />}
-                        {file.uploadStatus === 'failed' && <AlertTriangle className="w-4 h-4 text-red-500" />}
+                        <FileStatusIcon status={file.uploadStatus} />
                       </div>
                     </li>
                   ))}
@@ -163,16 +185,16 @@ export function UploadDialog({
 
         <DialogFooter className="p-6 border-t flex-shrink-0">
           <Button variant="outline" onClick={onClose} disabled={isLoading}>
-            Cancel
+            {isLoading ? "Uploading..." : "Cancel"}
           </Button>
-          <Button onClick={handleUploadClick} disabled={filesReadyForUpload === 0 || isLoading}>
+          <Button onClick={handleUploadClick} disabled={filesReadyForUploadCount === 0 || isLoading}>
             {isLoading ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 Uploading...
               </>
             ) : (
-              `Upload ${filesReadyForUpload > 0 ? filesReadyForUpload : ''} File${filesReadyForUpload !== 1 ? 's' : ''}`
+              `Upload ${filesReadyForUploadCount > 0 ? filesReadyForUploadCount : ''} File${filesReadyForUploadCount !== 1 ? 's' : ''}`
             )}
           </Button>
         </DialogFooter>
@@ -180,6 +202,3 @@ export function UploadDialog({
     </Dialog>
   );
 }
-
-
-    

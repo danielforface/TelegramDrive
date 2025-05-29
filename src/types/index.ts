@@ -1,26 +1,25 @@
 
-
 export interface CloudFile {
-  id: string; 
+  id: string;
   name: string;
   type: 'image' | 'video' | 'audio' | 'document' | 'unknown';
-  size?: string; 
-  timestamp: number; 
-  url?: string; 
+  size?: string;
+  timestamp: number;
+  url?: string;
   dataAiHint?: string;
-  messageId: number; 
-  telegramMessage?: any; 
-  totalSizeInBytes?: number; 
-  inputPeer?: any; 
+  messageId: number;
+  telegramMessage?: any;
+  totalSizeInBytes?: number;
+  inputPeer?: any;
 }
 
-export interface CloudFolder { 
-  id: string; 
-  name: string; 
-  folders: CloudFolder[]; 
-  files: CloudFile[];    
+export interface CloudFolder {
+  id: string;
+  name: string;
+  folders: CloudFolder[];
+  files: CloudFile[];
   isChatFolder?: boolean;
-  inputPeer?: any; 
+  inputPeer?: any;
 }
 
 export interface GetChatsPaginatedResponse {
@@ -55,20 +54,20 @@ export interface FileHash {
 
 export interface DownloadQueueItemType extends CloudFile {
   status: DownloadStatus;
-  progress: number; 
+  progress: number;
   downloadedBytes: number;
-  location?: any; 
+  location?: any;
   chunks?: Uint8Array[];
   currentOffset: number;
   abortController?: AbortController;
-  totalSizeInBytes: number; 
+  totalSizeInBytes: number;
   cdnDcId?: number;
   cdnFileToken?: Uint8Array;
   cdnEncryptionKey?: Uint8Array;
   cdnEncryptionIv?: Uint8Array;
   cdnFileHashes?: FileHash[];
   cdnCurrentFileHashIndex?: number;
-  error_message?: string; 
+  error_message?: string;
 }
 
 export interface FileDownloadInfo {
@@ -80,7 +79,7 @@ export interface FileDownloadInfo {
 
 type SuccessfulFileChunk_Bytes = {
   bytes: Uint8Array;
-  type: string; 
+  type: string;
   isCdnRedirect?: never;
   cdnRedirectData?: never;
   errorType?: never;
@@ -95,7 +94,7 @@ type SuccessfulFileChunk_CdnRedirect = {
     file_token: Uint8Array;
     encryption_key: Uint8Array;
     encryption_iv: Uint8Array;
-    file_hashes: AppFileHash[]; // Changed from any[] to AppFileHash[]
+    file_hashes: AppFileHash[];
   };
   errorType?: never;
 };
@@ -111,10 +110,13 @@ type ErrorFileChunk = {
 export type FileChunkResponse = SuccessfulFileChunk_Bytes | SuccessfulFileChunk_CdnRedirect | ErrorFileChunk;
 
 // For file uploads, to track progress in UI if needed
-export interface ExtendedFile extends File {
+export interface ExtendedFile {
+  id: string; // Unique client-side ID for this upload instance
+  originalFile: File; // The actual File object
+  name: string;
+  size: number;
+  type: string;
+  lastModified: number;
   uploadProgress?: number;
-  uploadStatus?: 'pending' | 'uploading' | 'completed' | 'failed' | 'cancelled';
+  uploadStatus?: 'pending' | 'uploading' | 'processing' | 'completed' | 'failed' | 'cancelled';
 }
-
-
-    

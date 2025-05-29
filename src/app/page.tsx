@@ -34,12 +34,12 @@ export default function Home() {
   const [isConnecting, setIsConnecting] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
 
-  const [isProcessingChats, setIsProcessingChats] = useState(false); // For UI loading state
-  const isProcessingChatsRef = useRef(false); // Guard for actual processing logic
+  const [isProcessingChats, setIsProcessingChats] = useState(false);
+  const isProcessingChatsRef = useRef(false);
 
   const [allChats, setAllChats] = useState<CloudFolder[]>([]);
-  const [isLoadingMoreChats, setIsLoadingMoreChats] = useState(false); // For UI loading state
-  const isLoadingMoreChatsRequestInFlightRef = useRef(false); // Guard for actual processing logic
+  const [isLoadingMoreChats, setIsLoadingMoreChats] = useState(false);
+  const isLoadingMoreChatsRequestInFlightRef = useRef(false);
   const [hasMoreChats, setHasMoreChats] = useState(true);
   const [chatsOffsetDate, setChatsOffsetDate] = useState(0);
   const [chatsOffsetId, setChatsOffsetId] = useState(0);
@@ -73,15 +73,14 @@ export default function Home() {
   const browserDownloadTriggeredRef = useRef(new Set<string>());
 
   const [isChatSelectionDialogOpen, setIsChatSelectionDialogOpen] = useState(false);
-  const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false); 
-  const [filesToUpload, setFilesToUpload] = useState<ExtendedFile[]>([]); 
+  const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
+  const [filesToUpload, setFilesToUpload] = useState<ExtendedFile[]>([]);
   const [isUploadingFiles, setIsUploadingFiles] = useState(false);
   const uploadAbortControllersRef = useRef<Map<string, AbortController>>(new Map());
 
 
   const headerRef = useRef<HTMLDivElement>(null);
   const footerRef = useRef<HTMLDivElement>(null);
-  // const chatListContainerRef = useRef<HTMLDivElement>(null); Removed as sidebar is gone
 
 
   useEffect(() => {
@@ -123,19 +122,19 @@ export default function Home() {
         console.log("fetchInitialChats: Already processing or request in flight, exiting.");
         return;
     }
-    
+
     isProcessingChatsRef.current = true;
-    setIsProcessingChats(true); // For UI indicator
-    
+    setIsProcessingChats(true);
+
     setAllChats([]);
     setAuthError(null);
     setChatsOffsetDate(0);
     setChatsOffsetId(0);
     setChatsOffsetPeer({ _: 'inputPeerEmpty' });
     setHasMoreChats(true);
-    setIsLoadingMoreChats(false); 
+    setIsLoadingMoreChats(false);
     isLoadingMoreChatsRequestInFlightRef.current = false;
-    
+
     toast({ title: "Fetching Chats...", description: "Loading your Telegram conversations." });
 
     try {
@@ -155,7 +154,7 @@ export default function Home() {
       setHasMoreChats(false);
     } finally {
       isProcessingChatsRef.current = false;
-      setIsProcessingChats(false); // For UI indicator
+      setIsProcessingChats(false);
     }
   }, [toast, handleApiError]);
 
@@ -167,11 +166,11 @@ export default function Home() {
       if (previouslyConnected) {
         const storedUser = telegramService.getUserSessionDetails();
         if (storedUser && storedUser.phone) {
-            setPhoneNumber(storedUser.phone); // Update phone number from session
+            setPhoneNumber(storedUser.phone);
         }
         console.log("User was previously connected. Setting state.");
         setIsConnected(true);
-        setAuthStep('initial'); // Reset auth step if already connected
+        setAuthStep('initial');
         setAuthError(null);
         // fetchInitialChats will be triggered by the useEffect that depends on isConnected
       } else {
@@ -180,7 +179,7 @@ export default function Home() {
         setPhoneNumber('');
         setAuthStep('initial');
         setAuthError(null);
-        setAllChats([]); 
+        setAllChats([]);
       }
     } catch (error: any) {
       console.warn("Error checking existing connection:", error.message, error.originalErrorObject || error);
@@ -195,27 +194,25 @@ export default function Home() {
         setAuthError("Connection handshake failed. Check API credentials & localStorage.");
       } else if (errorMessage === 'AUTH_RESTART') {
           toast({ title: "Authentication Expired", description: "Your session needs to be re-initiated. Please enter your phone number again.", variant: "destructive" });
-          // handleReset(false) will be called by handleApiError if it detects AUTH_RESTART
+          handleReset(false);
       } else {
          handleApiError(error, "Connection Check Error", `Failed to verify existing connection. ${errorMessage}`);
       }
       setIsConnected(false);
     }
-  }, [toast, handleApiError]); // Removed fetchInitialChats from here
+  }, [toast, handleApiError]);
 
-  // Effect to run once on mount to check existing connection
   useEffect(() => {
     checkExistingConnection();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Empty dependency array ensures this runs only once
+  }, []);
 
-  // Effect to fetch initial chats when isConnected becomes true AND chats haven't been loaded yet
   useEffect(() => {
     if (isConnected && allChats.length === 0 && !isProcessingChatsRef.current) {
       fetchInitialChats();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected, fetchInitialChats]); // Keep fetchInitialChats as dependency for stability if its definition changes
+  }, [isConnected, fetchInitialChats]);
 
   const handleReset = useCallback(async (performServerLogout = true) => {
     if (performServerLogout && isConnected) {
@@ -232,8 +229,7 @@ export default function Home() {
     }
 
     setIsConnected(false);
-    // setIsProcessingChats(false); // UI state
-    isProcessingChatsRef.current = false; // Logic guard
+    isProcessingChatsRef.current = false;
     setAllChats([]);
     setSelectedFolder(null);
     setCurrentChatMedia([]);
@@ -244,8 +240,7 @@ export default function Home() {
     setPassword('');
     setAuthError(null);
 
-    // setIsLoadingMoreChats(false); // UI state
-    isLoadingMoreChatsRequestInFlightRef.current = false; // Logic guard
+    isLoadingMoreChatsRequestInFlightRef.current = false;
     setHasMoreChats(true);
     setChatsOffsetDate(0);
     setChatsOffsetId(0);
@@ -277,7 +272,10 @@ export default function Home() {
     setIsChatSelectionDialogOpen(false);
     setIsUploadDialogOpen(false);
     setFilesToUpload([]);
-    uploadAbortControllersRef.current.forEach(controller => controller.abort("User reset application state"));
+    uploadAbortControllersRef.current.forEach((controller, id) => {
+      console.log(`Aborting upload for ${id} due to reset`);
+      controller.abort("User reset application state");
+    });
     uploadAbortControllersRef.current.clear();
     setIsUploadingFiles(false);
 
@@ -288,7 +286,7 @@ export default function Home() {
     const processQueue = async () => {
       for (let i = 0; i < downloadQueueRef.current.length; i++) {
         const itemInLoop = downloadQueueRef.current[i];
-        if (!itemInLoop) continue; 
+        if (!itemInLoop) continue;
 
         const currentItemFromState = downloadQueueRef.current.find(q => q.id === itemInLoop.id);
 
@@ -307,7 +305,7 @@ export default function Home() {
              }
              continue;
         }
-        
+
         if (upToDateItem.status === 'downloading' &&
             upToDateItem.location &&
             upToDateItem.totalSizeInBytes &&
@@ -354,7 +352,6 @@ export default function Home() {
                             browserDownloadTriggeredRef.current.add(upToDateItem.id);
                             const fullFileBlob = new Blob(upToDateItem.chunks, { type: upToDateItem.telegramMessage?.mime_type || 'application/octet-stream' });
                             const url = URL.createObjectURL(fullFileBlob);
-                            const a = document.createElement('a'); 
                             a.href = url;
                             a.download = upToDateItem.name;
                             document.body.appendChild(a);
@@ -371,17 +368,17 @@ export default function Home() {
                 }
                 const cdnBlock = upToDateItem.cdnFileHashes[currentHashBlockIndex];
                 actualLimitForApi = cdnBlock.limit;
-                
+
                 chunkResponse = await telegramService.downloadCdnFileChunk(
                     {
                         dc_id: upToDateItem.cdnDcId,
                         file_token: upToDateItem.cdnFileToken,
                         encryption_key: upToDateItem.cdnEncryptionKey,
                         encryption_iv: upToDateItem.cdnEncryptionIv,
-                        file_hashes: upToDateItem.cdnFileHashes, 
+                        file_hashes: upToDateItem.cdnFileHashes,
                     },
-                    cdnBlock.offset, 
-                    actualLimitForApi, 
+                    cdnBlock.offset,
+                    actualLimitForApi,
                     upToDateItem.abortController?.signal
                 );
 
@@ -396,13 +393,13 @@ export default function Home() {
                      console.log(`CDN Hash OK for ${upToDateItem.name}, block ${currentHashBlockIndex}`);
                 }
             } else {
-                
+
                 const bytesNeededForFileDirect = upToDateItem.totalSizeInBytes - upToDateItem.downloadedBytes;
                 const offsetWithinCurrentBlockDirect = upToDateItem.currentOffset % ONE_MB;
                 const bytesLeftInCurrentBlockDirect = ONE_MB - offsetWithinCurrentBlockDirect;
-    
+
                 let idealRequestSizeDirect = Math.min(bytesLeftInCurrentBlockDirect, DOWNLOAD_CHUNK_SIZE);
-                
+
                 if (bytesNeededForFileDirect <= 0) {
                      actualLimitForApi = 0;
                 } else if (idealRequestSizeDirect <= 0) {
@@ -412,13 +409,13 @@ export default function Home() {
                 } else {
                     actualLimitForApi = Math.floor(idealRequestSizeDirect / KB_1) * KB_1;
                 }
-                
+
                 if (actualLimitForApi === 0 && bytesNeededForFileDirect > 0 && idealRequestSizeDirect > 0) {
                     actualLimitForApi = KB_1;
                 }
 
                 console.log(`Processing direct download for ${upToDateItem.name}, offset: ${upToDateItem.currentOffset}, API limit: ${actualLimitForApi}, idealRequestSize: ${idealRequestSizeDirect}, neededForFile: ${bytesNeededForFileDirect}, leftInBlock: ${bytesLeftInCurrentBlockDirect}, totalSize: ${upToDateItem.totalSizeInBytes}`);
-                
+
                 if (actualLimitForApi <= 0) {
                    if (upToDateItem.downloadedBytes >= upToDateItem.totalSizeInBytes) {
                         if (!browserDownloadTriggeredRef.current.has(upToDateItem.id) && upToDateItem.chunks && upToDateItem.chunks.length > 0) {
@@ -460,21 +457,21 @@ export default function Home() {
             if (chunkResponse?.isCdnRedirect && chunkResponse.cdnRedirectData) {
                 setDownloadQueue(prevQ => prevQ.map(q_item => q_item.id === upToDateItem.id ? {
                     ...q_item,
-                    status: 'downloading', 
+                    status: 'downloading',
                     cdnDcId: chunkResponse.cdnRedirectData!.dc_id,
                     cdnFileToken: chunkResponse.cdnRedirectData!.file_token,
                     cdnEncryptionKey: chunkResponse.cdnRedirectData!.encryption_key,
                     cdnEncryptionIv: chunkResponse.cdnRedirectData!.encryption_iv,
                     cdnFileHashes: chunkResponse.cdnRedirectData!.file_hashes.map(fh_raw => ({
-                        offset: Number(fh_raw.offset), 
+                        offset: Number(fh_raw.offset),
                         limit: fh_raw.limit,
                         hash: fh_raw.hash,
                     })),
                     cdnCurrentFileHashIndex: 0,
-                    currentOffset: 0, 
-                    downloadedBytes: 0, 
+                    currentOffset: 0,
+                    downloadedBytes: 0,
                     progress: 0,
-                    chunks: [], 
+                    chunks: [],
                 } : q_item));
             } else if (chunkResponse?.errorType === 'FILE_REFERENCE_EXPIRED') {
                 setDownloadQueue(prevQ => prevQ.map(q_item => q_item.id === upToDateItem.id ? { ...q_item, status: 'refreshing_reference' } : q_item));
@@ -491,13 +488,13 @@ export default function Home() {
                     let nextReqOffset = q_item.currentOffset;
                     let nextCdnProcessingIndex = q_item.cdnCurrentFileHashIndex;
 
-                    if(q_item.cdnFileToken && q_item.cdnFileHashes) { 
+                    if(q_item.cdnFileToken && q_item.cdnFileHashes) {
                       nextCdnProcessingIndex = (q_item.cdnCurrentFileHashIndex || 0) + 1;
-                      nextReqOffset = newDownloadedBytes; 
-                    } else { 
+                      nextReqOffset = newDownloadedBytes;
+                    } else {
                       nextReqOffset = q_item.currentOffset + chunkSize;
                     }
-                    
+
                     if (newDownloadedBytes >= q_item.totalSizeInBytes!) {
                       if (q_item.status !== 'completed' && !browserDownloadTriggeredRef.current.has(q_item.id)) {
                         browserDownloadTriggeredRef.current.add(q_item.id);
@@ -516,9 +513,9 @@ export default function Home() {
                         status: 'completed',
                         progress: 100,
                         downloadedBytes: q_item.totalSizeInBytes!,
-                        chunks: [], 
+                        chunks: [],
                         cdnCurrentFileHashIndex: undefined,
-                        currentOffset: q_item.totalSizeInBytes! 
+                        currentOffset: q_item.totalSizeInBytes!
                       };
                     }
                     return {
@@ -528,7 +525,7 @@ export default function Home() {
                       currentOffset: nextReqOffset,
                       chunks: newChunks,
                       cdnCurrentFileHashIndex: q_item.cdnFileToken ? nextCdnProcessingIndex : undefined,
-                      status: 'downloading', 
+                      status: 'downloading',
                     };
                   }
                   return q_item;
@@ -587,7 +584,7 @@ export default function Home() {
                             ...q_item,
                             status: 'downloading',
                             location: newLocation,
-                            telegramMessage: { ...(q_item.telegramMessage || {}), ...updatedMediaObject } 
+                            telegramMessage: { ...(q_item.telegramMessage || {}), ...updatedMediaObject }
                         } : q_item));
                     } else {
                          setDownloadQueue(prevQ => prevQ.map(q_item => q_item.id === upToDateItem.id ? { ...q_item, status: 'failed', error_message: 'Refresh failed (new location error)' } : q_item));
@@ -608,7 +605,7 @@ export default function Home() {
       }
     };
 
-    const intervalId = setInterval(processQueue, 750); 
+    const intervalId = setInterval(processQueue, 750);
 
     return () => {
         clearInterval(intervalId);
@@ -618,13 +615,12 @@ export default function Home() {
                 item.abortController.abort("Component cleanup or effect re-run");
             }
         });
-        activeDownloadsRef.current.clear(); 
+        activeDownloadsRef.current.clear();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Important: Empty dependency array for main download processing loop
+  }, []);
 
 
-  // Effect to reset isLoadingMoreChatsRequestInFlightRef.current after isLoadingMoreChats changes to false
   useEffect(() => {
     if (!isLoadingMoreChats && isConnected) {
       const timer = setTimeout(() => {
@@ -632,7 +628,7 @@ export default function Home() {
             // console.log("Resetting isLoadingMoreChatsRequestInFlightRef.current to false after delay");
         }
         isLoadingMoreChatsRequestInFlightRef.current = false;
-      }, 150); 
+      }, 150);
       return () => clearTimeout(timer);
     }
   }, [isLoadingMoreChats, isConnected]);
@@ -640,9 +636,9 @@ export default function Home() {
 
   const loadMoreChatsCallback = useCallback(async () => {
     if (
-        isLoadingMoreChatsRequestInFlightRef.current || // Main guard
-        isLoadingMoreChats || // UI guard
-        isProcessingChatsRef.current || // Initial processing guard
+        isLoadingMoreChatsRequestInFlightRef.current ||
+        isLoadingMoreChats ||
+        isProcessingChatsRef.current ||
         !hasMoreChats ||
         !isConnected
         ) {
@@ -650,7 +646,7 @@ export default function Home() {
     }
 
     isLoadingMoreChatsRequestInFlightRef.current = true;
-    setIsLoadingMoreChats(true); // For UI indicator
+    setIsLoadingMoreChats(true);
 
     toast({ title: "Loading More Chats...", description: "Fetching the next batch of conversations." });
     try {
@@ -669,10 +665,10 @@ export default function Home() {
       handleApiError(error, "Error Loading More Chats", `Could not load more chats. ${error.message}`);
       setHasMoreChats(false);
     } finally {
-      setIsLoadingMoreChats(false); // For UI indicator. isLoadingMoreChatsRequestInFlightRef is handled by the separate useEffect
+      setIsLoadingMoreChats(false);
     }
-  }, [isConnected, hasMoreChats, chatsOffsetDate, chatsOffsetId, chatsOffsetPeer, toast, handleApiError]); // Dependencies: stable ones
-  
+  }, [isConnected, hasMoreChats, chatsOffsetDate, chatsOffsetId, chatsOffsetPeer, toast, handleApiError]);
+
 
   const observerChats = useRef<IntersectionObserver | null>(null);
   const lastChatElementRef = useCallback((node: HTMLLIElement | null) => {
@@ -682,17 +678,17 @@ export default function Home() {
     if (observerChats.current) observerChats.current.disconnect();
 
     observerChats.current = new IntersectionObserver(entries => {
-      if (entries[0].isIntersecting && 
-          hasMoreChats && 
+      if (entries[0].isIntersecting &&
+          hasMoreChats &&
           !isProcessingChatsRef.current &&
-          !isLoadingMoreChats && 
-          !isLoadingMoreChatsRequestInFlightRef.current // Critical guard
+          !isLoadingMoreChats &&
+          !isLoadingMoreChatsRequestInFlightRef.current
         ) {
         loadMoreChatsCallback();
       }
     });
     if (node) observerChats.current.observe(node);
-  }, [isLoadingMoreChats, hasMoreChats, loadMoreChatsCallback]); // Dependencies
+  }, [isLoadingMoreChats, hasMoreChats, loadMoreChatsCallback, isProcessingChatsRef, isLoadingMoreChatsRequestInFlightRef]);
 
 
   const fetchInitialChatMedia = useCallback(async (folder: CloudFolder) => {
@@ -778,7 +774,7 @@ export default function Home() {
     }
     setIsConnecting(true);
     setAuthError(null);
-    setPhoneNumber(fullPhoneNumberFromConnect); // Set the full phone number here
+    setPhoneNumber(fullPhoneNumberFromConnect);
     toast({ title: "Sending Code...", description: `Requesting verification code for ${fullPhoneNumberFromConnect}.` });
 
     try {
@@ -808,28 +804,26 @@ export default function Home() {
     }
     setIsConnecting(true);
     setAuthError(null);
-    setPhoneCode(currentPhoneCode); // Store the entered phone code
+    setPhoneCode(currentPhoneCode);
     toast({ title: "Verifying Code...", description: "Checking your verification code with Telegram." });
     try {
-      const result = await telegramService.signIn(phoneNumber, currentPhoneCode); // Use phoneNumber state
+      const result = await telegramService.signIn(phoneNumber, currentPhoneCode);
       if (result.user) {
         setIsConnected(true);
         setAuthStep('initial');
         setPhoneCode('');
         setPassword('');
-        // fetchInitialChats will be triggered by useEffect listening to isConnected
         toast({ title: "Sign In Successful!", description: "Connected to Telegram." });
-      } else { // Should not happen if error handling in signIn service is correct
+      } else {
         setAuthError("Sign in failed. Unexpected response from server.");
         toast({ title: "Sign In Failed", description: "Unexpected response from server.", variant: "destructive" });
       }
     } catch (error: any) {
       if (error.message === '2FA_REQUIRED' && (error as any).srp_id) {
         setAuthStep('awaiting_password');
-        setAuthError(null); 
+        setAuthError(null);
         toast({ title: "2FA Required", description: "Please enter your two-factor authentication password." });
       } else {
-        // console.log("Sign In Failed. Error:", error); // Already logged in handleApiError
         handleApiError(error, "Sign In Failed", `Could not sign in. ${error.message}`);
       }
     } finally {
@@ -845,7 +839,7 @@ export default function Home() {
     }
     setIsConnecting(true);
     setAuthError(null);
-    setPassword(currentPassword); // Store the entered password
+    setPassword(currentPassword);
     toast({ title: "Verifying Password...", description: "Checking your 2FA password." });
     try {
       const user = await telegramService.checkPassword(currentPassword);
@@ -854,9 +848,8 @@ export default function Home() {
         setAuthStep('initial');
         setPhoneCode('');
         setPassword('');
-        // fetchInitialChats will be triggered by useEffect listening to isConnected
         toast({ title: "2FA Successful!", description: "Connected to Telegram." });
-      } else { // Should not happen
+      } else {
         setAuthError("2FA failed. Unexpected response from server.");
         toast({ title: "2FA Failed", description: "Unexpected response from server.", variant: "destructive" });
       }
@@ -893,7 +886,7 @@ export default function Home() {
     if (existingItem && ['failed', 'cancelled'].includes(existingItem.status)) {
         browserDownloadTriggeredRef.current.delete(file.id);
         setDownloadQueue(prevQ => prevQ.filter(q => q.id !== file.id));
-        await new Promise(resolve => setTimeout(resolve, 50)); 
+        await new Promise(resolve => setTimeout(resolve, 50));
     }
 
     toast({ title: "Preparing Download...", description: `Getting details for ${file.name}.` });
@@ -902,14 +895,14 @@ export default function Home() {
     if (downloadInfo && downloadInfo.location && downloadInfo.totalSize > 0 && file.totalSizeInBytes) {
       const controller = new AbortController();
       const newItem: DownloadQueueItemType = {
-        ...file, 
-        status: 'downloading', 
+        ...file,
+        status: 'downloading',
         progress: 0,
         downloadedBytes: 0,
         currentOffset: 0,
         chunks: [],
         location: downloadInfo.location,
-        totalSizeInBytes: file.totalSizeInBytes, 
+        totalSizeInBytes: file.totalSizeInBytes,
         abortController: controller,
         cdnDcId: undefined,
         cdnFileToken: undefined,
@@ -920,7 +913,7 @@ export default function Home() {
         error_message: undefined,
       };
       setDownloadQueue(prevQueue => {
-        const filteredQueue = prevQueue.filter(item => item.id !== file.id); 
+        const filteredQueue = prevQueue.filter(item => item.id !== file.id);
         return [...filteredQueue, newItem];
       });
       setIsDownloadManagerOpen(true);
@@ -931,17 +924,23 @@ export default function Home() {
   }, [toast]);
 
   const handleCancelDownload = useCallback((itemId: string) => {
-    const itemToCancel = downloadQueueRef.current.find(item => item.id === itemId);
-    if (itemToCancel && itemToCancel.abortController && !itemToCancel.abortController.signal.aborted) {
-        itemToCancel.abortController.abort("User cancelled download");
-    }
-    toast({ title: "Download Cancelled", description: `Download for ${itemToCancel?.name || 'item'} has been cancelled.`});
+    setDownloadQueue(prevQueue =>
+      prevQueue.map(item => {
+        if (item.id === itemId && item.abortController && !item.abortController.signal.aborted) {
+          item.abortController.abort("User cancelled download");
+          return { ...item, status: 'cancelled', progress: 0, downloadedBytes: 0, error_message: "Cancelled by user." };
+        }
+        return item;
+      })
+    );
+    toast({ title: "Download Cancelled", description: `Download for item has been cancelled.`});
   }, [toast]);
+
 
   const handlePauseDownload = useCallback((itemId: string) => {
     setDownloadQueue(prevQueue =>
         prevQueue.map(item =>
-            item.id === itemId && item.status === 'downloading' ? 
+            item.id === itemId && item.status === 'downloading' ?
             {...item, status: 'paused'} : item
         )
     );
@@ -952,7 +951,7 @@ export default function Home() {
     const itemToResume = downloadQueueRef.current.find(item => item.id === itemId);
 
     if (itemToResume && (itemToResume.status === 'failed' || itemToResume.status === 'cancelled')) {
-        browserDownloadTriggeredRef.current.delete(itemId); 
+        browserDownloadTriggeredRef.current.delete(itemId);
 
         const originalFileProps: CloudFile = {
             id: itemToResume.id,
@@ -963,21 +962,21 @@ export default function Home() {
             url: itemToResume.url,
             dataAiHint: itemToResume.dataAiHint,
             messageId: itemToResume.messageId,
-            telegramMessage: itemToResume.telegramMessage, 
+            telegramMessage: itemToResume.telegramMessage,
             totalSizeInBytes: itemToResume.totalSizeInBytes,
-            inputPeer: itemToResume.inputPeer, 
+            inputPeer: itemToResume.inputPeer,
         };
         setDownloadQueue(prevQ => prevQ.filter(q => q.id !== itemId));
         setTimeout(() => {
-            handleQueueDownload(originalFileProps);
+            handleQueueDownload(originalFileProps); // This re-adds and starts download
         }, 50);
         return;
     }
 
     setDownloadQueue(prevQueue =>
         prevQueue.map(item =>
-            item.id === itemId && item.status === 'paused' ? 
-            {...item, status: 'downloading'} : item 
+            item.id === itemId && item.status === 'paused' ?
+            {...item, status: 'downloading'} : item
         )
     );
     toast({ title: "Download Resumed", description: `Download for item has been resumed.`});
@@ -1011,13 +1010,14 @@ export default function Home() {
 
       while (downloadedBytes < totalSize) {
         if (signal.aborted) throw new Error("Video preparation aborted by user.");
-        
+
         const bytesNeededForVideo = totalSize - downloadedBytes;
         const offsetWithinCurrentMBBlockVideo = currentOffset % ONE_MB;
         const bytesLeftInCurrentMBBlockVideo = ONE_MB - offsetWithinCurrentMBBlockVideo;
-        
-        let idealBytesToRequestVideo = Math.min(DOWNLOAD_CHUNK_SIZE, bytesLeftInCurrentMBBlockVideo, bytesNeededForVideo);
+
+        let idealBytesToRequestVideo = Math.min(bytesLeftInCurrentMBBlockVideo, DOWNLOAD_CHUNK_SIZE, bytesNeededForVideo);
         let limitForApiCallVideo: number;
+
 
         if (bytesNeededForVideo <= 0) {
             limitForApiCallVideo = 0;
@@ -1031,6 +1031,7 @@ export default function Home() {
         if (limitForApiCallVideo === 0 && bytesNeededForVideo > 0 && idealBytesToRequestVideo > 0) {
             limitForApiCallVideo = KB_1;
         }
+
 
         if (limitForApiCallVideo <= 0) break;
 
@@ -1052,7 +1053,7 @@ export default function Home() {
           if (downloadedBytes < totalSize) {
             console.warn(`Video chunk download for ${file.name} returned empty/unexpected bytes before completion. Downloaded: ${downloadedBytes}/${totalSize}. Resp:`, chunkResponse);
           }
-          break; 
+          break;
         }
       }
 
@@ -1061,9 +1062,9 @@ export default function Home() {
       const mimeType = file.telegramMessage?.mime_type || 'video/mp4';
       const videoBlob = new Blob(chunks, { type: mimeType });
       const objectURL = URL.createObjectURL(videoBlob);
-      
-      setVideoStreamUrl(objectURL); 
-      setPlayingVideoUrl(objectURL); 
+
+      setVideoStreamUrl(objectURL);
+      setPlayingVideoUrl(objectURL);
       toast({ title: "Video Ready", description: `${file.name} is ready for playback.` });
 
     } catch (error: any) {
@@ -1072,8 +1073,8 @@ export default function Home() {
       } else {
         toast({ title: "Video Preparation Failed", description: `Could not prepare ${file.name}: ${error.message}`, variant: "destructive" });
       }
-      setPlayingVideoUrl(null); 
-      setIsVideoPlayerOpen(false); 
+      setPlayingVideoUrl(null);
+      setIsVideoPlayerOpen(false);
     }
   }, [toast]);
 
@@ -1081,7 +1082,7 @@ export default function Home() {
   const prepareAndPlayVideoStream = useCallback(async (file: CloudFile) => {
     if (isPreparingVideoStream && preparingVideoStreamForFileId === file.id) {
       toast({ title: "Already Preparing", description: `Still preparing ${file.name}. Please wait.`, variant: "default" });
-      setIsVideoPlayerOpen(true); 
+      setIsVideoPlayerOpen(true);
       return;
     }
 
@@ -1092,12 +1093,12 @@ export default function Home() {
       URL.revokeObjectURL(videoStreamUrl);
       setVideoStreamUrl(null);
     }
-    
-    setPlayingVideoUrl(null); 
+
+    setPlayingVideoUrl(null);
     setPlayingVideoName(file.name);
     setIsPreparingVideoStream(true);
     setPreparingVideoStreamForFileId(file.id);
-    setIsVideoPlayerOpen(true); 
+    setIsVideoPlayerOpen(true);
 
     const newController = new AbortController();
     videoStreamAbortControllerRef.current = newController;
@@ -1105,11 +1106,11 @@ export default function Home() {
     try {
         await fetchVideoAndCreateStreamUrl(file, newController.signal);
     } catch (error) {
-         if (!newController.signal.aborted) { 
+         if (!newController.signal.aborted) {
             console.error("Unexpected error during video stream preparation orchestrator:", error);
         }
     } finally {
-        if (videoStreamAbortControllerRef.current === newController) { 
+        if (videoStreamAbortControllerRef.current === newController) {
             setIsPreparingVideoStream(false);
             setPreparingVideoStreamForFileId(null);
         }
@@ -1119,13 +1120,13 @@ export default function Home() {
 
   const handlePlayVideo = useCallback((file: CloudFile) => {
      if (file.type === 'video') {
-        if (file.url) { 
+        if (file.url) {
             setPlayingVideoUrl(file.url);
             setPlayingVideoName(file.name);
-            setIsPreparingVideoStream(false); 
+            setIsPreparingVideoStream(false);
             setPreparingVideoStreamForFileId(null);
             setIsVideoPlayerOpen(true);
-        } else if (file.totalSizeInBytes && file.totalSizeInBytes > 0) { 
+        } else if (file.totalSizeInBytes && file.totalSizeInBytes > 0) {
             prepareAndPlayVideoStream(file);
         } else {
             toast({ title: "Playback Not Possible", description: "Video data or size is missing.", variant: "default"});
@@ -1134,7 +1135,7 @@ export default function Home() {
       toast({ title: "Not a Video", description: "This file is not a video and cannot be played here.", variant: "default"});
     }
   }, [prepareAndPlayVideoStream, toast]);
-  
+
   const handleCloseVideoPlayer = useCallback(() => {
     setIsVideoPlayerOpen(false);
     if (isPreparingVideoStream && videoStreamAbortControllerRef.current && !videoStreamAbortControllerRef.current.signal.aborted) {
@@ -1147,7 +1148,7 @@ export default function Home() {
         URL.revokeObjectURL(videoStreamUrl);
         setVideoStreamUrl(null);
     }
-    setPlayingVideoUrl(null); 
+    setPlayingVideoUrl(null);
   }, [isPreparingVideoStream, videoStreamUrl]);
 
   useEffect(() => {
@@ -1173,98 +1174,89 @@ export default function Home() {
       return;
     }
     setIsUploadDialogOpen(false);
-    setFilesToUpload([]); 
-    uploadAbortControllersRef.current.forEach(controller => controller.abort("Upload dialog closed"));
+    setFilesToUpload([]);
+    uploadAbortControllersRef.current.forEach((controller, id) => {
+      console.log(`Aborting upload for ${id} due to dialog close`);
+      controller.abort("Upload dialog closed");
+    });
     uploadAbortControllersRef.current.clear();
   };
 
-  const handleFilesSelectedForUpload = (selectedFiles: FileList | null) => {
-    if (selectedFiles) {
-      const newFiles = Array.from(selectedFiles).map(file => {
-          const extendedFile = file as ExtendedFile;
-          extendedFile.uploadStatus = 'pending'; // Initialize status
-          extendedFile.uploadProgress = 0;
-          return extendedFile;
-      });
-      setFilesToUpload(prevFiles => [...prevFiles, ...newFiles]);
+  const handleFilesSelectedForUpload = (selectedNativeFiles: FileList | null) => {
+    if (selectedNativeFiles) {
+      const newExtendedFiles: ExtendedFile[] = Array.from(selectedNativeFiles).map((file, index) => ({
+        id: `${file.name}-${file.lastModified}-${Date.now()}-${index}`, // Unique ID
+        originalFile: file,
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        lastModified: file.lastModified,
+        uploadProgress: 0,
+        uploadStatus: 'pending',
+      }));
+      setFilesToUpload(prevFiles => [...prevFiles, ...newExtendedFiles]);
+      if(newExtendedFiles.length > 0) {
+        toast({ title: "Files Ready", description: `${newExtendedFiles.length} file(s) added to upload list.`});
+      }
     }
   };
 
 const handleStartUpload = async () => {
-  if (filesToUpload.length === 0 || !selectedFolder || !selectedFolder.inputPeer) {
-    toast({ title: "Upload Error", description: "No files selected or no target chat chosen.", variant: "destructive" });
+  if (filesToUpload.filter(f => f.uploadStatus === 'pending' || f.uploadStatus === 'failed' || f.uploadStatus === 'cancelled').length === 0 || !selectedFolder || !selectedFolder.inputPeer) {
+    toast({ title: "Upload Info", description: "No new files to upload or no target chat selected.", variant: "default" });
     return;
   }
 
   setIsUploadingFiles(true);
-  const uploadPromises = filesToUpload.map(async (fileToUpload, index) => {
-    // Skip files that are already uploading, completed, or failed (unless a retry mechanism is added for failed)
-    if (fileToUpload.uploadStatus === 'uploading' || fileToUpload.uploadStatus === 'completed') {
-        return;
-    }
+  const filesToAttemptUpload = filesToUpload.filter(f => f.uploadStatus === 'pending' || f.uploadStatus === 'failed' || f.uploadStatus === 'cancelled');
 
+  for (const fileToUpload of filesToAttemptUpload) {
     const controller = new AbortController();
-    const fileIdentifier = `${fileToUpload.name}-${fileToUpload.lastModified}`; 
-    uploadAbortControllersRef.current.set(fileIdentifier, controller);
+    uploadAbortControllersRef.current.set(fileToUpload.id, controller);
 
-    const updateProgressForFile = (progress: number, status?: ExtendedFile['uploadStatus']) => {
+    const updateUiForFile = (progress: number, status: ExtendedFile['uploadStatus']) => {
       setFilesToUpload(prev =>
         prev.map(f =>
-          f.name === fileToUpload.name && f.lastModified === fileToUpload.lastModified
-            ? { ...f, 
-                uploadProgress: progress === -1 ? (f.uploadProgress || 0) : progress, 
-                uploadStatus: status || (progress === 100 ? 'completed' : (progress === -1 ? 'failed' : 'uploading')) 
-              }
+          f.id === fileToUpload.id
+            ? { ...f, uploadProgress: progress, uploadStatus: status }
             : f
         )
       );
-      if (progress >= 0 && progress < 100 && status !== 'failed' && status !== 'cancelled') {
-          // toast({ // This can be too noisy, consider updating UI directly in UploadDialog
-          //   title: "Uploading...",
-          //   description: `${fileToUpload.name} (${progress}%)`,
-          //   duration: 2000 
-          // });
-      }
     };
-    
-    updateProgressForFile(0, 'uploading'); 
+
+    updateUiForFile(0, 'uploading');
 
     try {
-      console.log(`Starting upload for: ${fileToUpload.name}. Big file: ${fileToUpload.size > 10 * 1024 * 1024}`);
+      console.log(`Starting upload for: ${fileToUpload.name}. Big file: ${fileToUpload.originalFile.size > 10 * 1024 * 1024}`);
       await telegramService.uploadFile(
         selectedFolder.inputPeer,
-        fileToUpload,
-        (percent) => updateProgressForFile(percent, percent === 100 ? 'completed' : 'uploading'),
+        fileToUpload.originalFile, // Pass the original File object
+        (percent) => {
+          // This progress is for chunk uploads. messages.sendMedia is separate.
+          updateUiForFile(percent, percent === 100 ? 'processing' : 'uploading');
+        },
         controller.signal
       );
+      // If uploadFile resolves, it means messages.sendMedia was successful
+      updateUiForFile(100, 'completed');
       toast({ title: "Upload Successful!", description: `${fileToUpload.name} uploaded to ${selectedFolder.name}.` });
-      updateProgressForFile(100, 'completed');
-      if (selectedFolder && selectedFolder.id === selectedFolder?.id) { 
-         fetchInitialChatMedia(selectedFolder);
+      if (selectedFolder && selectedFolder.id === selectedFolder?.id) {
+         fetchInitialChatMedia(selectedFolder); // Refresh media list
       }
     } catch (error: any) {
-      if (error.name === 'AbortError' || error.message?.includes('Upload aborted')) {
+      if (controller.signal.aborted || error.name === 'AbortError' || error.message?.includes('aborted')) {
+        updateUiForFile(fileToUpload.uploadProgress || 0, 'cancelled');
         toast({ title: "Upload Cancelled", description: `${fileToUpload.name} upload was cancelled.`, variant: "default" });
-         updateProgressForFile(-1, 'cancelled'); 
       } else {
+        updateUiForFile(fileToUpload.uploadProgress || 0, 'failed');
         toast({ title: "Upload Failed", description: `Could not upload ${fileToUpload.name}: ${error.message}`, variant: "destructive" });
-        updateProgressForFile(-1, 'failed'); 
       }
-      console.error(`Error uploading ${fileToUpload.name}:`, error);
+      console.error(`Error uploading ${fileToUpload.name} (ID: ${fileToUpload.id}):`, error);
     } finally {
-      uploadAbortControllersRef.current.delete(fileIdentifier);
+      uploadAbortControllersRef.current.delete(fileToUpload.id);
     }
-  });
-
-  try {
-    await Promise.all(uploadPromises);
-  } catch (error) {
-    console.error("One or more uploads encountered an issue in the batch processing itself.", error);
-  } finally {
-    setIsUploadingFiles(false);
-    // Keep files in list to show status, or filter based on status:
-    // setFilesToUpload(prev => prev.filter(f => f.uploadStatus !== 'completed')); 
   }
+  setIsUploadingFiles(false);
 };
 
 
@@ -1281,7 +1273,7 @@ const handleStartUpload = async () => {
             isLoading={isConnecting}
             error={authError}
             phoneNumber={phoneNumber}
-            setPhoneNumber={setPhoneNumber} // For the TelegramConnect component to update the shared state
+            setPhoneNumber={setPhoneNumber}
             phoneCode={phoneCode}
             setPhoneCode={setPhoneCode}
             password={password}
@@ -1308,45 +1300,7 @@ const handleStartUpload = async () => {
         onOpenChatSelectionDialog={handleOpenChatSelectionDialog}
       />
       <div className="flex-1 flex overflow-hidden min-h-0">
-        {/* <aside ref={chatListContainerRef} className="w-64 md:w-72 lg:w-80 p-1 border-r bg-card overflow-y-auto flex-shrink-0 rounded-lg shadow-md">
-            {isProcessingChats && allChats.length === 0 ? (
-                 <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
-                    <Loader2 className="animate-spin h-8 w-8 text-primary mb-2" />
-                    <span>Loading chats...</span>
-                </div>
-            ) : allChats.length === 0 && !authError ? (
-                 <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
-                    <FolderClosed className="w-12 h-12 mb-3 opacity-50" />
-                    <p className="text-sm text-center">No chats found or still loading.</p>
-                    <Button variant="outline" size="sm" onClick={fetchInitialChats} className="mt-3">
-                        <RefreshCw className="mr-2 h-4 w-4" /> Refresh
-                    </Button>
-                </div>
-            ) : (
-                <ScrollArea className="h-full w-full p-3">
-                    <ul className="space-y-1.5">
-                        {allChats.map((folder, index) => (
-                        <ChatListItem
-                            key={folder.id}
-                            folder={folder}
-                            isSelected={folder.id === selectedFolder?.id}
-                            onSelect={() => handleSelectFolder(folder.id)}
-                            ref={index === allChats.length - 1 ? lastChatElementRef : null}
-                        />
-                        ))}
-                    </ul>
-                    {isLoadingMoreChats && (
-                        <div className="flex items-center justify-center py-3">
-                        <Loader2 className="animate-spin h-5 w-5 text-primary" />
-                        </div>
-                    )}
-                    {!isLoadingMoreChats && !hasMoreChats && allChats.length > 0 && (
-                        <p className="text-xs text-muted-foreground text-center py-3">All chats loaded.</p>
-                    )}
-                </ScrollArea>
-            )}
-        </aside> */}
-        <main className="flex-1 overflow-y-auto bg-background"> {/* Changed from flex-grow */}
+        <main className="flex-1 overflow-y-auto bg-background">
            <div className="container mx-auto h-full px-4 sm:px-6 lg:px-8 py-4 md:py-6 lg:py-8">
             {selectedFolder ? (
                 <MainContentView
@@ -1392,7 +1346,7 @@ const handleStartUpload = async () => {
           Telegram Cloudifier &copy; {new Date().getFullYear()}
         </p>
       </footer>
-      
+
       <ChatSelectionDialog
         isOpen={isChatSelectionDialogOpen}
         onOpenChange={setIsChatSelectionDialogOpen}
@@ -1445,5 +1399,3 @@ const handleStartUpload = async () => {
     </div>
   );
 }
-
-    
