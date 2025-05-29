@@ -35,14 +35,44 @@ export interface MediaHistoryResponse {
   hasMore: boolean;
 }
 
-export type DownloadStatus = 'queued' | 'downloading' | 'paused' | 'completed' | 'failed' | 'cancelled';
+export type DownloadStatus = 
+  | 'queued' 
+  | 'downloading' 
+  | 'paused' 
+  | 'completed' 
+  | 'failed' 
+  | 'cancelled'
+  | 'cdn_redirect'
+  | 'refreshing_reference';
 
 export interface DownloadQueueItemType extends CloudFile {
   status: DownloadStatus;
   progress: number; // 0-100
-  downloadedBytes?: number;
+  downloadedBytes: number; // Changed from optional
   location?: any; // To store InputFileLocation
   chunks?: Uint8Array[]; // To store downloaded chunks
-  currentOffset?: number;
+  currentOffset: number; // Changed from optional
   abortController?: AbortController;
+  totalSizeInBytes: number; // Made non-optional for active downloads
+  // For CDN redirects
+  cdnFileToken?: Uint8Array;
+  cdnEncryptionKey?: Uint8Array;
+  cdnEncryptionIv?: Uint8Array;
+  cdnFileHashes?: any[];
+  cdnDcId?: number;
+}
+
+// For upload.getFile and upload.getCdnFile responses
+export interface FileChunkResponse {
+  bytes?: Uint8Array;
+  type?: string; // storage.FileType
+  isCdnRedirect?: boolean;
+  cdnRedirectData?: {
+    dc_id: number;
+    file_token: Uint8Array;
+    encryption_key: Uint8Array;
+    encryption_iv: Uint8Array;
+    file_hashes: any[];
+  };
+  errorType?: 'FILE_REFERENCE_EXPIRED' | 'OTHER';
 }

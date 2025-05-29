@@ -2,7 +2,7 @@
 'use client';
 
 import MTProto from '@mtproto/core/envs/browser';
-import type { CloudFolder, CloudFile, GetChatsPaginatedResponse, MediaHistoryResponse } from '@/types';
+import type { CloudFolder, CloudFile, GetChatsPaginatedResponse, MediaHistoryResponse, FileDownloadInfo, FileChunkResponse } from '@/types';
 
 const API_ID_STRING = process.env.NEXT_PUBLIC_TELEGRAM_API_ID;
 const API_HASH = process.env.NEXT_PUBLIC_TELEGRAM_API_HASH;
@@ -86,6 +86,7 @@ class API {
   }
 
   async call(method: string, params: any = {}, options: any = {}): Promise<any> {
+    console.log(`API Call: ${method}`, params, options);
     try {
       const result = await this.mtproto.call(method, params, options);
       return result;
@@ -115,10 +116,10 @@ class API {
 
             console.log(`${type}_MIGRATE_X error. Attempting to migrate to DC ${dcId} for ${method}...`);
 
-            if (type === 'PHONE') {
-              console.log(`Setting default DC to ${dcId} due to PHONE_MIGRATE.`);
+            if (type === 'PHONE' || type === 'NETWORK' || type === 'USER') { // NETWORK and USER migrate also require setDefaultDc
+              console.log(`Setting default DC to ${dcId} due to ${type}_MIGRATE.`);
               await this.mtproto.setDefaultDc(dcId);
-            } else {
+            } else { // For FILE_MIGRATE etc., pass dcId in options for this call
               console.log(`Retrying ${method} with dcId ${dcId}.`);
               options = { ...options, dcId };
             }
@@ -154,7 +155,6 @@ class API {
 
 const api = new API();
 
-// User session state
 let userSession: {
   phone?: string;
   phone_code_hash?: string;
@@ -225,10 +225,8 @@ export function getUserSessionDetails(): { phone?: string; user?: any } {
     return { phone: userSession.phone, user: userSession.user };
 }
 
-
-// --- Authentication Methods ---
 export async function sendCode(fullPhoneNumber: string): Promise<string> {
-  userSession = { phone: fullPhoneNumber }; // Reset relevant parts of session for new attempt
+  userSession = { phone: fullPhoneNumber };
   console.log(`Attempting to send code to ${fullPhoneNumber} via API class`);
 
   const sendCodePayload = {
@@ -250,18 +248,16 @@ export async function sendCode(fullPhoneNumber: string): Promise<string> {
      if (message === 'AUTH_RESTART') {
          throw new Error('AUTH_RESTART');
     }
-    throw error; // Propagate other errors
+    throw error; 
   }
 }
 
 export async function signIn(fullPhoneNumber: string, code: string): Promise<{ user?: any; error?: string; srp_id?: string }> {
   if (!userSession.phone_code_hash) {
-    // This can happen if user refreshes on code entry or if sendCode failed silently before.
     console.warn('phone_code_hash not set in signIn. User might need to restart.');
-    throw new Error('AUTH_RESTART'); // Force restart if critical piece is missing
+    throw new Error('AUTH_RESTART');
   }
   if (!userSession.phone) userSession.phone = fullPhoneNumber;
-
 
   try {
     const result = await api.call('auth.signIn', {
@@ -279,12 +275,12 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
         userSession.user = result.user;
         saveUserDataToLocalStorage();
     }
-    delete userSession.phone_code_hash; // Clear it after use
+    delete userSession.phone_code_hash;
     return { user: result.user };
 
   } catch (error: any) {
     const errorMessage = error.message || (error.originalErrorObject?.error_message);
-    console.log('Error in signIn function after api.call:', errorMessage, error.originalErrorObject || error);
+    console.warn('Error in signIn function after api.call:', errorMessage, error.originalErrorObject || error);
 
     if (errorMessage === 'SESSION_PASSWORD_NEEDED') {
       console.log('2FA password needed. Fetching password details...');
@@ -298,16 +294,16 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
              throw new Error('Failed to initialize 2FA: Missing critical SRP parameters.');
         }
 
-        userSession.srp_id = passwordData.srp_id.toString(); // Ensure srp_id is string
+        userSession.srp_id = passwordData.srp_id.toString(); 
         userSession.srp_params = {
             g: passwordData.current_algo.g,
-            p: passwordData.current_algo.p, // Should be Uint8Array
-            salt1: passwordData.current_algo.salt1, // Should be Uint8Array
-            salt2: passwordData.current_algo.salt2, // Should be Uint8Array
-            srp_B: passwordData.srp_B // Should be Uint8Array
+            p: passwordData.current_algo.p, 
+            salt1: passwordData.current_algo.salt1, 
+            salt2: passwordData.current_algo.salt2, 
+            srp_B: passwordData.srp_B 
         };
 
-        delete userSession.phone_code_hash; // Clear it as it's no longer needed for this step
+        delete userSession.phone_code_hash; 
 
         const twoFactorError: any = new Error('2FA_REQUIRED');
         twoFactorError.srp_id = userSession.srp_id;
@@ -320,11 +316,13 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
           console.error('Error fetching password details for 2FA:', getPasswordError.message, getPasswordError.originalErrorObject || getPasswordError);
         }
         delete userSession.phone_code_hash;
-        throw getPasswordError; 
+        if (getPasswordError.message === '2FA_REQUIRED' && getPasswordError.srp_id) throw getPasswordError;
+        const message = getPasswordError.message || 'Failed to fetch 2FA details.';
+        throw new Error(message);
       }
     }
-    delete userSession.phone_code_hash; // Ensure it's cleared on other errors too
-    throw error; // Propagate other errors
+    delete userSession.phone_code_hash;
+    throw error;
   }
 }
 
@@ -332,7 +330,7 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
 export async function checkPassword(password: string): Promise<any> {
   if (!userSession.srp_id || !userSession.srp_params) {
     console.error('SRP parameters not available for checkPassword. User might need to restart login.');
-    throw new Error('AUTH_RESTART'); // Force restart if critical SRP info is missing
+    throw new Error('AUTH_RESTART');
   }
 
   try {
@@ -340,7 +338,6 @@ export async function checkPassword(password: string): Promise<any> {
     console.log("Attempting to get SRPParams for checkPassword with provided password and stored srp_params.");
     
     // @ts-ignore MTProto.crypto.getSRPParams might not be in the default MTProto type
-    // This is a critical part that relies on mtproto-core's browser build to handle SRP calculations
     const { A, M1 } = await api.mtproto.crypto.getSRPParams({
         g, p, salt1, salt2, gB: srp_B, password,
     });
@@ -349,9 +346,9 @@ export async function checkPassword(password: string): Promise<any> {
     const checkResult = await api.call('auth.checkPassword', {
         password: {
             _: 'inputCheckPasswordSRP',
-            srp_id: userSession.srp_id, // srp_id should be string
-            A: A, // A should be Uint8Array
-            M1: M1, // M1 should be Uint8Array
+            srp_id: userSession.srp_id, 
+            A: A, 
+            M1: M1, 
         }
     });
 
@@ -360,14 +357,13 @@ export async function checkPassword(password: string): Promise<any> {
         userSession.user = checkResult.user;
         saveUserDataToLocalStorage();
     }
-    // Clear SRP params after successful or failed attempt
     delete userSession.srp_params;
     delete userSession.srp_id;
     return checkResult.user;
 
   } catch (error: any) {
     console.error('Error checking password:', error.message, error.originalErrorObject || error);
-    delete userSession.srp_params; // Clear SRP params on error too
+    delete userSession.srp_params; 
     delete userSession.srp_id;
 
     const message = error.message || (error.originalErrorObject?.error_message || 'Failed to check 2FA password.');
@@ -383,7 +379,7 @@ export async function checkPassword(password: string): Promise<any> {
 
 export async function signOut(): Promise<void> {
   try {
-    if (api && api.mtproto) { // Ensure api and mtproto are initialized
+    if (api && api.mtproto) { 
         await api.call('auth.logOut');
         console.log('Signed out successfully from Telegram server.');
     } else {
@@ -414,7 +410,6 @@ export async function signOut(): Promise<void> {
 export async function isUserConnected(): Promise<boolean> {
   if (userSession.user) {
     try {
-        // Attempt a light API call to verify session validity
         await api.call('users.getUsers', {id: [{_: 'inputUserSelf'}]});
         console.log("User session is active (checked with users.getUsers).");
         return true;
@@ -427,17 +422,15 @@ export async function isUserConnected(): Promise<boolean> {
 
         if (errorMessage && authErrorMessages.some(authMsg => errorMessage.includes(authMsg))) {
             console.warn("User session no longer valid or API keys incorrect due to:", errorMessage, "Performing local logout.");
-            await signOut(); // Clears local session and localStorage
+            await signOut(); 
             return false;
         }
         console.warn("API call failed during connected check, but might not be an auth error. User object exists locally. Error:", errorMessage, error.originalErrorObject || error);
-        return true; // Still consider connected if local user object exists but API call failed for other reasons
+        return true; 
     }
   }
   return false;
 }
-
-// --- Data Fetching Methods ---
 
 function formatFileSize(bytesInput: number | string | undefined | null, decimals = 2): string {
   if (bytesInput === null || bytesInput === undefined) return 'N/A';
@@ -470,7 +463,7 @@ export async function getChatMediaHistory(
       peer: inputPeer,
       offset_id: offsetId,
       offset_date: 0,
-      add_offset: 0, // add_offset is for skipping messages from offset_id
+      add_offset: 0, 
       limit: limit,
       max_id: 0,
       min_id: 0,
@@ -478,7 +471,7 @@ export async function getChatMediaHistory(
     });
 
     const mediaFiles: CloudFile[] = [];
-    let newOffsetId: number = offsetId; // Default to current offset if no messages
+    let newOffsetId: number = offsetId; 
     let hasMoreMessages = false;
 
     if (historyResult.messages && historyResult.messages.length > 0) {
@@ -490,17 +483,13 @@ export async function getChatMediaHistory(
           let dataAiHint: string | undefined;
           let totalSizeInBytes: number | undefined;
           
-          // Extract full media object which might contain access_hash, file_reference etc.
-          // Telegram often sends a list of photos/documents separate from messages.
           let fullMediaObject = null;
           if (msg.media.photo && historyResult.photos) {
             fullMediaObject = historyResult.photos.find((p:any) => p.id?.toString() === msg.media.photo.id?.toString());
           } else if (msg.media.document && historyResult.documents) {
             fullMediaObject = historyResult.documents.find((d:any) => d.id?.toString() === msg.media.document.id?.toString());
           }
-          // Fallback to media object within the message if not found in separate lists
           const mediaDataForDetails = fullMediaObject || msg.media.photo || msg.media.document;
-
 
           if (msg.media._ === 'messageMediaPhoto' && mediaDataForDetails) {
             fileType = 'image';
@@ -514,7 +503,7 @@ export async function getChatMediaHistory(
           } else if (msg.media._ === 'messageMediaDocument' && mediaDataForDetails) {
               fileName = mediaDataForDetails.attributes?.find((attr: any) => attr._ === 'documentAttributeFilename')?.file_name || `document_${mediaDataForDetails.id?.toString()}`;
               if(mediaDataForDetails.size) {
-                totalSizeInBytes = Number(mediaDataForDetails.size); // Ensure it's a number
+                totalSizeInBytes = Number(mediaDataForDetails.size); 
                 fileSize = formatFileSize(totalSizeInBytes);
               }
 
@@ -528,9 +517,8 @@ export async function getChatMediaHistory(
                   fileType = 'document'; dataAiHint = "document file";
               }
           }
-
-          // Only add if it's a recognized media type
-          if (fileType !== 'unknown' || (fileType === 'document' && mediaDataForDetails)) {
+          
+          if (fileType !== 'unknown' || (fileType === 'document' && mediaDataForDetails && totalSizeInBytes && totalSizeInBytes > 0)) {
             mediaFiles.push({
               id: msg.id.toString(),
               messageId: msg.id,
@@ -539,9 +527,9 @@ export async function getChatMediaHistory(
               size: fileSize,
               totalSizeInBytes: totalSizeInBytes,
               lastModified: new Date(msg.date * 1000).toLocaleDateString(),
-              url: undefined, // URL will be fetched on demand or is not directly available
+              url: undefined, 
               dataAiHint: dataAiHint,
-              telegramMessage: msg, // Store the full message object which contains mediaDataForDetails
+              telegramMessage: mediaDataForDetails, // Store the full media object (photo or document)
             });
           }
         }
@@ -550,12 +538,9 @@ export async function getChatMediaHistory(
       if (historyResult.messages.length > 0) {
         newOffsetId = historyResult.messages[historyResult.messages.length - 1].id;
       }
-      // hasMoreMessages is true if the API indicates there might be more (e.g. `messages.length === limit`)
-      // or if historyResult.count (total messages in chat) is greater than messages fetched so far (needs careful calculation with offset_id)
-      // For simplicity now, if we received the limit, assume there's more.
       hasMoreMessages = historyResult.messages.length === limit;
     } else {
-        hasMoreMessages = false; // No messages returned, so no more.
+        hasMoreMessages = false;
     }
 
     return {
@@ -589,27 +574,23 @@ export async function getTelegramChats(
       offset_id: offsetId,
       offset_peer: offsetPeer,
       limit: limit,
-      hash: 0, // Using 0 for hash as per typical usage for initial fetches
+      hash: 0, 
     });
 
     const transformedFolders = transformDialogsToCloudFolders(dialogsResult);
 
     let newOffsetDate = offsetDate;
     let newOffsetId = offsetId;
-    let newOffsetPeerInput = { ...offsetPeer }; // Start with the current offset peer
+    let newOffsetPeerInput = { ...offsetPeer }; 
     let hasMore = false;
 
     if (dialogsResult.dialogs && dialogsResult.dialogs.length > 0) {
-      // Determine if there are more dialogs to fetch
-      // A common way is if the number of returned dialogs equals the limit
       hasMore = dialogsResult.dialogs.length === limit;
 
       if (hasMore) {
         const lastDialog = dialogsResult.dialogs[dialogsResult.dialogs.length - 1];
-        // top_message is the ID of the last message in the dialog
         newOffsetId = lastDialog.top_message; 
 
-        // Construct the inputPeer for the next offset
         const peerForOffset = lastDialog.peer;
         if (peerForOffset._ === 'peerUser') {
             const user = dialogsResult.users.find((u:any) => u.id?.toString() === peerForOffset.user_id?.toString());
@@ -617,7 +598,7 @@ export async function getTelegramChats(
                  newOffsetPeerInput = { _: 'inputPeerUser', user_id: user.id, access_hash: user.access_hash };
             } else {
                 console.warn('Could not find user or access_hash for peerUser offset:', peerForOffset, 'Users:', dialogsResult.users);
-                newOffsetPeerInput = { _: 'inputPeerEmpty' }; // Fallback
+                newOffsetPeerInput = { _: 'inputPeerEmpty' }; 
             }
         } else if (peerForOffset._ === 'peerChat') {
              newOffsetPeerInput = { _: 'inputPeerChat', chat_id: peerForOffset.chat_id };
@@ -627,15 +608,13 @@ export async function getTelegramChats(
                 newOffsetPeerInput = { _: 'inputPeerChannel', channel_id: chat.id, access_hash: chat.access_hash };
             } else {
                 console.warn('Could not find channel or access_hash for peerChannel offset:', peerForOffset, 'Chats:', dialogsResult.chats);
-                newOffsetPeerInput = { _: 'inputPeerEmpty' }; // Fallback
+                newOffsetPeerInput = { _: 'inputPeerEmpty' }; 
             }
         } else {
             console.warn('Unknown peer type for offset:', peerForOffset);
-            newOffsetPeerInput = { _: 'inputPeerEmpty' }; // Fallback
+            newOffsetPeerInput = { _: 'inputPeerEmpty' }; 
         }
-
-        // Find the date of the last message (top_message of the last dialog)
-        // This requires finding the message object in dialogsResult.messages
+        
         const messages = dialogsResult.messages || [];
         const lastMessageDetails = messages.find((msg: any) => msg.id?.toString() === newOffsetId?.toString() &&
           ( (msg.peer_id?._ === 'peerUser' && msg.peer_id?.user_id?.toString() === peerForOffset.user_id?.toString()) ||
@@ -646,17 +625,11 @@ export async function getTelegramChats(
         
         if (lastMessageDetails && typeof lastMessageDetails.date === 'number') {
           newOffsetDate = lastMessageDetails.date;
-        } else if (hasMore) { // Only warn if we expect more but couldn't get a date
-            console.warn("Could not determine precise next offset_date for pagination from message details. Last dialog date will be used if available, or current offset_date.");
-            // Fallback to using the date from the last dialog's top message if available and no specific message object
-            if (lastDialog.top_message_date) { // Assuming such a field might exist, or use msg.date from last message
-                // This part is tricky as 'messages.getDialogs' doesn't directly provide date for each 'top_message' easily
-                // We rely on finding the message in dialogsResult.messages as done above.
-            }
+        } else if (hasMore) { 
+            console.warn("Could not determine precise next offset_date for pagination from message details.");
         }
       }
     } else {
-        // No dialogs returned, so no more to fetch
         hasMore = false;
     }
 
@@ -758,127 +731,216 @@ function transformDialogsToCloudFolders(dialogsResult: any): CloudFolder[] {
       name: chatTitle,
       isChatFolder: true,
       inputPeer: inputPeerForHistory,
-      files: [], // files will be populated when chat is selected
-      folders: [], // No subfolders for chats
+      files: [], 
+      folders: [], 
     };
   }).filter(folder => folder !== null) as CloudFolder[];
 }
 
-export interface FileDownloadInfo {
-  location: any;
-  totalSize: number;
-  mimeType: string;
-}
 
 export async function prepareFileDownloadInfo(file: CloudFile): Promise<FileDownloadInfo | null> {
-  if (!file.telegramMessage || !file.telegramMessage.media) {
-    console.error("Cannot prepare download: telegramMessage or media is missing from CloudFile.", file);
+  if (!file.telegramMessage) {
+    console.error("Cannot prepare download: telegramMessage is missing from CloudFile.", file);
     return null;
   }
 
-  const message = file.telegramMessage;
-  const media = message.media;
+  const mediaObject = file.telegramMessage; // This should be the full photo or document object
   let location: any = null;
   let totalSize: number = 0;
-  let mimeType: string = 'application/octet-stream'; // Default MIME type
+  let mimeType: string = 'application/octet-stream';
 
-  // Helper to find the full photo/document object which might contain access_hash and file_reference
-  // This function might need to look into message.photo or message.document if those are the full objects
-  const getFullMediaObject = (baseMediaDetails: any, msg: any) => {
-    if (baseMediaDetails._ === 'photo' && msg.photos) {
-      return msg.photos.find((p: any) => p.id?.toString() === baseMediaDetails.id?.toString()) || baseMediaDetails;
-    }
-    if (baseMediaDetails._ === 'document' && msg.documents) {
-      return msg.documents.find((d: any) => d.id?.toString() === baseMediaDetails.id?.toString()) || baseMediaDetails;
-    }
-    // If not found in separate lists, assume baseMediaDetails (e.g., msg.media.photo) is the full object
-    return baseMediaDetails;
-  };
-
-  if (media._ === 'messageMediaPhoto' && media.photo) {
-    const photoObject = getFullMediaObject(media.photo, message);
-    if (photoObject && photoObject.id && photoObject.access_hash && photoObject.file_reference) {
-      // Find the largest available size for photos
-      const largestSize = photoObject.sizes?.find((s: any) => s.type === 'y') || // Try for 'y' type (1280x1280)
-                          photoObject.sizes?.sort((a: any, b: any) => (b.w * b.h) - (a.w * a.h))[0]; // Fallback to largest area
-      
+  if (file.type === 'image' && mediaObject && mediaObject._ === 'photo') {
+    if (mediaObject.id && mediaObject.access_hash && mediaObject.file_reference) {
+      const largestSize = mediaObject.sizes?.find((s: any) => s.type === 'y') || 
+                          mediaObject.sizes?.sort((a: any, b: any) => (b.w * b.h) - (a.w * a.h))[0];
       if (largestSize) {
         location = {
           _: 'inputPhotoFileLocation',
-          id: photoObject.id,
-          access_hash: photoObject.access_hash,
-          file_reference: photoObject.file_reference,
-          thumb_size: largestSize.type || '', // type 's', 'm', 'x', 'y' etc.
+          id: mediaObject.id,
+          access_hash: mediaObject.access_hash,
+          file_reference: mediaObject.file_reference,
+          thumb_size: largestSize.type || '',
         };
         totalSize = largestSize.size || 0;
-        mimeType = 'image/jpeg'; // Assume JPEG for photos, can be refined
+        mimeType = 'image/jpeg';
       } else {
-        console.warn("No sizes found for photo:", photoObject);
+        console.warn("No sizes found for photo:", mediaObject);
       }
     } else {
-        console.warn("Missing id, access_hash, or file_reference for photo:", photoObject, "Original media:", media.photo);
+      console.warn("Missing id, access_hash, or file_reference for photo:", mediaObject);
     }
-  } else if (media._ === 'messageMediaDocument' && media.document) {
-    const docObject = getFullMediaObject(media.document, message);
-    if (docObject && docObject.id && docObject.access_hash && docObject.file_reference) {
+  } else if ((file.type === 'document' || file.type === 'video' || file.type === 'audio') && mediaObject && mediaObject._ === 'document') {
+    if (mediaObject.id && mediaObject.access_hash && mediaObject.file_reference) {
       location = {
         _: 'inputDocumentFileLocation',
-        id: docObject.id,
-        access_hash: docObject.access_hash,
-        file_reference: docObject.file_reference,
-        thumb_size: '', // For full document, thumb_size is empty string
+        id: mediaObject.id,
+        access_hash: mediaObject.access_hash,
+        file_reference: mediaObject.file_reference,
+        thumb_size: '', 
       };
-      totalSize = Number(docObject.size) || 0;
-      mimeType = docObject.mime_type || 'application/octet-stream';
+      totalSize = Number(mediaObject.size) || 0;
+      mimeType = mediaObject.mime_type || 'application/octet-stream';
     } else {
-        console.warn("Missing id, access_hash, or file_reference for document:", docObject, "Original media:", media.document);
+      console.warn("Missing id, access_hash, or file_reference for document:", mediaObject);
     }
   }
+
 
   if (location && totalSize > 0) {
     console.log('Prepared InputFileLocation for download:', location, 'Total size:', totalSize, 'MIME type:', mimeType);
     return { location, totalSize, mimeType };
   } else {
-    console.error("Could not construct valid InputFileLocation or size for file:", file);
+    console.error("Could not construct valid InputFileLocation or size for file:", file, "Media Object:", mediaObject);
     return null;
   }
 }
+
 
 export async function downloadFileChunk(
     location: any, 
     offset: number, 
     limit: number, 
     signal?: AbortSignal
-): Promise<{ bytes: Uint8Array; type: string } | null> {
+): Promise<FileChunkResponse> {
   if (!location) {
     console.error("DownloadFileChunk: Location is missing.");
-    return null;
+    return { errorType: 'OTHER' };
   }
   try {
-    console.log(`Downloading chunk: offset=${offset}, limit=${limit}`);
+    console.log(`Downloading chunk: offset=${offset}, limit=${limit}`, location);
     const result = await api.call('upload.getFile', {
       location: location,
       offset: offset,
       limit: limit,
-      precise: true, // Allow precise offset/limit for potentially better chunking
-      cdn_supported: false // Assuming not using CDN for now for simplicity
-    }, { signal }); // Pass AbortSignal to api.call if it supports it
+      precise: true, 
+      cdn_supported: true // Enable CDN support
+    }, { signal }); 
 
-    if (result && result.bytes) {
-      // result.type is storage.FileType, not a MIME type.
-      // The actual MIME type should be known from prepareFileDownloadInfo
+    if (result._ === 'upload.fileCdnRedirect') {
+      console.log("CDN Redirect received:", result);
+      return {
+        isCdnRedirect: true,
+        cdnRedirectData: {
+          dc_id: result.dc_id,
+          file_token: result.file_token,
+          encryption_key: result.encryption_key,
+          encryption_iv: result.encryption_iv,
+          file_hashes: result.file_hashes,
+        }
+      };
+    }
+
+    if (result && result._ === 'upload.file' && result.bytes) {
       return { bytes: result.bytes, type: result.type?._ || 'storage.fileUnknown' };
     }
-    console.warn("upload.getFile did not return bytes.", result);
-    return null;
+    console.warn("upload.getFile did not return expected data (upload.file or upload.fileCdnRedirect).", result);
+    return { errorType: 'OTHER' };
   } catch (error: any) {
     if (error.name === 'AbortError') {
       console.log('Download chunk aborted.');
-    } else {
-      console.error('Error downloading file chunk:', error.message, error.originalErrorObject || error);
+      // No specific errorType needed, the AbortController handles this
+      return {}; 
     }
+    console.error('Error downloading file chunk:', error.message, error.originalErrorObject || error);
+    if (error.message?.includes('FILE_REFERENCE_EXPIRED')) {
+      return { errorType: 'FILE_REFERENCE_EXPIRED' };
+    }
+    // Note: FILE_MIGRATE_X should be handled by API.call automatically.
+    // If it's not, we might need to catch it here and re-throw or signal.
+    return { errorType: 'OTHER' };
+  }
+}
+
+export async function downloadCdnFileChunk(
+  cdnRedirectData: NonNullable<FileChunkResponse['cdnRedirectData']>,
+  offset: number,
+  limit: number,
+  signal?: AbortSignal
+): Promise<FileChunkResponse> {
+  console.log('Downloading CDN chunk:', { dcId: cdnRedirectData.cdnDcId, offset, limit });
+  try {
+    const result = await api.call('upload.getCdnFile', {
+      file_token: cdnRedirectData.file_token,
+      offset: offset,
+      limit: limit,
+    }, { dcId: cdnRedirectData.dc_id, signal }); // Call on the specific CDN DC
+
+    if (result && result._ === 'upload.cdnFile' && result.bytes) {
+      // TODO: CDN chunks might need decryption using cdnRedirectData.encryption_key and cdnRedirectData.encryption_iv
+      // TODO: CDN chunks should be verified using upload.getCdnFileHashes and cdnRedirectData.file_hashes
+      // For now, returning raw bytes for simplicity
+      console.log(`CDN Chunk received, ${result.bytes.length} bytes. Decryption/Verification needed.`);
+      return { bytes: result.bytes };
+    }
+    console.warn("upload.getCdnFile did not return expected data.", result);
+    return { errorType: 'OTHER' };
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      console.log('CDN Download chunk aborted.');
+      return {};
+    }
+    console.error('Error downloading CDN file chunk:', error.message, error.originalErrorObject || error);
+    // CDN errors might also include things like TOKEN_INVALID, etc.
+    return { errorType: 'OTHER' };
+  }
+}
+
+// Placeholder for actual implementation
+export async function refreshFileReference(item: CloudFile): Promise<any | null> {
+  console.warn(`Attempting to refresh file reference for item ${item.id} (messageId: ${item.messageId}). Actual API call to get new message details is not fully implemented yet.`);
+  
+  if (!item.telegramMessage?.peer_id) { // Assuming peer_id is stored in telegramMessage
+    console.error("Cannot refresh file reference: peer_id missing from telegramMessage", item.telegramMessage);
     return null;
   }
+  
+  // Construct InputPeer from the original message's peer_id
+  // This is a simplified example; you'd need the access_hash if it's a user or channel not in current dialogs.
+  // For simplicity, we assume the original inputPeer used to fetch the chat history is still valid for this.
+  // Or, better, ensure CloudFile.inputPeer is populated if it's different from the main chat's inputPeer.
+
+  // const inputPeerForMessage = item.telegramMessage.peer_id; // This might be just { _: 'peerUser', user_id: X }
+  // A more robust way would be to find the full InputPeer from the original chat fetch context or store it with the file.
+  // For this placeholder, we'll assume we need to re-fetch message details.
+
+  try {
+    // We need the peer of the chat the message belongs to, not necessarily item.telegramMessage.peer_id
+    // This is tricky if we don't have the chat's inputPeer directly available.
+    // Let's assume `item.inputPeer` was populated from the chat.
+    if(!item.inputPeer) {
+        console.error("Cannot refresh file reference, item.inputPeer is missing.");
+        return null;
+    }
+    console.log("Calling messages.getMessages to refresh message details for messageId:", item.messageId, "from peer:", item.inputPeer)
+    const messagesResult = await api.call('messages.getMessages', {
+      id: [{ _: 'inputMessageID', id: item.messageId }],
+    });
+
+    console.log("messages.getMessages result:", messagesResult);
+
+    const updatedMessage = messagesResult?.messages?.[0];
+    if (updatedMessage?.media) {
+      let newFileReference = null;
+      if (updatedMessage.media.photo?.file_reference) {
+        newFileReference = updatedMessage.media.photo.file_reference;
+      } else if (updatedMessage.media.document?.file_reference) {
+        newFileReference = updatedMessage.media.document.file_reference;
+      }
+
+      if (newFileReference) {
+        console.log(`New file_reference found: ${newFileReference}`);
+        // The calling function will update the item in downloadQueue
+        return { ...item.telegramMessage, file_reference: newFileReference }; // Return updated media object
+      } else {
+        console.warn("No new file_reference found in updated message details.");
+      }
+    } else {
+      console.warn("Could not find updated message or media in messages.getMessages response.");
+    }
+  } catch (error) {
+    console.error("Error during refreshFileReference (messages.getMessages):", error);
+  }
+  return null; // Indicate failure
 }
 
 
@@ -891,4 +953,3 @@ if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
   (window as any).telegramServiceApi = api;
   (window as any).telegramUserSession = userSession;
 }
-
