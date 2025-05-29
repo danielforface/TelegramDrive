@@ -15,12 +15,15 @@ import { Button } from "@/components/ui/button";
 import { RefreshCw, Loader2, LayoutPanelLeft, FolderClosed } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import * as telegramService from "@/services/telegramService";
+import { formatFileSize } from "@/lib/utils";
 
 const INITIAL_CHATS_LOAD_LIMIT = 20;
 const SUBSEQUENT_CHATS_LOAD_LIMIT = 5;
 const INITIAL_MEDIA_LOAD_LIMIT = 20;
 const SUBSEQUENT_MEDIA_LOAD_LIMIT = 20;
 const DOWNLOAD_CHUNK_SIZE = 512 * 1024; // 512KB per chunk
+const KB_1 = 1024;
+const ONE_MB = 1024 * 1024;
 
 
 type AuthStep = 'initial' | 'awaiting_code' | 'awaiting_password';
@@ -75,24 +78,24 @@ export default function Home() {
       if (previouslyConnected) {
         const storedUser = telegramService.getUserSessionDetails();
         if (storedUser && storedUser.phone) {
-            setPhoneNumber(storedUser.phone); // Restore phone number for display if needed
+            setPhoneNumber(storedUser.phone); 
         }
         console.log("User was previously connected. Setting state and fetching chats.");
         setIsConnected(true);
-        setAuthStep('initial'); // Reset auth flow
+        setAuthStep('initial'); 
         setAuthError(null);
-        fetchInitialChats(); // Fetch chats for already connected user
+        fetchInitialChats(); 
       } else {
         console.log("No existing connection found or session invalid.");
         setIsConnected(false);
-        handleReset(false); // Reset local state without server logout if not truly connected
+        handleReset(false); 
       }
     } catch (error: any) {
       console.warn("Error checking existing connection:", error.message, error.originalErrorObject || error);
       setIsConnected(false);
       handleReset(false);
     }
-  }, []); // Add dependencies if they are used from outer scope and can change
+  }, []); 
 
   useEffect(() => {
     checkExistingConnection();
@@ -101,7 +104,7 @@ export default function Home() {
 
   useEffect(() => {
     const processQueue = async () => {
-      for (let i = 0; i < downloadQueue.length; i++) { // Use index-based loop for safe modification
+      for (let i = 0; i < downloadQueue.length; i++) { 
         const item = downloadQueue[i];
 
         if (item.status === 'downloading' &&
@@ -116,13 +119,39 @@ export default function Home() {
           try {
             const currentOffset = item.currentOffset || 0;
             const remainingBytes = item.totalSizeInBytes - currentOffset;
-            let limit = Math.min(DOWNLOAD_CHUNK_SIZE, remainingBytes);
 
-            if (limit <= 0) { 
-               setDownloadQueue(prevQ => prevQ.map(q => q.id === item.id ? { ...q, status: 'completed', progress: 100 } : q));
+            if (remainingBytes <= 0) {
+                setDownloadQueue(prevQ => prevQ.map(q => q.id === item.id ? { ...q, status: 'completed', progress: 100, downloadedBytes: item.totalSizeInBytes } : q));
+                activeDownloadsRef.current.delete(item.id);
+                continue;
+            }
+            
+            const bytesToEndOfCurrent1MBBlock = ONE_MB - (currentOffset % ONE_MB);
+
+            let idealLimit = Math.min(
+                DOWNLOAD_CHUNK_SIZE, 
+                remainingBytes,      
+                bytesToEndOfCurrent1MBBlock 
+            );
+
+            let actualLimit: number;
+            if (idealLimit >= KB_1) { 
+                actualLimit = Math.floor(idealLimit / KB_1) * KB_1;
+            } else { 
+                actualLimit = idealLimit; 
+            }
+            
+            if (actualLimit === 0 && remainingBytes > 0) {
+                actualLimit = remainingBytes;
+            }
+
+            if (actualLimit <= 0) { 
+               setDownloadQueue(prevQ => prevQ.map(q => q.id === item.id ? { ...q, status: 'completed', progress: 100, downloadedBytes: item.totalSizeInBytes } : q));
                activeDownloadsRef.current.delete(item.id);
                continue;
             }
+            
+            console.log(`Downloading for ${item.name}: offset=${currentOffset}, limit=${actualLimit}, remaining=${remainingBytes}, totalSize=${item.totalSizeInBytes}`);
 
             let chunkResponse: telegramService.FileChunkResponse;
 
@@ -135,11 +164,6 @@ export default function Home() {
                 }
                 const cdnBlock = item.cdnFileHashes[currentHashBlockIndex];
                 
-                // For CDN, we assume we download the whole block as defined by cdnBlock.limit
-                // currentOffset for CDN refers to the offset *within* the current cdnBlock if we were to implement partial block downloads.
-                // For this iteration, we simplify: download the whole CDN block at cdnBlock.offset with cdnBlock.limit.
-                // The overall item.currentOffset should track the start of the *next* CDN block or end of file.
-                
                 console.log(`Processing CDN download for ${item.name}, DC: ${item.cdnDcId}, Block ${currentHashBlockIndex}, Offset: ${cdnBlock.offset}, Limit: ${cdnBlock.limit}`);
                 chunkResponse = await telegramService.downloadCdnFileChunk(
                     {
@@ -147,7 +171,7 @@ export default function Home() {
                         file_token: item.cdnFileToken,
                         encryption_key: item.cdnEncryptionKey, 
                         encryption_iv: item.cdnEncryptionIv,  
-                        file_hashes: item.cdnFileHashes, // Pass all hashes for context if needed by service
+                        file_hashes: item.cdnFileHashes, 
                     },
                     cdnBlock.offset, 
                     cdnBlock.limit, 
@@ -158,7 +182,7 @@ export default function Home() {
                     const downloadedHash = await telegramService.calculateSHA256(chunkResponse.bytes);
                     if (!telegramService.areUint8ArraysEqual(downloadedHash, cdnBlock.hash)) {
                         console.error(`CDN Hash mismatch for ${item.name}, block ${currentHashBlockIndex}.`);
-                        setDownloadQueue(prevQ => prevQ.map(q => q.id === item.id ? { ...q, status: 'failed', progress: item.progress } : q));
+                        setDownloadQueue(prevQ => prevQ.map(q => q.id === item.id ? { ...q, status: 'failed', progress: item.progress, error_message: 'CDN Hash Mismatch' } : q));
                         activeDownloadsRef.current.delete(item.id);
                         continue;
                     }
@@ -168,11 +192,11 @@ export default function Home() {
 
             } else {
                 // Direct Download Path
-                console.log(`Processing direct download for ${item.name}, offset: ${currentOffset}, limit: ${limit}`);
+                console.log(`Processing direct download for ${item.name}, offset: ${currentOffset}, limit: ${actualLimit}`);
                 chunkResponse = await telegramService.downloadFileChunk(
                     item.location,
                     currentOffset,
-                    limit,
+                    actualLimit,
                     item.abortController?.signal
                 );
             }
@@ -199,8 +223,8 @@ export default function Home() {
                         hash: fh.hash,
                     })),
                     cdnCurrentFileHashIndex: 0, 
-                    currentOffset: 0, // Reset currentOffset as it's now relative to CDN blocks.
-                    downloadedBytes: 0, // Reset downloaded bytes for CDN path.
+                    currentOffset: 0, 
+                    downloadedBytes: 0, 
                     progress: 0, 
                     chunks: [], 
                 } : q));
@@ -210,17 +234,17 @@ export default function Home() {
 
             } else if (chunkResponse?.bytes) {
               const chunkSize = chunkResponse.bytes.length;
-              const newDownloadedBytes = item.downloadedBytes + chunkSize; // Accumulate total downloaded for the file
+              const newDownloadedBytes = item.downloadedBytes + chunkSize; 
               const newProgress = Math.min(100, Math.floor((newDownloadedBytes / item.totalSizeInBytes) * 100));
               const newChunks = [...(item.chunks || []), chunkResponse.bytes];
               
-              let nextItemOffset = item.currentOffset; // This is the offset for the *next* chunk/block overall.
+              let nextItemOffset = item.currentOffset; 
               let nextCdnHashIndex = item.cdnCurrentFileHashIndex;
 
-              if(item.cdnFileToken && item.cdnFileHashes) { // If it was a CDN download
-                nextItemOffset = (item.cdnFileHashes[item.cdnCurrentFileHashIndex || 0].offset) + chunkSize;
+              if(item.cdnFileToken && item.cdnFileHashes) { 
+                nextItemOffset = (item.cdnFileHashes[item.cdnCurrentFileHashIndex || 0].offset) + chunkSize; 
                 nextCdnHashIndex = (item.cdnCurrentFileHashIndex || 0) + 1;
-              } else { // Direct download
+              } else { 
                 nextItemOffset = currentOffset + chunkSize;
               }
 
@@ -254,15 +278,16 @@ export default function Home() {
                 })
               );
             } else {
+              const errorMessage = chunkResponse?.errorType || 'Unknown error';
               console.error(`Failed to download chunk for ${item.name} or no data returned. Response:`, chunkResponse);
-              setDownloadQueue(prevQ => prevQ.map(q => q.id === item.id ? { ...q, status: 'failed' } : q));
+              setDownloadQueue(prevQ => prevQ.map(q => q.id === item.id ? { ...q, status: 'failed', error_message: `Download error: ${errorMessage}` } : q));
             }
           } catch (error: any) {
              if (error.name === 'AbortError') {
                 console.log(`Download for ${item.name} aborted by user (caught in processQueue).`);
              } else {
                 console.error(`Error processing download for ${item.name}:`, error);
-                setDownloadQueue(prevQ => prevQ.map(q => q.id === item.id ? { ...q, status: 'failed' } : q));
+                setDownloadQueue(prevQ => prevQ.map(q => q.id === item.id ? { ...q, status: 'failed', error_message: error.message || 'Processing error' } : q));
              }
           } finally {
              activeDownloadsRef.current.delete(item.id); 
@@ -274,7 +299,7 @@ export default function Home() {
                 const updatedMediaObject = await telegramService.refreshFileReference(item); 
                 if (updatedMediaObject && updatedMediaObject.file_reference) {
                     let newLocation;
-                    if (updatedMediaObject._ === 'photo') {
+                    if (updatedMediaObject._ === 'photo' && updatedMediaObject.id && updatedMediaObject.access_hash && updatedMediaObject.file_reference) {
                         const largestSize = updatedMediaObject.sizes?.find((s: any) => s.type === 'y') || updatedMediaObject.sizes?.sort((a: any, b: any) => (b.w * b.h) - (a.w * a.h))[0];
                         newLocation = {
                             _: 'inputPhotoFileLocation',
@@ -283,15 +308,16 @@ export default function Home() {
                             file_reference: updatedMediaObject.file_reference,
                             thumb_size: largestSize?.type || '',
                         };
-                    } else if (updatedMediaObject._ === 'document') {
+                    } else if (updatedMediaObject._ === 'document' && updatedMediaObject.id && updatedMediaObject.access_hash && updatedMediaObject.file_reference) {
                         newLocation = {
                             _: 'inputDocumentFileLocation',
                             id: updatedMediaObject.id,
                             access_hash: updatedMediaObject.access_hash,
                             file_reference: updatedMediaObject.file_reference,
-                            thumb_size: '',
+                            thumb_size: '', 
                         };
                     }
+
 
                     if (newLocation) {
                         setDownloadQueue(prevQ => prevQ.map(q => q.id === item.id ? {
@@ -302,16 +328,16 @@ export default function Home() {
                         } : q));
                         console.log(`File reference for ${item.name} refreshed. Resuming download.`);
                     } else {
-                         console.error(`Failed to construct new location after refreshing file reference for ${item.name}.`);
-                         setDownloadQueue(prevQ => prevQ.map(q => q.id === item.id ? { ...q, status: 'failed' } : q));
+                         console.error(`Failed to construct new location after refreshing file reference for ${item.name}. Media Object:`, updatedMediaObject);
+                         setDownloadQueue(prevQ => prevQ.map(q => q.id === item.id ? { ...q, status: 'failed', error_message: 'Refresh failed (new location error)' } : q));
                     }
                 } else {
-                    console.error(`Failed to refresh file reference for ${item.name}. Setting to failed.`);
-                    setDownloadQueue(prevQ => prevQ.map(q => q.id === item.id ? { ...q, status: 'failed' } : q));
+                    console.error(`Failed to refresh file reference for ${item.name}. Setting to failed. Response:`, updatedMediaObject);
+                    setDownloadQueue(prevQ => prevQ.map(q => q.id === item.id ? { ...q, status: 'failed', error_message: 'Refresh failed (no reference)' } : q));
                 }
             } catch (refreshError: any) {
                 console.error(`Error during file reference refresh for ${item.name}:`, refreshError);
-                setDownloadQueue(prevQ => prevQ.map(q => q.id === item.id ? { ...q, status: 'failed' } : q));
+                setDownloadQueue(prevQ => prevQ.map(q => q.id === item.id ? { ...q, status: 'failed', error_message: refreshError.message || 'Refresh error' } : q));
             } finally {
                 activeDownloadsRef.current.delete(item.id);
             }
@@ -323,7 +349,7 @@ export default function Home() {
       }
     };
 
-    const intervalId = setInterval(processQueue, 750); // Slightly increased interval for more complex logic
+    const intervalId = setInterval(processQueue, 750); 
 
     return () => {
         clearInterval(intervalId);
@@ -363,7 +389,7 @@ export default function Home() {
         toast({ title: "Chats Loaded!", description: `Loaded ${response.folders.length} initial chats.` });
       }
     } catch (error: any) {
-      handleApiError(error, "Error Fetching Chats", `Could not load your chats. Check API keys in .env.local & restart server. ${error.message}`);
+      handleApiError(error, "Error Fetching Chats", `Could not load your chats. ${error.message}`);
     } finally {
       setIsProcessingChats(false);
     }
@@ -481,9 +507,17 @@ export default function Home() {
 
   const handleApiError = (error: any, title: string, defaultMessage: string) => {
     console.error(`${title}:`, error.message, error.originalErrorObject || error);
-    const description = error.message || defaultMessage;
-    toast({ title, description, variant: "destructive" });
-    setAuthError(description); 
+    let description = error.message || defaultMessage;
+    if (error.message && error.message.includes("Invalid hash in mt_dh_gen_ok")) {
+      description = "Connection handshake failed. Please check your API ID/Hash in .env.local, ensure it's correct, restart the server, and try clearing your browser's localStorage for this site.";
+      setAuthError(description);
+    } else if (error.message === 'AUTH_RESTART') {
+        description = "Authentication process needs to be restarted. Please try entering your phone number again.";
+        handleReset(false);
+    } else {
+        setAuthError(description); 
+    }
+    toast({ title, description, variant: "destructive", duration: error.message && error.message.includes("Invalid hash") ? 10000 : 5000 });
   };
 
   const handleSendCode = async (fullPhoneNumberFromConnect: string) => {
@@ -502,27 +536,11 @@ export default function Home() {
       setAuthStep('awaiting_code');
       toast({ title: "Code Sent!", description: "Please check Telegram for your verification code." });
     } catch (error: any) {
-      const errorMessage = error.message || "An unexpected error occurred.";
-      console.error("Error in handleSendCode:", errorMessage, error.originalErrorObject || error);
-      if (errorMessage === 'AUTH_RESTART' || (error.originalErrorObject?.error_message === 'AUTH_RESTART')) {
-        toast({
-          title: "Authentication Restarted",
-          description: "The authentication process needs to be restarted. Please try entering your phone number again.",
-          variant: "destructive",
-        });
-        handleReset(false); 
-      } else if (errorMessage && (errorMessage.includes("Invalid hash in mt_dh_gen_ok") || errorMessage.includes("Handshake failed"))) {
-        toast({
-          title: "Connection Handshake Failed",
-          description: "Could not establish a secure connection. Please check your API ID/Hash in .env.local, ensure it's correct, restart the server, and try clearing your browser's localStorage for this site.",
-          variant: "destructive",
-          duration: 10000, 
-        });
-        setAuthError("Connection handshake failed. Check API credentials and localStorage. See console for details.");
-      } else {
-        setAuthError(errorMessage);
-        toast({ title: "Error Sending Code", description: errorMessage, variant: "destructive" });
-      }
+        if ((error as Error).message === 'AUTH_RESTART') {
+            handleApiError(error, "Authentication Restart Needed", `Please try entering your phone number again.`);
+        } else {
+            handleApiError(error, "Error Sending Code", `Could not send verification code. ${error.message}`);
+        }
     } finally {
       setIsConnecting(false);
     }
@@ -548,6 +566,7 @@ export default function Home() {
         fetchInitialChats();
         toast({ title: "Sign In Successful!", description: "Connected to Telegram." });
       } else {
+        // This case should ideally be handled by throwing an error from signIn
         setAuthError("Sign in failed. Unexpected response from server.");
         toast({ title: "Sign In Failed", description: "Unexpected response from server.", variant: "destructive" });
       }
@@ -558,9 +577,7 @@ export default function Home() {
         setAuthError(null); 
         toast({ title: "2FA Required", description: "Please enter your two-factor authentication password." });
       } else {
-        console.log("Error signing in (handleSignIn):", error.message, error.originalErrorObject || error);
-        setAuthError(error.message || "Sign in failed. Invalid code or other issue.");
-        toast({ title: "Sign In Failed", description: error.message || "Invalid code or other issue.", variant: "destructive" });
+        handleApiError(error, "Sign In Failed", `Could not sign in. ${error.message}`);
       }
     } finally {
       setIsConnecting(false);
@@ -591,9 +608,7 @@ export default function Home() {
         toast({ title: "2FA Failed", description: "Unexpected response from server.", variant: "destructive" });
       }
     } catch (error: any) {
-      console.error("Error checking password (handleCheckPassword):", error.message, error.originalErrorObject || error);
-      setAuthError(error.message || "2FA failed. Invalid password or other issue.");
-      toast({ title: "2FA Failed", description: error.message || "2FA failed. Invalid password or other issue.", variant: "destructive" });
+      handleApiError(error, "2FA Failed", `Could not verify password. ${error.message}`);
     } finally {
       setIsConnecting(false);
     }
@@ -648,15 +663,22 @@ export default function Home() {
 
   const handleCloseFileDetails = () => {
     setIsDetailsPanelOpen(false);
+    setSelectedFileForDetails(null);
   };
 
   const handleQueueDownload = async (file: CloudFile) => {
     const existingItem = downloadQueue.find(item => item.id === file.id);
-    if (existingItem && (existingItem.status === 'downloading' || existingItem.status === 'queued' || existingItem.status === 'paused' || existingItem.status === 'refreshing_reference')) {
+    if (existingItem && ['downloading', 'queued', 'paused', 'refreshing_reference'].includes(existingItem.status)) {
       toast({ title: "Already in Queue", description: `${file.name} is already being processed or queued.` });
       setIsDownloadManagerOpen(true); 
       return;
     }
+    if (existingItem && existingItem.status === 'completed') {
+        toast({ title: "Already Downloaded", description: `${file.name} has already been downloaded. If you want to download again, clear it from the list (feature not yet implemented).`});
+        setIsDownloadManagerOpen(true);
+        return;
+    }
+
 
     toast({ title: "Preparing Download...", description: `Getting details for ${file.name}.` });
     const downloadInfo = await telegramService.prepareFileDownloadInfo(file);
@@ -664,7 +686,16 @@ export default function Home() {
     if (downloadInfo && downloadInfo.location && downloadInfo.totalSize > 0) {
       const controller = new AbortController();
       const newItem: DownloadQueueItemType = {
-        ...file, 
+        id: file.id,
+        name: file.name,
+        type: file.type,
+        size: formatFileSize(downloadInfo.totalSize),
+        lastModified: file.lastModified,
+        url: file.url,
+        dataAiHint: file.dataAiHint,
+        messageId: file.messageId,
+        telegramMessage: file.telegramMessage,
+        inputPeer: file.inputPeer,
         status: 'downloading', 
         progress: 0,
         downloadedBytes: 0,
@@ -698,7 +729,7 @@ export default function Home() {
         return item;
       })
     );
-    toast({ title: "Download Cancelled", description: `Download for item ${itemId} has been cancelled.`});
+    toast({ title: "Download Cancelled", description: `Download for item has been cancelled.`});
   };
 
   const handlePauseDownload = (itemId: string) => {
@@ -708,7 +739,7 @@ export default function Home() {
             {...item, status: 'paused'} : item
         )
     );
-    toast({ title: "Download Paused", description: `Download for item ${itemId} has been paused.`});
+    toast({ title: "Download Paused", description: `Download for item has been paused.`});
   };
 
   const handleResumeDownload = (itemId: string) => {
@@ -738,7 +769,7 @@ export default function Home() {
             {...item, status: 'downloading'} : item 
         )
     );
-    toast({ title: "Download Resumed", description: `Download for item ${itemId} has been resumed.`});
+    toast({ title: "Download Resumed", description: `Download for item has been resumed.`});
   };
 
 

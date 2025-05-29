@@ -4,6 +4,7 @@
 import MTProto from '@mtproto/core/envs/browser';
 import type { CloudFolder, CloudFile, GetChatsPaginatedResponse, MediaHistoryResponse, FileDownloadInfo, FileChunkResponse, DownloadQueueItemType, FileHash as AppFileHash } from '@/types';
 import cryptoSha256 from '@cryptography/sha256'; // For CDN hash verification
+import { formatFileSize } from '@/lib/utils';
 
 const API_ID_STRING = process.env.NEXT_PUBLIC_TELEGRAM_API_ID;
 const API_HASH = process.env.NEXT_PUBLIC_TELEGRAM_API_HASH;
@@ -47,6 +48,7 @@ function sleep(ms: number): Promise<void> {
 
 class API {
   public mtproto: MTProto;
+  private initialized: boolean = false;
 
   constructor() {
     if (API_ID === undefined || !API_HASH) {
@@ -56,16 +58,15 @@ class API {
       if (typeof window !== 'undefined' && !(window as any).telegramApiError) (window as any).telegramApiError = errorMessage;
       // Provide a stub mtproto object to prevent further errors if initialization fails
       this.mtproto = {
-        call: async (method: string) => {
-          console.error(`MTProto not initialized. Call to '${method}' aborted.`);
+        call: async (method: string, params: any = {}, options: any = {}) => {
+          console.error(`MTProto not initialized. Call to '${method}' aborted. Params:`, params, "Options:", options);
           return Promise.reject(new Error(errorMessage));
         },
-        updates: { on: () => {} }, 
+        updates: { on: () => {} },
         setDefaultDc: async () => Promise.reject(new Error(errorMessage)),
-        crypto: { 
+        crypto: {
             getSRPParams: async () => Promise.reject(new Error(errorMessage)),
         },
-        // Add other methods that might be called if necessary, e.g., clearStorage
         clearStorage: async () => { console.warn("MTProto not initialized, clearStorage called."); return Promise.resolve(); }
       } as any; // Type assertion to satisfy MTProto type, though it's a stub
       return;
@@ -74,8 +75,8 @@ class API {
       this.mtproto = new MTProto({
         api_id: API_ID,
         api_hash: API_HASH,
-        // Browser environment defaults to localStorage, no storageOptions needed
       });
+      this.initialized = true;
       console.log('MTProto client initialized successfully in API class for browser environment.');
 
       this.mtproto.updates.on('updatesTooLong', (updateInfo: any) => {
@@ -105,8 +106,8 @@ class API {
         console.error(errorMessage, initError);
         if (typeof window !== 'undefined' && !(window as any).telegramApiError) (window as any).telegramApiError = errorMessage;
         this.mtproto = { // Stub again
-            call: async (method: string) => {
-              console.error(`MTProto failed to initialize. Call to '${method}' aborted.`);
+            call: async (method: string, params: any = {}, options: any = {}) => {
+              console.error(`MTProto failed to initialize. Call to '${method}' aborted. Params:`, params, "Options:", options);
               return Promise.reject(new Error(errorMessage));
             },
             updates: { on: () => {} },
@@ -120,9 +121,9 @@ class API {
   }
 
   async call(method: string, params: any = {}, options: any = {}): Promise<any> {
-    if (!this.mtproto || typeof this.mtproto.call !== 'function') {
+    if (!this.initialized || !this.mtproto || typeof this.mtproto.call !== 'function') {
         const initErrorMsg = (typeof window !== 'undefined' && (window as any).telegramApiError) || CRITICAL_ERROR_MESSAGE_PREFIX + "MTProto not properly initialized due to API ID/Hash missing/invalid or other init failure.";
-        console.error(`API.call: MTProto not available. Call to '${method}' aborted.`);
+        console.error(`API.call: MTProto not available. Call to '${method}' aborted. Params:`, params, "Options:", options);
         return Promise.reject(new Error(initErrorMsg));
     }
     console.log(`API Call: ${method}`, JSON.parse(JSON.stringify(params)), options);
@@ -133,9 +134,9 @@ class API {
       const result = await this.mtproto.call(method, params, options);
       return result;
     } catch (error: any) {
-      originalErrorObject = error; 
+      originalErrorObject = error;
       console.warn(`MTProto call '${method}' raw error object:`, JSON.parse(JSON.stringify(error, null, 2)), error);
-      
+
       const { error_code, error_message } = error;
 
       if (error_code === 420 && typeof error_message === 'string' && error_message.startsWith('FLOOD_WAIT_')) {
@@ -145,7 +146,7 @@ class API {
             const ms = seconds * 1000;
             console.log(`Flood wait: waiting ${seconds}s before retrying ${method}.`);
             await sleep(ms);
-            return this.call(method, params, options); 
+            return this.call(method, params, options);
         } else {
             console.error(`Could not parse flood wait time from: ${error_message}`);
         }
@@ -155,24 +156,20 @@ class API {
       if (error_code === 303 && migrateErrorMatch) {
         const type = migrateErrorMatch[1];
         const dcId = Number(migrateErrorMatch[2]);
-        const isFileMigrate = type === 'FILE' || type === 'PEER' || type === 'CHAT'; // FILE_MIGRATE_X is handled here too
-
         console.log(`${type}_MIGRATE_X error. Attempting to migrate to DC ${dcId} for ${method}...`);
-        
         const authMethods = ['auth.sendCode', 'auth.signIn', 'auth.checkPassword', 'auth.logOut'];
-        
-        if (type === 'PHONE' || type === 'NETWORK' || type === 'USER' || authMethods.includes(method) || (isFileMigrate && method !== 'upload.getFile' && method !== 'upload.getCdnFile') ) {
+        if (type === 'PHONE' || type === 'NETWORK' || type === 'USER' || authMethods.includes(method) || (type === 'FILE' && method !== 'upload.getFile' && method !== 'upload.getCdnFile') ) {
           console.log(`Setting default DC to ${dcId} due to ${type}_MIGRATE or relevant operation for method ${method}.`);
           await this.mtproto.setDefaultDc(dcId);
-        } else { 
+        } else {
           console.log(`Retrying ${method} with dcId ${dcId} in options.`);
           options = { ...options, dcId };
         }
-        return this.call(method, params, options); 
+        return this.call(method, params, options);
       }
       
       let processedError: Error;
-      if (error_message) { // Prefer error_message if available (Telegram specific)
+      if (error_message) {
         processedError = new Error(error_message);
       } else if (error instanceof Error && error.message) {
         processedError = error;
@@ -191,7 +188,7 @@ class API {
         (processedError as any).originalErrorObject = originalErrorObject;
       }
       if (error_code) {
-        (processedError as any).error_code = error_code; // Preserve error_code
+        (processedError as any).error_code = error_code;
       }
       return Promise.reject(processedError);
     }
@@ -204,13 +201,13 @@ let userSession: {
   phone?: string;
   phone_code_hash?: string;
   user?: any;
-  srp_id?: string; 
+  srp_id?: string;
   srp_params?: {
     g: number;
     p: Uint8Array;
     salt1: Uint8Array;
     salt2: Uint8Array;
-    srp_B: Uint8Array; 
+    srp_B: Uint8Array;
   };
 } = {};
 
@@ -271,7 +268,7 @@ export function getUserSessionDetails(): { phone?: string; user?: any } {
 }
 
 export async function sendCode(fullPhoneNumber: string): Promise<string> {
-  userSession = { phone: fullPhoneNumber }; // Reset relevant parts of session for new sendCode
+  userSession = { phone: fullPhoneNumber };
   console.log(`Attempting to send code to ${fullPhoneNumber} via API class`);
 
   const sendCodePayload = {
@@ -283,7 +280,7 @@ export async function sendCode(fullPhoneNumber: string): Promise<string> {
 
   try {
     const result = await api.call('auth.sendCode', sendCodePayload);
-    if (!result || !result.phone_code_hash) { 
+    if (!result || !result.phone_code_hash) {
         console.error("auth.sendCode did not return phone_code_hash. Result:", result);
         throw new Error("Failed to send code: phone_code_hash not received from Telegram.");
     }
@@ -291,12 +288,12 @@ export async function sendCode(fullPhoneNumber: string): Promise<string> {
     console.log('Verification code sent, phone_code_hash:', userSession.phone_code_hash);
     return userSession.phone_code_hash;
   } catch (error: any) {
-    console.error('Error in sendCode function after api.call:', error.message, error.originalErrorObject || error);
-    const message = error.message || 'Failed to send code.';
-     if (message === 'AUTH_RESTART' || (error.originalErrorObject?.error_message === 'AUTH_RESTART')) {
+    console.error('Error in sendCode function after api.call:', error);
+    const message = (error as any).error_message || (error as any).message || 'Failed to send code.';
+     if (message === 'AUTH_RESTART') {
          throw new Error('AUTH_RESTART');
     }
-    throw error; 
+    throw error;
   }
 }
 
@@ -324,14 +321,13 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
         userSession.user = result.user;
         saveUserDataToLocalStorage();
     }
-    const currentPhoneCodeHash = userSession.phone_code_hash; // Store before deleting
-    delete userSession.phone_code_hash; 
+    delete userSession.phone_code_hash;
 
     return { user: result.user };
 
   } catch (error: any) {
-    const errorMessage = error.message || (error.originalErrorObject?.error_message);
-    console.warn('Error in signIn function after api.call:', errorMessage, error.originalErrorObject || error);
+    const errorMessage = (error as any).message || ((error as any).originalErrorObject?.error_message);
+    console.warn('Error in signIn function after api.call:', errorMessage, (error as any).originalErrorObject || error);
 
     if (errorMessage === 'SESSION_PASSWORD_NEEDED') {
       console.log('2FA password needed. Fetching password details...');
@@ -341,11 +337,11 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
 
         if (!passwordData.srp_id || !passwordData.current_algo || !passwordData.srp_B) {
              console.error("Failed to get complete SRP parameters from account.getPassword. Response:", passwordData);
-             delete userSession.phone_code_hash; // Ensure cleared if it wasn't already
+             delete userSession.phone_code_hash;
              throw new Error('Failed to initialize 2FA: Missing critical SRP parameters.');
         }
 
-        userSession.srp_id = String(passwordData.srp_id); 
+        userSession.srp_id = String(passwordData.srp_id);
         userSession.srp_params = {
             g: passwordData.current_algo.g,
             p: passwordData.current_algo.p,
@@ -354,26 +350,27 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
             srp_B: passwordData.srp_B
         };
         
-        delete userSession.phone_code_hash; // Ensure cleared
+        delete userSession.phone_code_hash;
 
         const twoFactorError: any = new Error('2FA_REQUIRED');
-        twoFactorError.srp_id = userSession.srp_id; 
+        twoFactorError.srp_id = userSession.srp_id;
         throw twoFactorError;
 
       } catch (getPasswordError: any) {
-        const getPasswordErrorMessage = getPasswordError.message || getPasswordError.originalErrorObject?.error_message;
-        if (getPasswordErrorMessage === '2FA_REQUIRED' && getPasswordError.srp_id) {
-          console.log('2FA required, password details fetched during signIn. srp_id:', getPasswordError.srp_id);
+        const getPasswordErrorMessage = (getPasswordError as any).message || (getPasswordError as any).originalErrorObject?.error_message;
+        if (getPasswordErrorMessage === '2FA_REQUIRED' && (getPasswordError as any).srp_id) {
+          console.log('2FA required, password details fetched during signIn. srp_id:', (getPasswordError as any).srp_id);
         } else {
-          console.error('Error fetching password details for 2FA:', getPasswordErrorMessage, getPasswordError.originalErrorObject || getPasswordError);
+          console.log('Error fetching password details for 2FA:', getPasswordErrorMessage, (getPasswordError as any).originalErrorObject || getPasswordError);
         }
-        delete userSession.phone_code_hash; // Ensure cleared
-        if (getPasswordErrorMessage === '2FA_REQUIRED' && getPasswordError.srp_id) throw getPasswordError;
-        throw new Error(getPasswordErrorMessage || 'Failed to fetch 2FA details.');
+        delete userSession.phone_code_hash;
+        if (getPasswordErrorMessage === '2FA_REQUIRED' && (getPasswordError as any).srp_id) throw getPasswordError;
+        const message = getPasswordErrorMessage || 'Failed to fetch 2FA details.';
+        throw new Error(message);
       }
     }
-    delete userSession.phone_code_hash; 
-    throw error; 
+    delete userSession.phone_code_hash;
+    throw error;
   }
 }
 
@@ -381,7 +378,7 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
 export async function checkPassword(password: string): Promise<any> {
   if (!userSession.srp_id || !userSession.srp_params) {
     console.error('SRP parameters not available for checkPassword. User might need to restart login.');
-    delete userSession.srp_params; 
+    delete userSession.srp_params;
     delete userSession.srp_id;
     throw new Error('AUTH_RESTART');
   }
@@ -392,6 +389,8 @@ export async function checkPassword(password: string): Promise<any> {
     
     if (!api.mtproto.crypto || typeof api.mtproto.crypto.getSRPParams !== 'function') {
         console.error("api.mtproto.crypto.getSRPParams is not available. MTProto might not be fully initialized or crypto utils are missing.");
+        delete userSession.srp_params;
+        delete userSession.srp_id;
         throw new Error("Internal error: SRP calculation service not available.");
     }
     
@@ -403,7 +402,7 @@ export async function checkPassword(password: string): Promise<any> {
     const checkResult = await api.call('auth.checkPassword', {
         password: {
             _: 'inputCheckPasswordSRP',
-            srp_id: userSession.srp_id, 
+            srp_id: userSession.srp_id,
             A: A,
             M1: M1,
         }
@@ -414,43 +413,43 @@ export async function checkPassword(password: string): Promise<any> {
         userSession.user = checkResult.user;
         saveUserDataToLocalStorage();
     }
-    delete userSession.srp_params; 
-    delete userSession.srp_id;     
+    delete userSession.srp_params;
+    delete userSession.srp_id;
     return checkResult.user;
 
   } catch (error: any) {
-    console.error('Error checking password:', error.message, error.originalErrorObject || error);
-    delete userSession.srp_params; 
-    delete userSession.srp_id;     
+    console.error('Error checking password:', error.message, (error as any).originalErrorObject || error);
+    delete userSession.srp_params;
+    delete userSession.srp_id;
 
-    const message = error.message || (error.originalErrorObject?.error_message || 'Failed to check 2FA password.');
+    const message = (error as any).message || ((error as any).originalErrorObject?.error_message || 'Failed to check 2FA password.');
     if (message === 'PASSWORD_HASH_INVALID') {
         throw new Error('Invalid password. Please try again. (PASSWORD_HASH_INVALID)');
     }
     if (message === 'SRP_ID_INVALID') {
         throw new Error('Session for 2FA has expired or is invalid. Please try logging in again. (SRP_ID_INVALID)');
     }
-    throw error; 
+    throw error;
   }
 }
 
 export async function signOut(): Promise<void> {
   try {
-    if (api && api.mtproto && typeof api.mtproto.call === 'function' && (api.mtproto as any).api_id !== undefined) { // Check if mtproto was properly initialized
+    if (api && api.mtproto && typeof api.mtproto.call === 'function' && api.initialized) {
         await api.call('auth.logOut');
         console.log('Signed out successfully from Telegram server.');
     } else {
         console.warn('MTProto client not fully initialized or already cleared, cannot call auth.logOut.');
     }
   } catch (error: any) {
-    console.error('Error signing out from Telegram server:', error.message, error.originalErrorObject || error);
+    console.error('Error signing out from Telegram server:', error.message, (error as any).originalErrorObject || error);
   } finally {
     userSession = {};
     if (typeof window !== 'undefined') {
       localStorage.removeItem(USER_SESSION_KEY);
       localStorage.removeItem(USER_PHONE_KEY);
       try {
-        if (api && api.mtproto && typeof api.mtproto.clearStorage === 'function') {
+        if (api && api.mtproto && typeof api.mtproto.clearStorage === 'function' && api.initialized) {
           await api.mtproto.clearStorage();
           console.log('mtproto-core internal storage cleared.');
         } else {
@@ -465,19 +464,25 @@ export async function signOut(): Promise<void> {
 }
 
 export async function isUserConnected(): Promise<boolean> {
+  if (!api.initialized && API_ID !== undefined && API_HASH) {
+      console.warn("isUserConnected: API not initialized, but API_ID/Hash are present. This shouldn't happen. Attempting re-init (conceptual).");
+      // Potentially try to re-initialize or handle this state.
+      // For now, assume disconnected if API class itself didn't init.
+      return false;
+  }
+  if (!api.initialized && (API_ID === undefined || !API_HASH)) {
+       console.warn("isUserConnected: MTProto not initialized (API_ID/Hash missing). Assuming not connected.");
+       await signOut();
+       return false;
+  }
+
   if (userSession.user) {
     try {
-        // Check if api.mtproto is the stub or the real one
-        if (API_ID === undefined || !API_HASH || (api.mtproto as any).api_id === undefined) {
-             console.warn("isUserConnected: MTProto not initialized (API_ID/Hash missing). Assuming not connected.");
-             await signOut(); // Clean up local state if API keys were bad
-             return false;
-        }
         await api.call('users.getUsers', {id: [{_: 'inputUserSelf'}]});
         console.log("User session is active (checked with users.getUsers).");
         return true;
     } catch (error: any) {
-        const errorMessage = error.message || error.originalErrorObject?.error_message;
+        const errorMessage = (error as any).message || (error as any).originalErrorObject?.error_message;
         const authErrorMessages = [
             'AUTH_KEY_UNREGISTERED', 'USER_DEACTIVATED', 'SESSION_REVOKED',
             'SESSION_EXPIRED', 'API_ID_INVALID', 'AUTH_RESTART'
@@ -485,53 +490,43 @@ export async function isUserConnected(): Promise<boolean> {
 
         if (errorMessage && authErrorMessages.some(authMsg => errorMessage.includes(authMsg))) {
             console.warn("User session no longer valid or API keys incorrect due to:", errorMessage, "Performing local logout.");
-            await signOut(); 
+            await signOut();
             return false;
         }
-        console.warn("API call failed during connected check, but might not be an auth error. User object exists locally. Error:", errorMessage, error.originalErrorObject || error);
-        return true; 
+        console.warn("API call failed during connected check, but might not be an auth error. User object exists locally. Error:", errorMessage, (error as any).originalErrorObject || error);
+        return true; // Potentially problematic, but keeps user "logged in" UI-wise if it's a transient network error
     }
   }
-  // No userSession.user, try loading from localStorage
+  // No userSession.user, try loading from localStorage (already done at service init)
   if (typeof window !== 'undefined' && !userSession.user) {
-      loadUserDataFromLocalStorage(); // This will populate userSession if data exists
-      if (userSession.user) {
-          // Now that userSession.user might be populated, retry the connection check.
-          return isUserConnected(); // Recursive call, safe due to the initial check
+      // loadUserDataFromLocalStorage() is called at the beginning of the script.
+      // If still no userSession.user, then there's nothing in localStorage.
+      if (userSession.user) { // Double check if loadUserDataFromLocalStorage populated it.
+          return isUserConnected();
       }
   }
   return false;
 }
 
-function formatFileSize(bytesInput: number | string | undefined | null, decimals = 2): string {
-  if (bytesInput === null || bytesInput === undefined) return 'N/A';
-  const bytes = typeof bytesInput === 'string' ? parseInt(bytesInput, 10) : bytesInput;
-  if (isNaN(bytes) || bytes === 0) return '0 Bytes';
-  const k = 1024;
-  const dm = decimals < 0 ? 0 : decimals;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
-}
 
 function getPeerTitle(peer: any, chats: any[], users: any[]): string {
   if (!peer) return 'Unknown Peer';
   try {
-    const peerUserIdStr = String(peer.user_id);
-    const peerChatIdStr = String(peer.chat_id);
-    const peerChannelIdStr = String(peer.channel_id);
+    const peerUserIdStr = peer.user_id ? String(peer.user_id) : undefined;
+    const peerChatIdStr = peer.chat_id ? String(peer.chat_id) : undefined;
+    const peerChannelIdStr = peer.channel_id ? String(peer.channel_id) : undefined;
 
-    if (peer._ === 'peerUser' && peer.user_id) {
+    if (peer._ === 'peerUser' && peerUserIdStr) {
       const user = users.find(u => String(u.id) === peerUserIdStr);
       if (user) {
         const name = `${user.first_name || ''} ${user.last_name || ''}`.trim();
         return name || `User ${peerUserIdStr}`;
       }
       return `User ${peerUserIdStr}`;
-    } else if (peer._ === 'peerChat' && peer.chat_id) {
+    } else if (peer._ === 'peerChat' && peerChatIdStr) {
       const chat = chats.find(c => String(c.id) === peerChatIdStr);
       return chat ? chat.title : `Chat ${peerChatIdStr}`;
-    } else if (peer._ === 'peerChannel' && peer.channel_id) {
+    } else if (peer._ === 'peerChannel' && peerChannelIdStr) {
       const channel = chats.find(c => String(c.id) === peerChannelIdStr);
       return channel ? channel.title : `Channel ${peerChannelIdStr}`;
     }
@@ -588,7 +583,7 @@ function transformDialogsToCloudFolders(dialogsResult: any): CloudFolder[] {
 
     if (!inputPeerForApiCalls) {
         console.warn("Could not determine valid inputPeerForApiCalls for dialog:", dialog.peer, "Dialog object:", dialog);
-        return null; 
+        return null;
     }
     
     const idSuffix = peerUserIdStr || peerChatIdStr || peerChannelIdStr || String(dialog.top_message) || String(Date.now());
@@ -599,8 +594,8 @@ function transformDialogsToCloudFolders(dialogsResult: any): CloudFolder[] {
       name: chatTitle,
       isChatFolder: true,
       inputPeer: inputPeerForApiCalls,
-      files: [], 
-      folders: [], 
+      files: [],
+      folders: [],
     };
   }).filter(folder => folder !== null) as CloudFolder[];
 }
@@ -612,7 +607,7 @@ export async function getTelegramChats(
   offsetId: number = 0,
   offsetPeer: any = { _: 'inputPeerEmpty' }
 ): Promise<GetChatsPaginatedResponse> {
-  if (!userSession.user && !(await isUserConnected())) { // Ensure we check connection if no local user
+  if (!userSession.user && !(await isUserConnected())) {
     console.warn("User not signed in. Cannot fetch chats.");
     return { folders: [], nextOffsetDate: 0, nextOffsetId: 0, nextOffsetPeer: { _: 'inputPeerEmpty' }, hasMore: false };
   }
@@ -625,7 +620,7 @@ export async function getTelegramChats(
       offset_id: offsetId,
       offset_peer: offsetPeer,
       limit: limit,
-      hash: 0, 
+      hash: 0,
     });
 
     const transformedFolders = transformDialogsToCloudFolders(dialogsResult);
@@ -638,32 +633,32 @@ export async function getTelegramChats(
     if (dialogsResult.dialogs && dialogsResult.dialogs.length > 0) {
       hasMore = dialogsResult.dialogs.length === limit;
 
-      if (hasMore) { 
+      if (hasMore) {
         const lastDialog = dialogsResult.dialogs[dialogsResult.dialogs.length - 1];
-        newOffsetId = lastDialog.top_message; 
+        newOffsetId = lastDialog.top_message;
 
         const peerForOffset = lastDialog.peer;
         if (peerForOffset._ === 'peerUser') {
             const user = dialogsResult.users.find((u:any) => String(u.id) === String(peerForOffset.user_id));
-            if (user && user.access_hash !== undefined) { 
+            if (user && user.access_hash !== undefined) {
                  newOffsetPeerInput = { _: 'inputPeerUser', user_id: user.id, access_hash: user.access_hash };
             } else {
                 console.warn('Could not find user or access_hash for peerUser offset:', peerForOffset, 'Users:', dialogsResult.users);
-                newOffsetPeerInput = { _: 'inputPeerEmpty' }; 
+                newOffsetPeerInput = { _: 'inputPeerEmpty' };
             }
         } else if (peerForOffset._ === 'peerChat') {
              newOffsetPeerInput = { _: 'inputPeerChat', chat_id: peerForOffset.chat_id };
         } else if (peerForOffset._ === 'peerChannel') {
             const chat = dialogsResult.chats.find((c:any) => String(c.id) === String(peerForOffset.channel_id));
-             if (chat && chat.access_hash !== undefined) { 
+             if (chat && chat.access_hash !== undefined) {
                 newOffsetPeerInput = { _: 'inputPeerChannel', channel_id: chat.id, access_hash: chat.access_hash };
             } else {
                 console.warn('Could not find channel or access_hash for peerChannel offset:', peerForOffset, 'Chats:', dialogsResult.chats);
-                newOffsetPeerInput = { _: 'inputPeerEmpty' }; 
+                newOffsetPeerInput = { _: 'inputPeerEmpty' };
             }
         } else {
             console.warn('Unknown peer type for offset:', peerForOffset);
-            newOffsetPeerInput = { _: 'inputPeerEmpty' }; 
+            newOffsetPeerInput = { _: 'inputPeerEmpty' };
         }
         
         const messages = dialogsResult.messages || [];
@@ -676,12 +671,12 @@ export async function getTelegramChats(
         
         if (lastMessageDetails && typeof lastMessageDetails.date === 'number') {
           newOffsetDate = lastMessageDetails.date;
-        } else if (hasMore) { 
+        } else if (hasMore) {
             console.warn("Could not determine precise next offset_date for pagination from message details. Last dialog:", lastDialog, "Messages:", messages);
         }
       }
     } else {
-        hasMore = false; 
+        hasMore = false;
     }
 
     return {
@@ -693,8 +688,8 @@ export async function getTelegramChats(
     };
 
   } catch (error:any) {
-    console.error('Error fetching dialogs:', error.message, error.originalErrorObject || error);
-    const message = error.message || 'Failed to fetch chats.';
+    console.error('Error fetching dialogs:', error.message, (error as any).originalErrorObject || error);
+    const message = (error as any).message || 'Failed to fetch chats.';
     throw new Error(message);
   }
 }
@@ -738,13 +733,13 @@ export async function getChatMediaHistory(
           let fileSize: string | undefined;
           let dataAiHint: string | undefined;
           let totalSizeInBytes: number | undefined;
-          let mediaObjectForFile = null;
+          let mediaObjectForFile: any = null; // Use 'any' for flexibility
 
-          if (msg.media.photo && historyResult.photos) {
-            mediaObjectForFile = historyResult.photos.find((p:any) => String(p.id) === String(msg.media.photo.id)) || msg.media.photo;
-          } else if (msg.media.document && historyResult.documents) {
-            mediaObjectForFile = historyResult.documents.find((d:any) => String(d.id) === String(msg.media.document.id)) || msg.media.document;
-          } else if (msg.media.photo) {
+          if (msg.media.photo && msg.media.photo.id) { // Ensure photo.id exists
+            mediaObjectForFile = historyResult.photos?.find((p:any) => String(p.id) === String(msg.media.photo.id)) || msg.media.photo;
+          } else if (msg.media.document && msg.media.document.id) { // Ensure document.id exists
+            mediaObjectForFile = historyResult.documents?.find((d:any) => String(d.id) === String(msg.media.document.id)) || msg.media.document;
+          } else if (msg.media.photo) { // Fallback if photo/document not in separate arrays
              mediaObjectForFile = msg.media.photo;
           } else if (msg.media.document) {
              mediaObjectForFile = msg.media.document;
@@ -756,14 +751,14 @@ export async function getChatMediaHistory(
             fileName = `photo_${mediaObjectForFile.id?.toString() || msg.id}_${msg.date}.jpg`;
             const largestSize = mediaObjectForFile.sizes?.find((s:any) => s.type === 'y') || mediaObjectForFile.sizes?.sort((a:any,b:any) => (b.w*b.h) - (a.w*a.h))[0];
             if(largestSize?.size) {
-              totalSizeInBytes = Number(largestSize.size); 
+              totalSizeInBytes = Number(largestSize.size);
               fileSize = formatFileSize(totalSizeInBytes);
             }
             dataAiHint = "photograph image";
           } else if (msg.media._ === 'messageMediaDocument' && mediaObjectForFile) {
               fileName = mediaObjectForFile.attributes?.find((attr: any) => attr._ === 'documentAttributeFilename')?.file_name || `document_${mediaObjectForFile.id?.toString() || msg.id}`;
               if(mediaObjectForFile.size) {
-                totalSizeInBytes = Number(mediaObjectForFile.size); 
+                totalSizeInBytes = Number(mediaObjectForFile.size);
                 fileSize = formatFileSize(totalSizeInBytes);
               }
 
@@ -787,10 +782,10 @@ export async function getChatMediaHistory(
               size: fileSize,
               totalSizeInBytes: totalSizeInBytes,
               lastModified: new Date(msg.date * 1000).toLocaleDateString(),
-              url: undefined, 
+              url: undefined,
               dataAiHint: dataAiHint,
-              telegramMessage: mediaObjectForFile, 
-              inputPeer: inputPeer 
+              telegramMessage: mediaObjectForFile,
+              inputPeer: inputPeer
             });
           }
         }
@@ -799,9 +794,9 @@ export async function getChatMediaHistory(
       if (historyResult.messages.length > 0) {
         newOffsetId = historyResult.messages[historyResult.messages.length - 1].id;
       }
-      hasMoreMessages = historyResult.messages.length === limit; 
+      hasMoreMessages = historyResult.messages.length === limit;
     } else {
-        hasMoreMessages = false; 
+        hasMoreMessages = false;
     }
 
     return {
@@ -811,8 +806,8 @@ export async function getChatMediaHistory(
     };
 
   } catch (error:any) {
-    console.error('Error fetching chat media history:', error.message, error.originalErrorObject || error);
-    const message = error.message || 'Failed to fetch chat media.';
+    console.error('Error fetching chat media history:', error.message, (error as any).originalErrorObject || error);
+    const message = (error as any).message || 'Failed to fetch chat media.';
     throw new Error(message);
   }
 }
@@ -842,7 +837,7 @@ export async function prepareFileDownloadInfo(file: CloudFile): Promise<FileDown
           thumb_size: largestSize.type || '',
         };
         totalSize = Number(largestSize.size) || file.totalSizeInBytes || 0;
-        mimeType = 'image/jpeg'; 
+        mimeType = 'image/jpeg';
       } else {
         console.warn("No sizes found for photo:", mediaObject);
       }
@@ -856,7 +851,7 @@ export async function prepareFileDownloadInfo(file: CloudFile): Promise<FileDown
         id: mediaObject.id,
         access_hash: mediaObject.access_hash,
         file_reference: mediaObject.file_reference,
-        thumb_size: '', 
+        thumb_size: '',
       };
       totalSize = Number(mediaObject.size) || file.totalSizeInBytes || 0;
       mimeType = mediaObject.mime_type || 'application/octet-stream';
@@ -892,7 +887,7 @@ export async function downloadFileChunk(
       location: location,
       offset: offset,
       limit: limit,
-      precise: true, 
+      precise: true,
       cdn_supported: true
     }, { signal });
 
@@ -900,7 +895,7 @@ export async function downloadFileChunk(
         console.warn('upload.getFile call returned problematic result (null, non-object, or empty object). Result:', result);
         return { errorType: 'OTHER' as const };
     }
-    if (Object.keys(result).length === 0 && result.constructor === Object) { // Check for empty object
+    if (Object.keys(result).length === 0 && result.constructor === Object) {
         console.warn('upload.getFile call returned an empty object. Result:', result);
         return { errorType: 'OTHER' as const };
     }
@@ -908,7 +903,7 @@ export async function downloadFileChunk(
 
     if (result._ === 'upload.fileCdnRedirect') {
       console.log("CDN Redirect received:", result);
-      if (!result.file_hashes) result.file_hashes = []; // Ensure file_hashes is an array
+      if (!result.file_hashes) result.file_hashes = [];
       return {
         isCdnRedirect: true,
         cdnRedirectData: {
@@ -929,10 +924,10 @@ export async function downloadFileChunk(
   } catch (error: any) {
     if (error.name === 'AbortError') {
       console.log('Download chunk aborted.');
-      return { errorType: 'OTHER' as const }; 
+      return { errorType: 'OTHER' as const };
     }
-    console.error('Error downloading file chunk:', error.message, error.originalErrorObject || error);
-    const errorMessage = error.message || error.originalErrorObject?.error_message;
+    console.error('Error downloading file chunk:', error.message, (error as any).originalErrorObject || error);
+    const errorMessage = (error as any).message || (error as any).originalErrorObject?.error_message;
     if (errorMessage?.includes('FILE_REFERENCE_EXPIRED')) {
       return { errorType: 'FILE_REFERENCE_EXPIRED' as const };
     }
@@ -942,8 +937,8 @@ export async function downloadFileChunk(
 
 export async function downloadCdnFileChunk(
   cdnRedirectData: NonNullable<FileChunkResponse['cdnRedirectData']>,
-  offset: number, 
-  limit: number,  
+  offset: number,
+  limit: number,
   signal?: AbortSignal
 ): Promise<FileChunkResponse> {
   console.log('Downloading CDN chunk:', { dcId: cdnRedirectData.dc_id, offset, limit });
@@ -952,7 +947,7 @@ export async function downloadCdnFileChunk(
       file_token: cdnRedirectData.file_token,
       offset: offset,
       limit: limit,
-    }, { dcId: cdnRedirectData.dc_id, signal }); 
+    }, { dcId: cdnRedirectData.dc_id, signal });
 
     if (!result || typeof result !== 'object') {
         console.warn('upload.getCdnFile call returned problematic result (null, non-object, or empty object). Result:', result);
@@ -965,7 +960,7 @@ export async function downloadCdnFileChunk(
 
     if (result._ === 'upload.cdnFile' && result.bytes) {
       console.log(`CDN Chunk received, ${result.bytes.length} bytes.`);
-      return { bytes: result.bytes, type: 'application/octet-stream' }; // CDN files don't have explicit storage.FileType
+      return { bytes: result.bytes, type: 'application/octet-stream' };
     }
     console.warn("upload.getCdnFile did not return expected data. Result:", result);
     return { errorType: 'OTHER' as const };
@@ -974,7 +969,7 @@ export async function downloadCdnFileChunk(
       console.log('CDN Download chunk aborted.');
       return { errorType: 'OTHER' as const };
     }
-    console.error('Error downloading CDN file chunk:', error.message, error.originalErrorObject || error);
+    console.error('Error downloading CDN file chunk:', error.message, (error as any).originalErrorObject || error);
     return { errorType: 'OTHER' as const };
   }
 }
@@ -994,8 +989,7 @@ export async function refreshFileReference(item: DownloadQueueItemType): Promise
   console.log("Calling messages.getMessages to refresh message details for messageId:", item.messageId, "from peer:", item.inputPeer)
   try {
     const messagesResult = await api.call('messages.getMessages', {
-      // id: [{ _: 'inputMessageID', id: item.messageId }],
-       id: [ item.messageId ], // MTProto core might handle wrapping this if it's just an ID
+       id: [ { _: 'inputMessageID', id: item.messageId } ], // Explicitly use InputMessageID for clarity
     });
 
     console.log("messages.getMessages result for refresh:", messagesResult);
@@ -1006,11 +1000,11 @@ export async function refreshFileReference(item: DownloadQueueItemType): Promise
       let newFileReference = null;
       let updatedMediaObject = null;
 
-      if (updatedMessage.media.photo) {
+      if (updatedMessage.media.photo && updatedMessage.media.photo.id) {
         const fullPhotoObject = messagesResult.photos?.find((p:any) => String(p.id) === String(updatedMessage.media.photo.id));
         updatedMediaObject = fullPhotoObject || updatedMessage.media.photo;
         newFileReference = updatedMediaObject?.file_reference;
-      } else if (updatedMessage.media.document) {
+      } else if (updatedMessage.media.document && updatedMessage.media.document.id) {
         const fullDocumentObject = messagesResult.documents?.find((d:any) => String(d.id) === String(updatedMessage.media.document.id));
         updatedMediaObject = fullDocumentObject || updatedMessage.media.document;
         newFileReference = updatedMediaObject?.file_reference;
@@ -1018,7 +1012,7 @@ export async function refreshFileReference(item: DownloadQueueItemType): Promise
 
       if (newFileReference && updatedMediaObject) {
         console.log(`New file_reference found:`, newFileReference, "for media object:", updatedMediaObject);
-        return updatedMediaObject; 
+        return updatedMediaObject;
       } else {
         console.warn("No new file_reference or media object found in updated message details. UpdatedMsg:", updatedMessage, "Full Result:", messagesResult);
       }
@@ -1026,15 +1020,15 @@ export async function refreshFileReference(item: DownloadQueueItemType): Promise
       console.warn("Could not find updated message or media in messages.getMessages response. Msg ID:", item.messageId, "Response:", messagesResult);
     }
   } catch (error: any) {
-    console.error("Error during refreshFileReference (messages.getMessages):", error.message, error.originalErrorObject || error);
+    console.error("Error during refreshFileReference (messages.getMessages):", error.message, (error as any).originalErrorObject || error);
   }
   return null;
 }
 
 export async function calculateSHA256(data: Uint8Array): Promise<Uint8Array> {
   try {
-    const hash = cryptoSha256(data); // This is synchronous
-    return Promise.resolve(hash); 
+    const hash = cryptoSha256(data);
+    return Promise.resolve(hash);
   } catch (error) {
     console.error("Error calculating SHA256:", error);
     throw new Error("SHA256 calculation failed");

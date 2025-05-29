@@ -10,6 +10,7 @@ import {
     FileText, ImageIcon, Video, FileAudio, FileQuestion, 
     AlertCircle, CheckCircle2, Loader2, Play, Pause, XCircle, RotateCcw 
 } from "lucide-react";
+import { formatFileSize } from "@/lib/utils";
 
 interface DownloadQueueItemProps {
   item: DownloadQueueItemType;
@@ -103,16 +104,4 @@ export function DownloadQueueItem({ item, onCancel, onPause, onResume }: Downloa
       </CardContent>
     </Card>
   );
-}
-
-// Helper function (can be moved to utils if used elsewhere)
-function formatFileSize(bytesInput: number | string | undefined | null, decimals = 2): string {
-  if (bytesInput === null || bytesInput === undefined) return 'N/A';
-  const bytes = typeof bytesInput === 'string' ? parseInt(bytesInput, 10) : bytesInput;
-  if (isNaN(bytes) || bytes === 0) return '0 Bytes';
-  const k = 1024;
-  const dm = decimals < 0 ? 0 : decimals;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
 }
