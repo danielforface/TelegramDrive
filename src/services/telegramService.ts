@@ -3,8 +3,6 @@
 
 import MTProto from '@mtproto/core/envs/browser';
 import type { CloudFolder, CloudFile, GetChatsPaginatedResponse, MediaHistoryResponse } from '@/types';
-// import { sha256 } from '@cryptography/sha256'; // No longer directly needed for SRP
-// import bigInt from 'big-integer'; // No longer directly needed for SRP
 
 const API_ID_STRING = process.env.NEXT_PUBLIC_TELEGRAM_API_ID;
 const API_HASH = process.env.NEXT_PUBLIC_TELEGRAM_API_HASH;
@@ -16,7 +14,7 @@ if (API_ID_STRING) {
   if (isNaN(API_ID)) {
     const errorMessage = 'CRITICAL: NEXT_PUBLIC_TELEGRAM_API_ID is not a valid number. Real connection will fail. Please ensure it is a number in your .env.local file and you have restarted your development server.';
     console.error(errorMessage);
-    API_ID = undefined; // Explicitly set to undefined to ensure failure if not correctly parsed
+    API_ID = undefined; 
   }
 } else {
    console.warn(
@@ -32,73 +30,6 @@ if (!API_HASH) {
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-let userSession: {
-  phone?: string; // Stores the full phone number (country code + national)
-  phone_code_hash?: string;
-  user?: any;
-  srp_id?: string; 
-  srp_params?: { // Stored after account.getPassword if 2FA is needed
-    g: number;
-    p: Uint8Array;
-    salt1: Uint8Array;
-    salt2: Uint8Array;
-    srp_B: Uint8Array;
-    // We no longer need to store current_algo separately if all parts are here
-  };
-} = {};
-
-const USER_SESSION_KEY = 'telegram_user_session';
-const USER_PHONE_KEY = 'telegram_user_phone'; // For persisting the phone number across sessions for display
-
-function saveUserToLocalStorage(user: any) {
-  if (typeof window !== 'undefined') {
-    try {
-      localStorage.setItem(USER_SESSION_KEY, JSON.stringify(user));
-      if (userSession.phone) { // Also save the phone number used for this session
-        localStorage.setItem(USER_PHONE_KEY, userSession.phone);
-      }
-      console.log('User session (and phone) saved to localStorage.');
-    } catch (e) {
-      console.error('Error saving user session to localStorage:', e);
-    }
-  }
-}
-
-function loadUserFromLocalStorage(): any | null {
-  if (typeof window !== 'undefined') {
-    try {
-      const storedUser = localStorage.getItem(USER_SESSION_KEY);
-      const storedPhone = localStorage.getItem(USER_PHONE_KEY);
-      if (storedUser) {
-        const parsedUser = JSON.parse(storedUser);
-        if (storedPhone) {
-            userSession.phone = storedPhone; // Restore phone number
-        }
-        console.log('User session (and phone) loaded from localStorage.');
-        return parsedUser;
-      }
-    } catch (e) {
-      console.error('Error loading user session from localStorage:', e);
-      localStorage.removeItem(USER_SESSION_KEY); 
-      localStorage.removeItem(USER_PHONE_KEY);
-    }
-  }
-  return null;
-}
-
-// To be called from page.tsx to get details for UI restoration
-export function getUserSessionDetails(): { phone?: string; user?: any } {
-    return { phone: userSession.phone, user: userSession.user };
-}
-
-
-if (typeof window !== 'undefined') {
-    const loadedUser = loadUserFromLocalStorage();
-    if (loadedUser) {
-        userSession.user = loadedUser;
-    }
 }
 
 class API {
@@ -217,8 +148,72 @@ class API {
 
 const api = new API(); 
 
+let userSession: {
+  phone?: string; 
+  phone_code_hash?: string;
+  user?: any;
+  srp_id?: string; 
+  srp_params?: { 
+    g: number;
+    p: Uint8Array;
+    salt1: Uint8Array;
+    salt2: Uint8Array;
+    srp_B: Uint8Array;
+  };
+} = {};
+
+const USER_SESSION_KEY = 'telegram_user_session';
+const USER_PHONE_KEY = 'telegram_user_phone';
+
+function saveUserToLocalStorage(user: any) {
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem(USER_SESSION_KEY, JSON.stringify(user));
+      if (userSession.phone) { 
+        localStorage.setItem(USER_PHONE_KEY, userSession.phone);
+      }
+      console.log('User session (and phone) saved to localStorage.');
+    } catch (e) {
+      console.error('Error saving user session to localStorage:', e);
+    }
+  }
+}
+
+function loadUserFromLocalStorage(): any | null {
+  if (typeof window !== 'undefined') {
+    try {
+      const storedUser = localStorage.getItem(USER_SESSION_KEY);
+      const storedPhone = localStorage.getItem(USER_PHONE_KEY);
+      if (storedUser) {
+        const parsedUser = JSON.parse(storedUser);
+        if (storedPhone) {
+            userSession.phone = storedPhone; 
+        }
+        console.log('User session (and phone) loaded from localStorage.');
+        return parsedUser;
+      }
+    } catch (e) {
+      console.error('Error loading user session from localStorage:', e);
+      localStorage.removeItem(USER_SESSION_KEY); 
+      localStorage.removeItem(USER_PHONE_KEY);
+    }
+  }
+  return null;
+}
+
+export function getUserSessionDetails(): { phone?: string; user?: any } {
+    return { phone: userSession.phone, user: userSession.user };
+}
+
+if (typeof window !== 'undefined') {
+    const loadedUser = loadUserFromLocalStorage();
+    if (loadedUser) {
+        userSession.user = loadedUser;
+    }
+}
+
 export async function sendCode(fullPhoneNumber: string): Promise<string> {
-  userSession.phone = fullPhoneNumber; // Store the full phone number
+  userSession = { phone: fullPhoneNumber }; // Reset parts of session, keep phone
   console.log(`Attempting to send code to ${fullPhoneNumber} via API class`);
 
   const sendCodePayload = {
@@ -245,19 +240,17 @@ export async function sendCode(fullPhoneNumber: string): Promise<string> {
 }
 
 export async function signIn(fullPhoneNumber: string, code: string): Promise<{ user?: any; error?: string; srp_id?: string }> {
-  if (!userSession.phone_code_hash) { // We use the stored phone_code_hash
+  if (!userSession.phone_code_hash) {
     console.error('phone_code_hash missing for signIn. Call sendCode first.');
     throw new Error('phone_code_hash not set. Call sendCode first.');
   }
   if (userSession.phone !== fullPhoneNumber) {
-    // This case should ideally not happen if UI flow is correct
     console.warn(`Phone number mismatch: session has ${userSession.phone}, trying to sign in with ${fullPhoneNumber}. Using session phone.`);
   }
 
-
   try {
     const result = await api.call('auth.signIn', {
-      phone_number: userSession.phone, // Use the phone number stored when sendCode was successful
+      phone_number: userSession.phone, 
       phone_code_hash: userSession.phone_code_hash,
       phone_code: code,
     });
@@ -269,14 +262,15 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
     console.log('Signed in successfully (or 2FA needed):', result);
     if (result.user) {
         userSession.user = result.user;
-        saveUserToLocalStorage(userSession.user); // userSession.phone is already set
+        saveUserToLocalStorage(userSession.user); 
     }
     delete userSession.phone_code_hash; 
     return { user: result.user };
 
   } catch (error: any) {
-    console.warn('Error in signIn function after api.call:', error.message, error.originalErrorObject || error);
     const errorMessage = error.message || (error.originalErrorObject?.error_message);
+    console.warn('Error in signIn function after api.call:', errorMessage, error.originalErrorObject || error);
+
 
     if (errorMessage === 'SESSION_PASSWORD_NEEDED') {
       console.log('2FA password needed. Fetching password details...');
@@ -304,11 +298,16 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
         throw twoFactorError;
 
       } catch (getPasswordError: any) {
-        console.error('Error fetching password details for 2FA:', getPasswordError.message, getPasswordError.originalErrorObject || getPasswordError);
-        delete userSession.phone_code_hash;
-        if (getPasswordError.message === '2FA_REQUIRED' && getPasswordError.srp_id) throw getPasswordError; 
-        const message = getPasswordError.message || 'Failed to fetch 2FA details.';
-        throw new Error(message);
+        // Check if it's the expected 2FA_REQUIRED error re-thrown from above
+        if (getPasswordError.message === '2FA_REQUIRED' && getPasswordError.srp_id) {
+          console.log('2FA required, password details fetched. srp_id:', getPasswordError.srp_id);
+          // phone_code_hash should be deleted before throwing 2FA_REQUIRED
+        } else {
+          // For any other error during getPassword
+          console.error('Error fetching password details for 2FA:', getPasswordError.message, getPasswordError.originalErrorObject || getPasswordError);
+        }
+        delete userSession.phone_code_hash; // Ensure it's cleared in all error paths within getPassword
+        throw getPasswordError; // Re-throw to be caught by page.tsx or propagate original error
       }
     }
     delete userSession.phone_code_hash; 
@@ -329,7 +328,7 @@ export async function checkPassword(password: string): Promise<any> {
     const { g, p, salt1, salt2, srp_B } = userSession.srp_params;
     console.log("Attempting to get SRPParams for checkPassword with provided password and stored srp_params via api.mtproto.crypto.getSRPParams.");
     
-    const { A, M1 } = await api.mtproto.crypto.getSRPParams({ // Use the library's crypto helper
+    const { A, M1 } = await api.mtproto.crypto.getSRPParams({ 
         g,
         p,
         salt1,
@@ -351,14 +350,16 @@ export async function checkPassword(password: string): Promise<any> {
     console.log('2FA password check result:', checkResult);
     if (checkResult.user) {
         userSession.user = checkResult.user;
-        saveUserToLocalStorage(userSession.user); // userSession.phone is already set
+        saveUserToLocalStorage(userSession.user); 
     }
+    // Clear SRP params after attempt, regardless of success/failure
     delete userSession.srp_params;
     delete userSession.srp_id;
     return checkResult.user;
 
   } catch (error: any) {
     console.error('Error checking password:', error.message, error.originalErrorObject || error);
+    // Clear SRP params on any error during checkPassword
     delete userSession.srp_params;
     delete userSession.srp_id;
 
@@ -389,11 +390,11 @@ export async function getChatMediaHistory(
 ): Promise<MediaHistoryResponse> {
   if (!userSession.user) {
     console.warn('User not signed in. Cannot fetch chat media history.');
-    return { files: [], hasMore: false };
+    return { files: [], hasMore: false, nextOffsetId: offsetId };
   }
   if (!inputPeer) {
     console.warn('Input peer is missing. Cannot fetch chat media history.');
-    return { files: [], hasMore: false };
+    return { files: [], hasMore: false, nextOffsetId: offsetId };
   }
 
   console.log('Fetching chat media history with params:', { inputPeer, limit, offsetId });
@@ -412,7 +413,7 @@ export async function getChatMediaHistory(
     console.log('Chat media history raw result:', historyResult);
 
     const mediaFiles: CloudFile[] = [];
-    let newOffsetId: number | undefined = offsetId;
+    let newOffsetId: number | undefined = offsetId; // Default to current offset if no messages
     let hasMore = false;
 
     if (historyResult.messages && historyResult.messages.length > 0) {
@@ -422,31 +423,28 @@ export async function getChatMediaHistory(
           let fileName = `file_${msg.id}`;
           let fileSize: string | undefined;
           let dataAiHint: string | undefined;
-          let telegramPhotoDetails: any | undefined;
-          let telegramDocumentDetails: any | undefined;
-
-
+          
           if (msg.media._ === 'messageMediaPhoto' && msg.media.photo) {
             fileType = 'image';
             fileName = `photo_${msg.id}.jpg`; 
-            telegramPhotoDetails = historyResult.photos?.find((p:any) => p.id?.toString() === msg.media.photo.id?.toString());
-            if (telegramPhotoDetails && telegramPhotoDetails.sizes) {
-                const largestSize = telegramPhotoDetails.sizes.sort((a:any,b:any) => (b.w*b.h) - (a.w*a.h))[0];
+            const photoDetails = historyResult.photos?.find((p:any) => p.id?.toString() === msg.media.photo.id?.toString());
+            if (photoDetails && photoDetails.sizes) {
+                const largestSize = photoDetails.sizes.sort((a:any,b:any) => (b.w*b.h) - (a.w*a.h))[0];
                 if(largestSize && largestSize.size) fileSize = formatFileSize(largestSize.size);
             }
             dataAiHint = "photograph image";
           } else if (msg.media._ === 'messageMediaDocument' && msg.media.document) {
-            telegramDocumentDetails = historyResult.documents?.find((d:any) => d.id?.toString() === msg.media.document.id?.toString());
-            if (telegramDocumentDetails) {
-                fileName = telegramDocumentDetails.attributes?.find((attr: any) => attr._ === 'documentAttributeFilename')?.file_name || `document_${msg.id}`;
-                fileSize = telegramDocumentDetails.size ? formatFileSize(telegramDocumentDetails.size) : undefined;
-                if (telegramDocumentDetails.mime_type?.startsWith('image/')) {
+            const docDetails = historyResult.documents?.find((d:any) => d.id?.toString() === msg.media.document.id?.toString());
+            if (docDetails) {
+                fileName = docDetails.attributes?.find((attr: any) => attr._ === 'documentAttributeFilename')?.file_name || `document_${msg.id}`;
+                fileSize = docDetails.size ? formatFileSize(docDetails.size) : undefined;
+                if (docDetails.mime_type?.startsWith('image/')) {
                     fileType = 'image';
                     dataAiHint = "graphic image";
-                } else if (telegramDocumentDetails.mime_type?.startsWith('video/')) {
+                } else if (docDetails.mime_type?.startsWith('video/')) {
                     fileType = 'video';
                     dataAiHint = "video clip";
-                } else if (telegramDocumentDetails.mime_type?.startsWith('audio/')) {
+                } else if (docDetails.mime_type?.startsWith('audio/')) {
                     fileType = 'audio';
                     dataAiHint = "audio recording";
                 } else {
@@ -465,16 +463,13 @@ export async function getChatMediaHistory(
             lastModified: new Date(msg.date * 1000).toLocaleDateString(),
             dataAiHint: dataAiHint,
             telegramMessage: msg, 
-            // Storing specific photo/document details can be useful too
-            // telegramPhoto: telegramPhotoDetails, 
-            // telegramDocument: telegramDocumentDetails,
           });
         }
       });
 
-      if (mediaFiles.length > 0) {
+      if (mediaFiles.length > 0) { // If we actually processed media files
         newOffsetId = mediaFiles[mediaFiles.length - 1].messageId;
-      } else if (historyResult.messages.length > 0) {
+      } else if (historyResult.messages.length > 0) { // If there were messages, but none were media we kept
         newOffsetId = historyResult.messages[historyResult.messages.length - 1].id;
       }
       
@@ -484,7 +479,6 @@ export async function getChatMediaHistory(
     }
     
     const filteredMediaFiles = mediaFiles.filter(f => f.type !== 'unknown' || (f.type === 'unknown' && f.size));
-
 
     return {
       files: filteredMediaFiles,
@@ -647,14 +641,14 @@ function transformDialogsToCloudFolders(dialogsResult: any): CloudFolder[] {
     try {
         if (peer._ === 'peerUser') {
             peerId = peer.user_id?.toString();
-            const user = users.find(u => u.id?.toString() === peerId);
+            const user = users.find((u:any) => u.id?.toString() === peerId);
             if (user) {
                 inputPeer = { _: 'inputPeerUser', user_id: user.id, access_hash: user.access_hash };
             }
         } else if (peer._ === 'peerChat') {
             peerId = peer.chat_id?.toString();
             const chatAssociated = chats.find((c:any) => c.id?.toString() === peerId);
-            if (chatAssociated) { // For chats, access_hash is not typically needed for inputPeerChat
+            if (chatAssociated) { 
                 inputPeer = { _: 'inputPeerChat', chat_id: chatAssociated.id };
             }
         } else if (peer._ === 'peerChannel') {
@@ -745,3 +739,5 @@ if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
   (window as any).telegramServiceApi = api;
   (window as any).telegramUserSession = userSession;
 }
+
+    
