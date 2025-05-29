@@ -2,32 +2,52 @@
 "use client";
 
 import type { FormEvent } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AnimatedCloudIcon } from "./animated-cloud-icon";
-import { Zap, KeyRound, Phone, MessageSquare, RotateCcw } from "lucide-react";
+import { Zap, KeyRound, Phone, MessageSquare, RotateCcw, Globe } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Terminal } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type AuthStep = 'initial' | 'awaiting_code' | 'awaiting_password';
 
 interface TelegramConnectProps {
   authStep: AuthStep;
-  onSendCode: (phoneNumber: string) => void;
+  onSendCode: (fullPhoneNumber: string) => void;
   onSignIn: (phoneCode: string) => void;
   onCheckPassword: (password: string) => void;
   isLoading: boolean;
   error: string | null;
-  phoneNumber: string;
-  setPhoneNumber: (value: string) => void;
+  phoneNumber: string; // This will be the full phone number displayed in "awaiting code" etc.
+  setPhoneNumber: (value: string) => void; // Used by page.tsx to update its state
   phoneCode: string;
   setPhoneCode: (value: string) => void;
   password: string;
   setPassword: (value: string) => void;
   onReset: () => void;
 }
+
+const countryData = [
+  { name: 'Israel (IL)', code: '+972' },
+  { name: 'United States (US)', code: '+1' },
+  { name: 'United Kingdom (GB)', code: '+44' },
+  { name: 'Germany (DE)', code: '+49' },
+  { name: 'France (FR)', code: '+33' },
+  { name: 'Russia (RU)', code: '+7' },
+  { name: 'Ukraine (UA)', code: '+380' },
+  // Add more countries as needed
+];
+const DEFAULT_COUNTRY_CODE = '+972';
 
 export function TelegramConnect({
   authStep,
@@ -36,18 +56,26 @@ export function TelegramConnect({
   onCheckPassword,
   isLoading,
   error,
-  phoneNumber,
-  setPhoneNumber,
+  phoneNumber, // Used for display in later steps
+  // setPhoneNumber is not directly used by the inputs in 'initial' step anymore
   phoneCode,
   setPhoneCode,
   password,
   setPassword,
   onReset,
 }: TelegramConnectProps) {
+  const [selectedCountryCode, setSelectedCountryCode] = useState(DEFAULT_COUNTRY_CODE);
+  const [nationalOnlyPhoneNumber, setNationalOnlyPhoneNumber] = useState('');
 
   const handlePhoneNumberSubmit = (e: FormEvent) => {
     e.preventDefault();
-    onSendCode(phoneNumber);
+    if (!nationalOnlyPhoneNumber) {
+        // Optionally set an error locally if needed, or let onSendCode handle it
+        onSendCode(''); // Or some indicator of invalid input
+        return;
+    }
+    const fullNumber = selectedCountryCode + nationalOnlyPhoneNumber;
+    onSendCode(fullNumber);
   };
 
   const handlePhoneCodeSubmit = (e: FormEvent) => {
@@ -61,6 +89,8 @@ export function TelegramConnect({
   };
 
   const handleStartOver = () => {
+    setNationalOnlyPhoneNumber('');
+    setSelectedCountryCode(DEFAULT_COUNTRY_CODE);
     onReset();
   }
 
@@ -69,6 +99,25 @@ export function TelegramConnect({
       case 'initial':
         return (
           <form onSubmit={handlePhoneNumberSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="country-code">Country</Label>
+              <Select
+                value={selectedCountryCode}
+                onValueChange={setSelectedCountryCode}
+                disabled={isLoading}
+              >
+                <SelectTrigger id="country-code" className="w-full">
+                  <SelectValue placeholder="Select country" />
+                </SelectTrigger>
+                <SelectContent>
+                  {countryData.map((country) => (
+                    <SelectItem key={country.code + country.name} value={country.code}>
+                      {country.name} ({country.code})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <div>
               <Label htmlFor="phone" className="text-left">Phone Number</Label>
               <div className="relative">
@@ -76,15 +125,15 @@ export function TelegramConnect({
                 <Input
                   id="phone"
                   type="tel"
-                  placeholder="e.g., +12345678900"
-                  value={phoneNumber}
-                  onChange={(e) => setPhoneNumber(e.target.value)}
+                  placeholder="e.g., 501234567"
+                  value={nationalOnlyPhoneNumber}
+                  onChange={(e) => setNationalOnlyPhoneNumber(e.target.value.replace(/\D/g, ''))} // Allow only digits
                   required
                   className="pl-10"
                   disabled={isLoading}
                 />
               </div>
-              <p className="text-xs text-muted-foreground mt-1">Include your country code.</p>
+              <p className="text-xs text-muted-foreground mt-1">Enter your number without the country code.</p>
             </div>
             <Button type="submit" disabled={isLoading} className="w-full">
               {isLoading ? (
@@ -171,9 +220,9 @@ export function TelegramConnect({
   
   const getDescription = () => {
      switch (authStep) {
-      case 'initial': return "Enter your phone number to begin.";
-      case 'awaiting_code': return `We've sent a code to ${phoneNumber}. Please enter it below.`;
-      case 'awaiting_password': return "Your account is protected with Two-Factor Authentication.";
+      case 'initial': return "Select your country and enter your phone number to begin.";
+      case 'awaiting_code': return `We've sent a code to ${phoneNumber}. Please enter it below.`; // Uses full number from page.tsx
+      case 'awaiting_password': return `Account ${phoneNumber} is protected with Two-Factor Authentication.`; // Uses full number
       default: return "Transform your chats into an organized cloud-like structure.";
     }
   }
@@ -202,11 +251,20 @@ export function TelegramConnect({
        {authStep !== 'initial' && (
         <CardFooter className="flex justify-between">
           {authStep === 'awaiting_code' && (
-            <Button variant="link" onClick={() => onSendCode(phoneNumber)} disabled={isLoading}>
+            <Button 
+                variant="link" 
+                onClick={() => onSendCode(phoneNumber)} // Resend code to the already submitted full number
+                disabled={isLoading}
+            >
               Resend Code
             </Button>
           )}
-          <Button variant="link" onClick={handleStartOver} disabled={isLoading} className={authStep !== 'awaiting_code' ? "ml-auto" : ""}>
+          <Button 
+            variant="link" 
+            onClick={handleStartOver} 
+            disabled={isLoading} 
+            className={authStep !== 'awaiting_code' ? "ml-auto" : ""}
+          >
             <RotateCcw className="mr-2 h-4 w-4" />
             Start Over
           </Button>
@@ -215,6 +273,4 @@ export function TelegramConnect({
     </Card>
   );
 }
-    
-
     

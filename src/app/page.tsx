@@ -6,7 +6,7 @@ import { Header } from "@/components/layout/header";
 import { TelegramConnect } from "@/components/telegram-connect";
 import { SidebarNav } from "@/components/layout/sidebar-nav";
 import { MainContentView } from "@/components/main-content-view/main-content-view";
-import { FileDetailsPanel } from "@/components/file-details-panel"; // Import new component
+import { FileDetailsPanel } from "@/components/file-details-panel";
 import type { CloudFolder, CloudFile } from "@/types";
 import { Button } from "@/components/ui/button";
 import { RefreshCw, Loader2, LayoutPanelLeft, FolderClosed } from "lucide-react";
@@ -25,7 +25,6 @@ export default function Home() {
   const [isConnecting, setIsConnecting] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   
-  // For main chat list (sidebar)
   const [isProcessingChats, setIsProcessingChats] = useState(false);
   const [allChats, setAllChats] = useState<CloudFolder[]>([]);
   const [isLoadingMoreChats, setIsLoadingMoreChats] = useState(false);
@@ -34,21 +33,21 @@ export default function Home() {
   const [chatsOffsetId, setChatsOffsetId] = useState(0);
   const [chatsOffsetPeer, setChatsOffsetPeer] = useState<any>({ _: 'inputPeerEmpty' });
 
-  // For selected chat's media (main content)
   const [selectedFolder, setSelectedFolder] = useState<CloudFolder | null>(null);
   const [currentChatMedia, setCurrentChatMedia] = useState<CloudFile[]>([]);
   const [isLoadingChatMedia, setIsLoadingChatMedia] = useState(false);
   const [hasMoreChatMedia, setHasMoreChatMedia] = useState(true);
   const [currentMediaOffsetId, setCurrentMediaOffsetId] = useState<number>(0);
 
-  // For File Details Panel
   const [selectedFileForDetails, setSelectedFileForDetails] = useState<CloudFile | null>(null);
   const [isDetailsPanelOpen, setIsDetailsPanelOpen] = useState(false);
 
   const { toast } = useToast();
 
   const [authStep, setAuthStep] = useState<AuthStep>('initial');
-  const [phoneNumber, setPhoneNumber] = useState('');
+  // phoneNumber will store the full phone number (country code + national part)
+  // It's set by handleSendCode after TelegramConnect constructs it.
+  const [phoneNumber, setPhoneNumber] = useState(''); 
   const [phoneCode, setPhoneCode] = useState('');
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState<string | null>(null);
@@ -58,6 +57,10 @@ export default function Home() {
     try {
       const previouslyConnected = await telegramService.isUserConnected();
       if (previouslyConnected) {
+        const storedUser = telegramService.getUserSessionDetails(); // Assuming you add this to telegramService
+        if (storedUser && storedUser.phone) {
+            setPhoneNumber(storedUser.phone); // Restore phone number for display if needed
+        }
         console.log("User was previously connected. Setting state and fetching chats.");
         setIsConnected(true);
         setAuthStep('initial');
@@ -66,7 +69,7 @@ export default function Home() {
       } else {
         console.log("No existing connection found or session invalid.");
         setIsConnected(false);
-        handleReset(false); // Reset local state if not connected
+        handleReset(false); 
       }
     } catch (error: any) {
       console.warn("Error checking existing connection:", error.message);
@@ -74,7 +77,7 @@ export default function Home() {
       handleReset(false);
       setAuthError(`Failed to check connection: ${error.message}`);
     }
-  }, []); // Add handleReset to dependencies if it's stable
+  }, []); 
 
   useEffect(() => {
     checkExistingConnection();
@@ -83,11 +86,10 @@ export default function Home() {
   const fetchInitialChats = async () => {
     if (isProcessingChats || isLoadingMoreChats) return;
     setIsProcessingChats(true);
-    setAllChats([]); // Clear existing chats
+    setAllChats([]); 
     setSelectedFolder(null);
     setCurrentChatMedia([]);
     setAuthError(null);
-    // Reset pagination for chats
     setChatsOffsetDate(0);
     setChatsOffsetId(0);
     setChatsOffsetPeer({ _: 'inputPeerEmpty' });
@@ -131,7 +133,7 @@ export default function Home() {
       }
     } catch (error: any) {
       handleApiError(error, "Error Loading More Chats", `Could not load more chats.`);
-      setHasMoreChats(false); // Stop trying to load more if an error occurs
+      setHasMoreChats(false); 
     } finally {
       setIsLoadingMoreChats(false);
     }
@@ -156,9 +158,9 @@ export default function Home() {
       return;
     }
     setIsLoadingChatMedia(true);
-    setCurrentChatMedia([]); // Clear existing media
-    setHasMoreChatMedia(true); // Reset for new chat
-    setCurrentMediaOffsetId(0); // Reset offset for new chat
+    setCurrentChatMedia([]); 
+    setHasMoreChatMedia(true); 
+    setCurrentMediaOffsetId(0); 
     toast({ title: `Loading Media for ${folder.name}`, description: "Fetching initial media items..." });
 
     try {
@@ -194,14 +196,14 @@ export default function Home() {
       }
     } catch (error: any) {
       handleApiError(error, "Error Loading More Media", `Could not load more media items.`);
-      setHasMoreChatMedia(false); // Stop trying if error
+      setHasMoreChatMedia(false); 
     } finally {
       setIsLoadingChatMedia(false);
     }
   }, [isLoadingChatMedia, hasMoreChatMedia, selectedFolder, currentMediaOffsetId, toast]);
   
   const lastMediaItemRef = useCallback((node: HTMLDivElement | null) => {
-    if (isLoadingChatMedia) return; // Don't observe if already loading
+    if (isLoadingChatMedia) return; 
     if (observerMedia.current) observerMedia.current.disconnect();
     observerMedia.current = new IntersectionObserver(entries => {
       if (entries[0].isIntersecting && hasMoreChatMedia && !isLoadingChatMedia) {
@@ -216,10 +218,10 @@ export default function Home() {
     const folder = allChats.find(f => f.id === folderId);
     if (folder) {
       setSelectedFolder(folder);
-      fetchInitialChatMedia(folder); // Fetch media for the newly selected folder
+      fetchInitialChatMedia(folder); 
     } else {
       setSelectedFolder(null);
-      setCurrentChatMedia([]); // Clear media if folder not found or deselected
+      setCurrentChatMedia([]); 
     }
   };
   
@@ -227,20 +229,23 @@ export default function Home() {
     console.error(`${title}:`, error);
     const description = error.message || defaultMessage;
     toast({ title, description, variant: "destructive" });
-    setAuthError(description); // Optionally set a general auth error for UI display
+    setAuthError(description); 
   };
 
-  const handleSendCode = async (currentPhoneNumber: string) => {
-    if (!currentPhoneNumber) {
-      setAuthError("Phone number is required.");
+  const handleSendCode = async (fullPhoneNumberFromConnect: string) => {
+    if (!fullPhoneNumberFromConnect || !fullPhoneNumberFromConnect.startsWith('+') || fullPhoneNumberFromConnect.length < 5) { // Basic validation
+      setAuthError("Phone number is required and must be valid (e.g. +972501234567).");
+      toast({ title: "Invalid Phone Number", description: "Please select a country and enter a valid number.", variant: "destructive" });
       return;
     }
     setIsConnecting(true);
     setAuthError(null);
-    toast({ title: "Sending Code...", description: "Requesting verification code from Telegram." });
+    // Update page's phoneNumber state to the full number that will be used for API call and display
+    setPhoneNumber(fullPhoneNumberFromConnect); 
+    toast({ title: "Sending Code...", description: `Requesting verification code for ${fullPhoneNumberFromConnect}.` });
+    
     try {
-      await telegramService.sendCode(currentPhoneNumber);
-      setPhoneNumber(currentPhoneNumber); // Store phone number used
+      await telegramService.sendCode(fullPhoneNumberFromConnect);
       setAuthStep('awaiting_code');
       toast({ title: "Code Sent!", description: "Please check Telegram for your verification code." });
     } catch (error: any) {
@@ -251,13 +256,13 @@ export default function Home() {
           description: "The authentication process needs to be restarted. Please try entering your phone number again.",
           variant: "destructive",
         });
-        handleReset(false); // Reset local state
+        handleReset(false);
       } else if (error.message && error.message.includes("Invalid hash in mt_dh_gen_ok")) {
         toast({
           title: "Connection Handshake Failed",
           description: "Could not establish a secure connection. Please check your API ID/Hash in .env.local, ensure it's correct, restart the server, and try clearing your browser's localStorage for this site.",
           variant: "destructive",
-          duration: 10000, // Longer duration for important message
+          duration: 10000, 
         });
         setAuthError("Connection handshake failed. Check API credentials and localStorage. See console for details.");
       } else {
@@ -278,16 +283,16 @@ export default function Home() {
     setAuthError(null);
     toast({ title: "Verifying Code...", description: "Checking your verification code with Telegram." });
     try {
-      const result = await telegramService.signIn(currentPhoneCode);
+      // phoneNumber state in page.tsx should be the full number at this point
+      const result = await telegramService.signIn(phoneNumber, currentPhoneCode);
       if (result.user) {
         setIsConnected(true);
-        setAuthStep('initial'); // Reset auth flow
-        setPhoneCode(''); // Clear code
-        setPassword(''); // Clear password
-        fetchInitialChats(); // Fetch chats after successful sign-in
+        setAuthStep('initial'); 
+        setPhoneCode(''); 
+        setPassword(''); 
+        fetchInitialChats(); 
         toast({ title: "Sign In Successful!", description: "Connected to Telegram." });
       } else {
-        // This case should ideally be handled by specific errors from signIn
         setAuthError("Sign in failed. Unexpected response from server.");
         toast({ title: "Sign In Failed", description: "Unexpected response from server.", variant: "destructive" });
       }
@@ -295,7 +300,7 @@ export default function Home() {
       if (error.message === '2FA_REQUIRED' && (error as any).srp_id) {
         console.log("2FA required for sign in, srp_id received:", (error as any).srp_id);
         setAuthStep('awaiting_password');
-        setAuthError(null); // Clear previous errors
+        setAuthError(null); 
         toast({ title: "2FA Required", description: "Please enter your two-factor authentication password." });
       } else {
         console.error("Error signing in (handleSignIn):", error.message, error.originalErrorObject || error);
@@ -319,13 +324,12 @@ export default function Home() {
       const user = await telegramService.checkPassword(currentPassword);
       if (user) {
         setIsConnected(true);
-        setAuthStep('initial'); // Reset auth flow
-        setPhoneCode(''); // Clear code
-        setPassword(''); // Clear password
-        fetchInitialChats(); // Fetch chats after successful 2FA
+        setAuthStep('initial'); 
+        setPhoneCode(''); 
+        setPassword(''); 
+        fetchInitialChats(); 
         toast({ title: "2FA Successful!", description: "Connected to Telegram." });
       } else {
-        // This case should ideally be handled by specific errors from checkPassword
         setAuthError("2FA failed. Unexpected response from server.");
         toast({ title: "2FA Failed", description: "Unexpected response from server.", variant: "destructive" });
       }
@@ -339,17 +343,15 @@ export default function Home() {
   };
 
   const handleReset = async (performServerLogout = true) => {
-    if (performServerLogout && isConnected) { // Only attempt server logout if connected
+    if (performServerLogout && isConnected) { 
         toast({ title: "Disconnecting...", description: "Logging out from Telegram." });
         try {
             await telegramService.signOut();
             toast({ title: "Disconnected", description: "Successfully signed out." });
         } catch (error: any) {
-            // Log error but proceed with local reset
             toast({ title: "Disconnection Error", description: error.message || "Could not sign out properly from server.", variant: "destructive" });
         }
     }
-    // Reset all local state
     setIsConnected(false);
     setIsProcessingChats(false);
     setAllChats([]);
@@ -357,19 +359,17 @@ export default function Home() {
     setCurrentChatMedia([]);
     setIsConnecting(false);
     setAuthStep('initial');
-    setPhoneNumber('');
+    setPhoneNumber(''); // Clear the full phone number
     setPhoneCode('');
     setPassword('');
     setAuthError(null);
 
-    // Reset chat pagination
     setIsLoadingMoreChats(false);
     setHasMoreChats(true);
     setChatsOffsetDate(0);
     setChatsOffsetId(0);
     setChatsOffsetPeer({ _: 'inputPeerEmpty' });
 
-    // Reset media pagination
     setIsLoadingChatMedia(false);
     setHasMoreChatMedia(true);
     setCurrentMediaOffsetId(0);
@@ -398,13 +398,13 @@ export default function Home() {
             onCheckPassword={handleCheckPassword}
             isLoading={isConnecting}
             error={authError}
-            phoneNumber={phoneNumber}
-            setPhoneNumber={setPhoneNumber}
+            phoneNumber={phoneNumber} // Pass full phone number for display
+            setPhoneNumber={setPhoneNumber} // This prop is now mainly for page.tsx to update its own state
             phoneCode={phoneCode}
             setPhoneCode={setPhoneCode}
             password={password}
             setPassword={setPassword}
-            onReset={() => handleReset(false)} // Reset without server logout if just changing step
+            onReset={() => handleReset(authStep !== 'initial')} 
           />
         </main>
         <footer className="py-4 px-4 sm:px-6 lg:px-8 text-center border-t">
@@ -419,9 +419,8 @@ export default function Home() {
   return (
     <div className="min-h-screen flex flex-col">
       <Header />
-      <div className="flex-grow flex container mx-auto px-0 sm:px-2 lg:px-4 py-4 overflow-hidden"> {/* Ensure container takes up space and handles overflow */}
-        {/* Sidebar */}
-        <aside className="w-64 md:w-72 lg:w-80 p-4 border-r bg-card overflow-y-auto flex-shrink-0"> {/* Ensure sidebar scrolls independently */}
+      <div className="flex-grow flex container mx-auto px-0 sm:px-2 lg:px-4 py-4 overflow-hidden">
+        <aside className="w-64 md:w-72 lg:w-80 p-4 border-r bg-card overflow-y-auto flex-shrink-0">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-semibold text-primary">Chats</h2>
             <Button variant="outline" size="sm" onClick={() => handleReset(true)} title="Disconnect and Reset">
@@ -439,7 +438,7 @@ export default function Home() {
                 <p className="text-muted-foreground">No chats found.</p>
                 <Button onClick={fetchInitialChats} variant="link" className="mt-2">Try Refreshing</Button>
             </div>
-          ) : authError && allChats.length === 0 && !isProcessingChats ? ( // Added !isProcessingChats here
+          ) : authError && allChats.length === 0 && !isProcessingChats ? ( 
             <div className="text-center py-4 text-destructive">
               <p>{authError}</p>
               <Button onClick={fetchInitialChats} variant="link" className="mt-2">Try Refreshing</Button>
@@ -449,29 +448,26 @@ export default function Home() {
               folders={allChats}
               selectedFolderId={selectedFolder?.id || null}
               onSelectFolder={handleSelectFolder}
-              lastItemRef={lastChatElementRef} // Pass ref for infinite scroll
+              lastItemRef={lastChatElementRef} 
             />
           )}
-          {/* Loading more chats indicator */}
           {isLoadingMoreChats && (
             <div className="flex justify-center items-center p-2 mt-2">
               <Loader2 className="animate-spin h-5 w-5 text-primary" />
               <p className="ml-2 text-sm text-muted-foreground">Loading more chats...</p>
             </div>
           )}
-          {/* No more chats to load indicator */}
           {!isLoadingMoreChats && !hasMoreChats && allChats.length > 0 && (
             <p className="text-center text-xs text-muted-foreground py-2 mt-2">No more chats to load.</p>
           )}
         </aside>
 
-        {/* Main Content Area */}
-        <main className="flex-grow p-4 md:p-6 lg:p-8 overflow-y-auto"> {/* Ensure main content scrolls independently */}
+        <main className="flex-grow p-4 md:p-6 lg:p-8 overflow-y-auto"> 
           {selectedFolder ? (
             <MainContentView
               folderName={selectedFolder.name}
               files={currentChatMedia}
-              isLoading={isLoadingChatMedia && currentChatMedia.length === 0} // Show main loader only on initial load
+              isLoading={isLoadingChatMedia && currentChatMedia.length === 0} 
               hasMore={hasMoreChatMedia}
               lastItemRef={lastMediaItemRef}
               onFileClick={handleOpenFileDetails}
