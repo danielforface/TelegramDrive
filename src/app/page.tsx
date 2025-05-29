@@ -4,22 +4,22 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Header } from "@/components/layout/header";
 import { TelegramConnect } from "@/components/telegram-connect";
-import { SidebarNav } from "@/components/layout/sidebar-nav";
 import { MainContentView } from "@/components/main-content-view/main-content-view";
 import { FileDetailsPanel } from "@/components/file-details-panel";
 import { ImageViewer } from "@/components/image-viewer";
 import { VideoPlayer } from "@/components/video-player";
 import { DownloadManagerDialog } from "@/components/download-manager-dialog";
+import { ChatSelectionDialog } from "@/components/chat-selection-dialog"; // New Dialog
 import type { CloudFolder, CloudFile, DownloadQueueItemType } from "@/types";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, Loader2, LayoutPanelLeft, FolderClosed, Download } from "lucide-react";
+import { Loader2, LayoutPanelLeft, MessageSquare } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import * as telegramService from "@/services/telegramService";
 import { formatFileSize } from "@/lib/utils";
 
 
 const INITIAL_CHATS_LOAD_LIMIT = 20;
-const SUBSEQUENT_CHATS_LOAD_LIMIT = 5;
+const SUBSEQUENT_CHATS_LOAD_LIMIT = 10; // Adjusted for dialog view
 const INITIAL_MEDIA_LOAD_LIMIT = 20;
 const SUBSEQUENT_MEDIA_LOAD_LIMIT = 20;
 const DOWNLOAD_CHUNK_SIZE = 512 * 1024; // 512KB per chunk
@@ -36,7 +36,7 @@ export default function Home() {
   const [isProcessingChats, setIsProcessingChats] = useState(false);
   const [allChats, setAllChats] = useState<CloudFolder[]>([]);
   const [isLoadingMoreChats, setIsLoadingMoreChats] = useState(false);
-  const isLoadingMoreChatsRequestInFlightRef = useRef(false); // Prevents flood requests
+  const isLoadingMoreChatsRequestInFlightRef = useRef(false);
   const [hasMoreChats, setHasMoreChats] = useState(true);
   const [chatsOffsetDate, setChatsOffsetDate] = useState(0);
   const [chatsOffsetId, setChatsOffsetId] = useState(0);
@@ -69,9 +69,12 @@ export default function Home() {
   const downloadQueueRef = useRef<DownloadQueueItemType[]>([]);
   const browserDownloadTriggeredRef = useRef(new Set<string>());
 
+  // State for the new Chat Selection Dialog
+  const [isChatSelectionDialogOpen, setIsChatSelectionDialogOpen] = useState(false);
+
   const headerRef = useRef<HTMLDivElement>(null);
   const footerRef = useRef<HTMLDivElement>(null);
-  const chatListContainerRef = useRef<HTMLDivElement>(null);
+  // chatListContainerRef and calculateAndSetChatListHeight are no longer needed
 
   useEffect(() => {
     downloadQueueRef.current = downloadQueue;
@@ -84,23 +87,6 @@ export default function Home() {
   const [phoneCode, setPhoneCode] = useState('');
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState<string | null>(null);
-
-  const calculateAndSetChatListHeight = useCallback(() => {
-    if (headerRef.current && footerRef.current && chatListContainerRef.current) {
-      const headerHeight = headerRef.current.offsetHeight;
-      const footerHeight = footerRef.current.offsetHeight;
-      const availableHeight = window.innerHeight - headerHeight - footerHeight;
-      chatListContainerRef.current.style.height = `${availableHeight}px`;
-    }
-  }, []);
-
-  useEffect(() => {
-    calculateAndSetChatListHeight();
-    window.addEventListener('resize', calculateAndSetChatListHeight);
-    return () => {
-      window.removeEventListener('resize', calculateAndSetChatListHeight);
-    };
-  }, [calculateAndSetChatListHeight, isConnected]); // Re-calculate if isConnected changes (layout might change)
 
   const handleApiError = useCallback((error: any, title: string, defaultMessage: string) => {
     console.error(`${title}:`, error.message, error.originalErrorObject || error);
@@ -125,19 +111,21 @@ export default function Home() {
   }, [toast]);
 
   const fetchInitialChats = useCallback(async () => {
-    if (isProcessingChats || isLoadingMoreChatsRequestInFlightRef.current) return; 
+    if (isProcessingChats || isLoadingMoreChatsRequestInFlightRef.current) return;
     
     setIsProcessingChats(true);
-    isLoadingMoreChatsRequestInFlightRef.current = true; 
+    isLoadingMoreChatsRequestInFlightRef.current = true;
     setAllChats([]);
-    setSelectedFolder(null);
-    setCurrentChatMedia([]);
+    // Don't reset selectedFolder here, as this might be called while a folder is selected
+    // and we're just refreshing the list in the dialog.
+    // setSelectedFolder(null); 
+    // setCurrentChatMedia([]);
     setAuthError(null);
     setChatsOffsetDate(0);
     setChatsOffsetId(0);
     setChatsOffsetPeer({ _: 'inputPeerEmpty' });
     setHasMoreChats(true);
-    setIsLoadingMoreChats(false); 
+    setIsLoadingMoreChats(false);
     
     toast({ title: "Fetching Chats...", description: "Loading your Telegram conversations." });
 
@@ -155,12 +143,12 @@ export default function Home() {
       }
     } catch (error: any) {
       handleApiError(error, "Error Fetching Chats", `Could not load your chats. ${error.message || 'Unknown error'}`);
-      setHasMoreChats(false); 
+      setHasMoreChats(false);
     } finally {
       setIsProcessingChats(false);
-      isLoadingMoreChatsRequestInFlightRef.current = false; 
+      isLoadingMoreChatsRequestInFlightRef.current = false;
     }
-  }, [toast, handleApiError, isProcessingChats]); // Added isProcessingChats
+  }, [toast, handleApiError, isProcessingChats]);
 
   const checkExistingConnection = useCallback(async () => {
     console.log("Checking existing connection...");
@@ -171,11 +159,11 @@ export default function Home() {
         if (storedUser && storedUser.phone) {
             setPhoneNumber(storedUser.phone);
         }
-        console.log("User was previously connected. Setting state and fetching chats.");
+        console.log("User was previously connected. Setting state and fetching chats for dialog.");
         setIsConnected(true);
         setAuthStep('initial');
         setAuthError(null);
-        await fetchInitialChats(); 
+        await fetchInitialChats(); // Fetch chats to populate the dialog
       } else {
         console.log("No existing connection found or session invalid.");
         setIsConnected(false);
@@ -210,7 +198,7 @@ export default function Home() {
 
   useEffect(() => {
     checkExistingConnection();
-  }, []); // Empty dependency array: runs only once on mount
+  }, []);
 
 
   const handleReset = useCallback(async (performServerLogout = true) => {
@@ -269,6 +257,7 @@ export default function Home() {
     setPlayingVideoUrl(null);
     setIsPreparingVideoStream(false);
     setPreparingVideoStreamForFileId(null);
+    setIsChatSelectionDialogOpen(false);
 
   }, [isConnected, toast, videoStreamUrl]);
 
@@ -392,7 +381,7 @@ export default function Home() {
                 } else if (idealRequestSize <= 0) {
                      actualLimitForApi = bytesNeededForFile > 0 ? KB_1 : 0;
                 } else if (idealRequestSize < KB_1) {
-                     actualLimitForApi = KB_1; // Must request at least 1KB if precise
+                     actualLimitForApi = KB_1; 
                 } else {
                     actualLimitForApi = Math.floor(idealRequestSize / KB_1) * KB_1;
                 }
@@ -603,7 +592,7 @@ export default function Home() {
         });
         activeDownloadsRef.current.clear(); 
     };
-  }, []); // Empty dependency array: runs only on mount and unmount.
+  }, []); 
 
 
   const loadMoreChatsCallback = useCallback(async () => {
@@ -628,12 +617,12 @@ export default function Home() {
       }
     } catch (error: any) {
       handleApiError(error, "Error Loading More Chats", `Could not load more chats. ${error.message}`);
-      setHasMoreChats(false); 
+      setHasMoreChats(false);
     } finally {
+      isLoadingMoreChatsRequestInFlightRef.current = false;
       setIsLoadingMoreChats(false);
-      isLoadingMoreChatsRequestInFlightRef.current = false; 
     }
-  }, [isConnected, isProcessingChats, hasMoreChats, chatsOffsetDate, chatsOffsetId, chatsOffsetPeer, toast, handleApiError, SUBSEQUENT_CHATS_LOAD_LIMIT, isLoadingMoreChats]); // Added isLoadingMoreChats to dependencies
+  }, [isConnected, isProcessingChats, hasMoreChats, chatsOffsetDate, chatsOffsetId, chatsOffsetPeer, toast, handleApiError, SUBSEQUENT_CHATS_LOAD_LIMIT, isLoadingMoreChats]);
   
 
   const observerChats = useRef<IntersectionObserver | null>(null);
@@ -721,6 +710,7 @@ export default function Home() {
     if (folder) {
       setSelectedFolder(folder);
       fetchInitialChatMedia(folder);
+      setIsChatSelectionDialogOpen(false); // Close dialog on selection
     } else {
       setSelectedFolder(null);
       setCurrentChatMedia([]);
@@ -890,7 +880,6 @@ export default function Home() {
     if (itemToCancel && itemToCancel.abortController && !itemToCancel.abortController.signal.aborted) {
         itemToCancel.abortController.abort("User cancelled download");
     }
-    // State update is handled by the useEffect detecting the aborted signal
     toast({ title: "Download Cancelled", description: `Download for ${itemToCancel?.name || 'item'} has been cancelled.`});
   };
 
@@ -997,10 +986,7 @@ export default function Home() {
         } else if (chunkResponse?.errorType) {
           throw new Error(`Failed to download video chunk: ${chunkResponse.errorType}`);
         } else if (chunkResponse?.isCdnRedirect){
-            // Basic CDN redirect handling for video stream - not ideal for true streaming
             console.warn("CDN Redirect encountered during video stream prep. Attempting to switch to CDN download for the rest.");
-            // For simplicity in this demo, we might try to download the rest via CDN or just fail.
-            // A more robust solution would integrate the full CDN logic from the download manager.
             throw new Error("CDN Redirect not fully handled during video stream preparation. Try regular download.");
         } else {
           if (downloadedBytes < totalSize) {
@@ -1063,7 +1049,6 @@ export default function Home() {
             console.error("Unexpected error during video stream preparation orchestrator:", error);
         }
     } finally {
-        // Ensure this cleanup only happens if this controller is still the active one
         if (videoStreamAbortControllerRef.current === newController) {
             setIsPreparingVideoStream(false);
             setPreparingVideoStreamForFileId(null);
@@ -1074,13 +1059,13 @@ export default function Home() {
 
   const handlePlayVideo = (file: CloudFile) => {
      if (file.type === 'video') {
-        if (file.url) { // If a direct URL (e.g., placeholder) is available
+        if (file.url) { 
             setPlayingVideoUrl(file.url);
             setPlayingVideoName(file.name);
-            setIsPreparingVideoStream(false); // Not preparing if using direct URL
+            setIsPreparingVideoStream(false); 
             setPreparingVideoStreamForFileId(null);
             setIsVideoPlayerOpen(true);
-        } else if (file.totalSizeInBytes && file.totalSizeInBytes > 0) { // Attempt to fetch and stream if size is known
+        } else if (file.totalSizeInBytes && file.totalSizeInBytes > 0) { 
             prepareAndPlayVideoStream(file);
         } else {
             toast({ title: "Playback Not Possible", description: "Video data or size is missing.", variant: "default"});
@@ -1098,21 +1083,18 @@ export default function Home() {
     setIsPreparingVideoStream(false);
     setPreparingVideoStreamForFileId(null);
 
-    // Revoke the Blob URL if it was created for streaming
     if (videoStreamUrl) {
         URL.revokeObjectURL(videoStreamUrl);
         setVideoStreamUrl(null);
     }
-    setPlayingVideoUrl(null); // Also clear the URL being used by the player
+    setPlayingVideoUrl(null); 
   }, [isPreparingVideoStream, videoStreamUrl]);
 
-  // Cleanup effect for the video stream URL when the component unmounts
   useEffect(() => {
     return () => {
         if (videoStreamUrl) {
             URL.revokeObjectURL(videoStreamUrl);
         }
-        // Abort any ongoing video stream preparation if component unmounts
         if (videoStreamAbortControllerRef.current && !videoStreamAbortControllerRef.current.signal.aborted) {
             videoStreamAbortControllerRef.current.abort("Component unmounting");
         }
@@ -1122,6 +1104,7 @@ export default function Home() {
 
   const handleOpenDownloadManager = () => setIsDownloadManagerOpen(true);
   const handleCloseDownloadManager = () => setIsDownloadManagerOpen(false);
+  const handleOpenChatSelectionDialog = () => setIsChatSelectionDialogOpen(true);
 
 
   if (!isConnected) {
@@ -1137,7 +1120,7 @@ export default function Home() {
             isLoading={isConnecting}
             error={authError}
             phoneNumber={phoneNumber}
-            setPhoneNumber={setPhoneNumber} // Pass the setter
+            setPhoneNumber={setPhoneNumber}
             phoneCode={phoneCode}
             setPhoneCode={setPhoneCode}
             password={password}
@@ -1161,53 +1144,10 @@ export default function Home() {
         isConnected={isConnected}
         onDisconnect={() => handleReset(true)}
         onOpenDownloadManager={handleOpenDownloadManager}
+        onOpenChatSelectionDialog={handleOpenChatSelectionDialog}
       />
-      <div className="flex-1 flex overflow-hidden min-h-0"> {/* Ensures this div fills remaining space and allows internal scrolling */}
-        <div 
-          ref={chatListContainerRef} 
-          className="bg-card border-r overflow-y-auto w-64 md:w-72 lg:w-80 flex-shrink-0 rounded-lg shadow-md"
-        >
-          <div className="p-4 sticky top-0 bg-card z-10 border-b">
-            <h2 className="text-xl font-semibold text-primary">Chats</h2>
-          </div>
-          <div className="p-4"> {/* Inner padding for content, distinct from card styling */}
-            {isProcessingChats && allChats.length === 0 ? (
-                <div className="flex flex-col items-center p-4">
-                <Loader2 className="animate-spin h-8 w-8 text-primary mb-2" />
-                <p className="text-muted-foreground">Loading chats...</p>
-                </div>
-            ) : allChats.length === 0 && !isProcessingChats && !authError ? (
-                <div className="text-center py-4">
-                    <FolderClosed className="mx-auto h-12 w-12 text-muted-foreground mb-2" />
-                    <p className="text-muted-foreground">No chats found.</p>
-                    <Button onClick={fetchInitialChats} variant="link" className="mt-2">Try Refreshing</Button>
-                </div>
-            ) : authError && allChats.length === 0 && !isProcessingChats ? (
-                <div className="text-center py-4 text-destructive">
-                <p>{authError}</p>
-                <Button onClick={fetchInitialChats} variant="link" className="mt-2">Try Refreshing</Button>
-                </div>
-            ) : (
-                <SidebarNav
-                folders={allChats}
-                selectedFolderId={selectedFolder?.id || null}
-                onSelectFolder={handleSelectFolder}
-                lastItemRef={lastChatElementRef}
-                />
-            )}
-            {isLoadingMoreChats && (
-                <div className="flex justify-center items-center p-2 mt-2">
-                <Loader2 className="animate-spin h-5 w-5 text-primary" />
-                <p className="ml-2 text-sm text-muted-foreground">Loading more chats...</p>
-                </div>
-            )}
-            {!isLoadingMoreChats && !hasMoreChats && allChats.length > 0 && !isLoadingMoreChatsRequestInFlightRef.current && (
-                <p className="text-center text-xs text-muted-foreground py-2 mt-2">No more chats to load.</p>
-            )}
-          </div>
-        </div>
-
-        <main className="flex-1 overflow-y-auto bg-background"> {/* flex-1 to take remaining width, overflow-y-auto for its own scrolling */}
+      <div className="flex-1 flex overflow-hidden min-h-0">
+        <main className="flex-1 overflow-y-auto bg-background">
            <div className="container mx-auto h-full px-4 sm:px-6 lg:px-8 py-4 md:py-6 lg:py-8">
             {selectedFolder ? (
                 <MainContentView
@@ -1216,7 +1156,7 @@ export default function Home() {
                 isLoading={isLoadingChatMedia && currentChatMedia.length === 0}
                 hasMore={hasMoreChatMedia}
                 lastItemRef={lastMediaItemRef}
-                onFileClick={handleOpenFileDetails} // Changed from onFileDetailsClick
+                onFileClick={handleOpenFileDetails}
                 onQueueDownloadClick={handleQueueDownload}
                 onFileViewImageClick={handleViewImage}
                 onFilePlayVideoClick={handlePlayVideo}
@@ -1225,9 +1165,17 @@ export default function Home() {
                 />
             ) : (
                 <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground">
-                <LayoutPanelLeft className="w-16 h-16 mb-4 opacity-50" />
-                <p className="text-lg">Select a chat from the sidebar to view its media.</p>
-                {allChats.length > 0 && <p className="text-sm mt-1">Or scroll the chat list to load more chats.</p>}
+                  <LayoutPanelLeft className="w-16 h-16 mb-4 opacity-50" />
+                  <p className="text-lg mb-2">No chat selected.</p>
+                  <Button onClick={handleOpenChatSelectionDialog}>
+                    <MessageSquare className="mr-2 h-5 w-5" /> Select a Chat
+                  </Button>
+                  {isProcessingChats && allChats.length === 0 && (
+                    <div className="mt-4 flex items-center">
+                      <Loader2 className="animate-spin h-5 w-5 text-primary mr-2" />
+                      <span>Loading initial chat list...</span>
+                    </div>
+                  )}
                 </div>
             )}
           </div>
@@ -1238,6 +1186,21 @@ export default function Home() {
           Telegram Cloudifier &copy; {new Date().getFullYear()}
         </p>
       </footer>
+      
+      <ChatSelectionDialog
+        isOpen={isChatSelectionDialogOpen}
+        onOpenChange={setIsChatSelectionDialogOpen}
+        folders={allChats}
+        selectedFolderId={selectedFolder?.id || null}
+        onSelectFolder={handleSelectFolder}
+        lastItemRef={lastChatElementRef}
+        isLoading={isProcessingChats && allChats.length === 0}
+        isLoadingMore={isLoadingMoreChats}
+        hasMore={hasMoreChats}
+        onLoadMore={loadMoreChatsCallback}
+        onRefresh={fetchInitialChats}
+      />
+
       <FileDetailsPanel
         file={selectedFileForDetails}
         isOpen={isDetailsPanelOpen}
@@ -1268,5 +1231,3 @@ export default function Home() {
     </div>
   );
 }
-
-    

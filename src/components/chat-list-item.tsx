@@ -1,7 +1,4 @@
 
-// This component is no longer used and can be deleted.
-// Its functionality is replaced by ChatListItem.tsx.
-
 "use client";
 import React from 'react';
 import type { CloudFolder } from "@/types";
@@ -9,39 +6,35 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { MessageSquare, Users } from "lucide-react";
 
-interface SidebarNavItemProps {
+interface ChatListItemProps {
   folder: CloudFolder;
   isSelected: boolean;
   onSelect: () => void;
 }
 
-export const SidebarNavItem = React.forwardRef<HTMLLIElement, SidebarNavItemProps>(
+export const ChatListItem = React.forwardRef<HTMLLIElement, ChatListItemProps>(
   ({ folder, isSelected, onSelect }, ref) => {
-    // console.warn("SidebarNavItem component is deprecated and should be removed.");
     const Icon = folder.name.toLowerCase().includes("group") || folder.name.toLowerCase().includes("channel") 
                  ? Users 
                  : MessageSquare;
 
     return (
       <li ref={ref} className="animate-item-enter" style={{ animationDelay: '50ms' }}>
-        <p className="text-red-500 p-1 text-center text-xs">SidebarNavItem is deprecated.</p>
-        {/*
         <Button
           variant={isSelected ? "secondary" : "ghost"}
           className={cn(
-            "w-full justify-start text-left h-auto py-2 px-3",
-            isSelected && "font-semibold"
+            "w-full justify-start text-left h-auto py-2.5 px-3", // Increased padding slightly
+            isSelected && "font-semibold bg-primary/10 text-primary"
           )}
           onClick={onSelect}
           title={folder.name}
         >
-          <Icon className="mr-2 h-4 w-4 flex-shrink-0" />
-          <span className="truncate flex-grow">{folder.name}</span>
+          <Icon className="mr-3 h-5 w-5 flex-shrink-0" />
+          <span className="truncate flex-grow text-sm">{folder.name}</span>
         </Button>
-        */}
       </li>
     );
   }
 );
 
-SidebarNavItem.displayName = "SidebarNavItem";
+ChatListItem.displayName = "ChatListItem";

@@ -1,17 +1,20 @@
 
-import { CloudLightning, RefreshCw, Download } from 'lucide-react';
+import { CloudLightning, RefreshCw, Download, MessageSquare } from 'lucide-react'; // Added MessageSquare
 import Link from 'next/link';
 import { Button } from "@/components/ui/button";
+import React from 'react';
 
 interface HeaderProps {
   onDisconnect?: () => void;
   onOpenDownloadManager?: () => void;
+  onOpenChatSelectionDialog?: () => void; // New prop
   isConnected?: boolean;
 }
 
-export function Header({ onDisconnect, onOpenDownloadManager, isConnected }: HeaderProps) {
+export const Header = React.forwardRef<HTMLDivElement, HeaderProps>(
+  ({ onDisconnect, onOpenDownloadManager, onOpenChatSelectionDialog, isConnected }, ref) => {
   return (
-    <header className="py-4 px-4 sm:px-6 lg:px-8 border-b border-border shadow-sm">
+    <header ref={ref} className="py-4 px-4 sm:px-6 lg:px-8 border-b border-border shadow-sm">
       <div className="max-w-7xl mx-auto flex items-center justify-between">
         <Link href="/" className="flex items-center gap-3">
           <CloudLightning className="h-8 w-8 text-primary" />
@@ -20,6 +23,11 @@ export function Header({ onDisconnect, onOpenDownloadManager, isConnected }: Hea
           </h1>
         </Link>
         <div className="flex items-center gap-2">
+          {isConnected && onOpenChatSelectionDialog && (
+            <Button variant="outline" size="icon" onClick={onOpenChatSelectionDialog} title="Select Chat">
+              <MessageSquare className="h-5 w-5" />
+            </Button>
+          )}
           {isConnected && onOpenDownloadManager && (
             <Button variant="outline" size="icon" onClick={onOpenDownloadManager} title="Open Download Manager">
               <Download className="h-5 w-5" />
@@ -34,4 +42,6 @@ export function Header({ onDisconnect, onOpenDownloadManager, isConnected }: Hea
       </div>
     </header>
   );
-}
+});
+
+Header.displayName = "Header";
