@@ -83,30 +83,28 @@ export default function Home() {
     let description = error.message || defaultMessage;
     if (error.message && error.message.includes("Invalid hash in mt_dh_gen_ok")) {
       description = "Connection handshake failed. Please check your API ID/Hash in .env.local, ensure it's correct, restart the server, and try clearing your browser's localStorage for this site.";
-      setAuthError(description); // Set authError to guide user
+      setAuthError(description); 
     } else if (error.message === 'AUTH_RESTART') {
         description = "Authentication process needs to be restarted. Please try entering your phone number again.";
-        setAuthError(description); // Set authError
-        // Call handleReset here, ensuring it's defined before use if moved
-        // handleReset(false); // Perform local reset. This will be called from the catch blocks directly.
+        setAuthError(description);
     } else {
-        setAuthError(description); // Set general auth error for other cases
+        setAuthError(description); 
     }
     toast({ title, description, variant: "destructive", duration: error.message && error.message.includes("Invalid hash") ? 10000 : 5000 });
-  }, [toast]); // Removed handleReset from here to avoid circular dependency if handleReset calls handleApiError indirectly
+  }, [toast]); 
 
   const fetchInitialChats = useCallback(async () => {
-    if (isProcessingChats || isLoadingMoreChats) return; // Guard against re-entry
+    if (isProcessingChats || isLoadingMoreChats) return; 
     setIsProcessingChats(true);
     setAllChats([]);
     setSelectedFolder(null);
     setCurrentChatMedia([]);
-    setAuthError(null); // Clear previous auth errors before fetching
+    setAuthError(null); 
     setChatsOffsetDate(0);
     setChatsOffsetId(0);
     setChatsOffsetPeer({ _: 'inputPeerEmpty' });
     setHasMoreChats(true);
-    isLoadingMoreChatsRequestInFlightRef.current = false; // Reset flood guard for "load more"
+    isLoadingMoreChatsRequestInFlightRef.current = false; 
     toast({ title: "Fetching Chats...", description: "Loading your Telegram conversations." });
 
     try {
@@ -129,7 +127,7 @@ export default function Home() {
     } finally {
       setIsProcessingChats(false);
     }
-  }, [toast, handleApiError]); // Added handleApiError
+  }, [toast, handleApiError, isProcessingChats, isLoadingMoreChats]); 
 
 
   const checkExistingConnection = useCallback(async () => {
@@ -139,17 +137,16 @@ export default function Home() {
       if (previouslyConnected) {
         const storedUser = telegramService.getUserSessionDetails();
         if (storedUser && storedUser.phone) {
-            setPhoneNumber(storedUser.phone); // Ensure phone number is set for display
+            setPhoneNumber(storedUser.phone); 
         }
         console.log("User was previously connected. Setting state and fetching chats.");
         setIsConnected(true);
-        setAuthStep('initial'); // Reset auth flow UI
+        setAuthStep('initial'); 
         setAuthError(null);
         fetchInitialChats(); 
       } else {
         console.log("No existing connection found or session invalid.");
         setIsConnected(false);
-        // handleReset(false); // Reset state but don't call server logout. Already handled by isUserConnected potentially.
       }
     } catch (error: any) {
       console.warn("Error checking existing connection:", error.message, error.originalErrorObject || error);
@@ -165,17 +162,17 @@ export default function Home() {
           toast({ title: "Authentication Expired", description: "Your session needs to be re-initiated. Please enter your phone number again.", variant: "destructive" });
           handleReset(false); 
       }
-      setIsConnected(false); // Ensure disconnected state if any error during check
+      setIsConnected(false); 
     }
-  }, [toast, fetchInitialChats, handleApiError]); // Added handleApiError
+  }, [toast, fetchInitialChats, handleApiError]); 
 
   useEffect(() => {
     checkExistingConnection();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Runs once on mount
+  }, []); 
 
   const handleReset = useCallback(async (performServerLogout = true) => {
-    if (performServerLogout && isConnected) { // Only call signOut if we think we are connected
+    if (performServerLogout && isConnected) { 
         toast({ title: "Disconnecting...", description: "Logging out from Telegram." });
         try {
             await telegramService.signOut();
@@ -217,13 +214,13 @@ export default function Home() {
     });
     setDownloadQueue([]);
     activeDownloadsRef.current.clear();
-  }, [isConnected, toast]); // Removed handleApiError from here, added isConnected, toast
+  }, [isConnected, toast]); 
 
   useEffect(() => {
     const processQueue = async () => {
       for (let i = 0; i < downloadQueueRef.current.length; i++) {
         const itemInLoop = downloadQueueRef.current[i];
-        const currentItemFromState = downloadQueueRef.current.find(q => q.id === itemInLoop.id); // Use downloadQueueRef for consistency
+        const currentItemFromState = downloadQueueRef.current.find(q => q.id === itemInLoop.id); 
 
         if (!currentItemFromState) {
             console.warn(`Item ${itemInLoop.id} no longer in queue, skipping processing.`);
@@ -253,10 +250,9 @@ export default function Home() {
           activeDownloadsRef.current.add(upToDateItem.id);
 
           try {
-            // const currentOffset = upToDateItem.currentOffset || 0; // Already in upToDateItem
             const remainingBytes = upToDateItem.totalSizeInBytes - upToDateItem.downloadedBytes;
 
-            if (remainingBytes <= 0) { // Should be caught by loop condition, but as safety
+            if (remainingBytes <= 0) { 
                 setDownloadQueue(prevQ => prevQ.map(q => q.id === upToDateItem.id ? { ...q, status: 'completed', progress: 100, downloadedBytes: upToDateItem.totalSizeInBytes!, currentOffset: upToDateItem.totalSizeInBytes! } : q));
                 activeDownloadsRef.current.delete(upToDateItem.id);
                 continue;
@@ -295,7 +291,7 @@ export default function Home() {
                         file_token: upToDateItem.cdnFileToken,
                         encryption_key: upToDateItem.cdnEncryptionKey,
                         encryption_iv: upToDateItem.cdnEncryptionIv,
-                        file_hashes: upToDateItem.cdnFileHashes, // Pass the original structure
+                        file_hashes: upToDateItem.cdnFileHashes, 
                     },
                     cdnBlock.offset,
                     actualLimitForApi,
@@ -318,27 +314,37 @@ export default function Home() {
                 const offsetWithinCurrentBlock = upToDateItem.currentOffset % ONE_MB;
                 const bytesLeftInCurrentBlock = ONE_MB - offsetWithinCurrentBlock;
                 
-                let dataToRequest = Math.min(bytesNeededForFile, bytesLeftInCurrentBlock, DOWNLOAD_CHUNK_SIZE);
-                
-                if (dataToRequest <= 0 && bytesNeededForFile > 0) {
-                    dataToRequest = Math.min(bytesNeededForFile, DOWNLOAD_CHUNK_SIZE); 
-                }
-                
-                if (dataToRequest >= KB_1) {
-                    actualLimitForApi = Math.floor(dataToRequest / KB_1) * KB_1;
-                } else if (dataToRequest > 0) { 
-                    actualLimitForApi = dataToRequest; 
-                } else {
+                // Determine the maximum number of bytes we can request in this call
+                let idealRequestSize = Math.min(bytesLeftInCurrentBlock, DOWNLOAD_CHUNK_SIZE);
+
+                if (bytesNeededForFile <= 0) {
+                    actualLimitForApi = 0; // No more bytes needed
+                } else if (idealRequestSize <= 0) { // Should ideally not happen if bytesLeftInCurrentBlock > 0
                     actualLimitForApi = 0; 
+                } else if (idealRequestSize < KB_1) {
+                    // If what we can ideally take is less than 1KB (e.g. 21 bytes left in 1MB block),
+                    // we must ask for at least 1KB. Server will return the actual remaining bytes.
+                    actualLimitForApi = KB_1;
+                } else {
+                    // idealRequestSize is >= 1KB. Round it down to the nearest 1KB multiple.
+                    actualLimitForApi = Math.floor(idealRequestSize / KB_1) * KB_1;
+                }
+
+                // If rounding down made actualLimitForApi zero, but we actually could request something (idealRequestSize > 0),
+                // it means idealRequestSize was positive but < KB_1. The 'else if (idealRequestSize < KB_1)'
+                // should have caught this and set actualLimitForApi to KB_1.
+                // This final check is a safeguard.
+                if (actualLimitForApi === 0 && bytesNeededForFile > 0 && idealRequestSize > 0) {
+                    actualLimitForApi = KB_1;
                 }
                 
-                console.log(`Processing direct download for ${upToDateItem.name}, offset: ${upToDateItem.currentOffset}, API limit: ${actualLimitForApi}, dataToRequestRaw: ${dataToRequest}, neededForFile: ${bytesNeededForFile}, leftInBlock: ${bytesLeftInCurrentBlock}, totalSize: ${upToDateItem.totalSizeInBytes}`);
+                console.log(`Processing direct download for ${upToDateItem.name}, offset: ${upToDateItem.currentOffset}, API limit: ${actualLimitForApi}, idealRequest: ${idealRequestSize}, neededForFile: ${bytesNeededForFile}, leftInBlock: ${bytesLeftInCurrentBlock}, totalSize: ${upToDateItem.totalSizeInBytes}`);
 
                 if (actualLimitForApi <= 0) {
                    if (upToDateItem.downloadedBytes >= upToDateItem.totalSizeInBytes) {
                        setDownloadQueue(prevQ => prevQ.map(q => q.id === upToDateItem.id ? { ...q, status: 'completed', progress: 100, downloadedBytes: upToDateItem.totalSizeInBytes!, currentOffset: upToDateItem.totalSizeInBytes! } : q));
                    } else if (bytesNeededForFile > 0) {
-                        console.error(`Stalled download for ${upToDateItem.name}: Calculated API limit is ${actualLimitForApi}, but ${bytesNeededForFile} bytes remaining. dataToRequest was ${dataToRequest}.`);
+                        console.error(`Stalled download for ${upToDateItem.name}: Calculated API limit is ${actualLimitForApi}, but ${bytesNeededForFile} bytes remaining. idealRequestSize was ${idealRequestSize}.`);
                         setDownloadQueue(prevQ => prevQ.map(q => q.id === upToDateItem.id ? { ...q, status: 'failed', error_message: 'Internal limit calc error' } : q));
                    }
                    activeDownloadsRef.current.delete(upToDateItem.id);
@@ -377,7 +383,7 @@ export default function Home() {
                     cdnFileToken: chunkResponse.cdnRedirectData!.file_token,
                     cdnEncryptionKey: chunkResponse.cdnRedirectData!.encryption_key,
                     cdnEncryptionIv: chunkResponse.cdnRedirectData!.encryption_iv,
-                    cdnFileHashes: chunkResponse.cdnRedirectData!.file_hashes.map(fh_raw => ({ // Ensure proper mapping
+                    cdnFileHashes: chunkResponse.cdnRedirectData!.file_hashes.map(fh_raw => ({ 
                         offset: Number(fh_raw.offset),
                         limit: fh_raw.limit,
                         hash: fh_raw.hash,
@@ -394,7 +400,6 @@ export default function Home() {
 
             } else if (chunkResponse?.bytes) {
               const chunkSize = chunkResponse.bytes.length;
-              // const expectedBytesFromServer = upToDateItem.cdnFileToken ? actualLimitForApi : Math.min(actualLimitForApi, remainingBytes);
 
               setDownloadQueue(prevQ =>
                 prevQ.map(q_item => {
@@ -542,7 +547,6 @@ export default function Home() {
         });
         activeDownloadsRef.current.clear(); 
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); 
 
 
@@ -576,7 +580,7 @@ export default function Home() {
       setIsLoadingMoreChats(false);
       isLoadingMoreChatsRequestInFlightRef.current = false;
     }
-  }, [isConnected, isProcessingChats, isLoadingMoreChats, hasMoreChats, chatsOffsetDate, chatsOffsetId, chatsOffsetPeer, toast, handleApiError]); // Added handleApiError
+  }, [isConnected, isProcessingChats, isLoadingMoreChats, hasMoreChats, chatsOffsetDate, chatsOffsetId, chatsOffsetPeer, toast, handleApiError, handleReset]); 
 
   const lastChatElementRef = useCallback((node: HTMLLIElement | null) => {
     if (isLoadingMoreChats || isProcessingChats || isLoadingMoreChatsRequestInFlightRef.current) return;
@@ -620,7 +624,7 @@ export default function Home() {
     } finally {
       setIsLoadingChatMedia(false);
     }
-  },[toast, handleApiError]); // Added handleApiError
+  },[toast, handleApiError, handleReset]); 
 
   const loadMoreChatMediaCallback = useCallback(async () => {
     if (isLoadingChatMedia || !hasMoreChatMedia || !selectedFolder?.inputPeer) return;
@@ -645,7 +649,7 @@ export default function Home() {
     } finally {
       setIsLoadingChatMedia(false);
     }
-  }, [isLoadingChatMedia, hasMoreChatMedia, selectedFolder, currentMediaOffsetId, toast, handleApiError]); // Added handleApiError
+  }, [isLoadingChatMedia, hasMoreChatMedia, selectedFolder, currentMediaOffsetId, toast, handleApiError, handleReset]); 
 
   const lastMediaItemRef = useCallback((node: HTMLDivElement | null) => {
     if (isLoadingChatMedia) return;
