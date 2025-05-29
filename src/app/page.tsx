@@ -75,13 +75,13 @@ export default function Home() {
         }
         console.log("User was previously connected. Setting state and fetching chats.");
         setIsConnected(true);
-        setAuthStep('initial');
+        setAuthStep('initial'); // Reset auth flow
         setAuthError(null);
         fetchInitialChats();
       } else {
         console.log("No existing connection found or session invalid.");
         setIsConnected(false);
-        handleReset(false); 
+        handleReset(false); // Reset local state without server logout if no valid session
       }
     } catch (error: any) {
       console.warn("Error checking existing connection:", error.message);
@@ -90,7 +90,7 @@ export default function Home() {
       // Do not set authError here as it might show up on initial load unnecessarily
       // setAuthError(`Failed to check connection: ${error.message}`);
     }
-  }, []); 
+  }, []); // Removed toast from dependencies as it caused re-runs
 
   useEffect(() => {
     checkExistingConnection();
@@ -102,7 +102,7 @@ export default function Home() {
     setAllChats([]); 
     setSelectedFolder(null);
     setCurrentChatMedia([]);
-    setAuthError(null);
+    setAuthError(null); // Clear previous auth errors before fetching
     setChatsOffsetDate(0);
     setChatsOffsetId(0);
     setChatsOffsetPeer({ _: 'inputPeerEmpty' });
@@ -146,7 +146,7 @@ export default function Home() {
       }
     } catch (error: any) {
       handleApiError(error, "Error Loading More Chats", `Could not load more chats.`);
-      setHasMoreChats(false); 
+      setHasMoreChats(false); // Stop trying to load more if an error occurs
     } finally {
       setIsLoadingMoreChats(false);
     }
@@ -171,9 +171,9 @@ export default function Home() {
       return;
     }
     setIsLoadingChatMedia(true);
-    setCurrentChatMedia([]); 
-    setHasMoreChatMedia(true); 
-    setCurrentMediaOffsetId(0); 
+    setCurrentChatMedia([]); // Clear previous media
+    setHasMoreChatMedia(true); // Reset for new folder
+    setCurrentMediaOffsetId(0); // Reset offset for new folder
     toast({ title: `Loading Media for ${folder.name}`, description: "Fetching initial media items..." });
 
     try {
@@ -209,14 +209,14 @@ export default function Home() {
       }
     } catch (error: any) {
       handleApiError(error, "Error Loading More Media", `Could not load more media items.`);
-      setHasMoreChatMedia(false); 
+      setHasMoreChatMedia(false); // Stop trying if error
     } finally {
       setIsLoadingChatMedia(false);
     }
   }, [isLoadingChatMedia, hasMoreChatMedia, selectedFolder, currentMediaOffsetId, toast]);
   
   const lastMediaItemRef = useCallback((node: HTMLDivElement | null) => {
-    if (isLoadingChatMedia) return; 
+    if (isLoadingChatMedia) return; // Don't observe if already loading
     if (observerMedia.current) observerMedia.current.disconnect();
     observerMedia.current = new IntersectionObserver(entries => {
       if (entries[0].isIntersecting && hasMoreChatMedia && !isLoadingChatMedia) {
@@ -231,10 +231,10 @@ export default function Home() {
     const folder = allChats.find(f => f.id === folderId);
     if (folder) {
       setSelectedFolder(folder);
-      fetchInitialChatMedia(folder); 
+      fetchInitialChatMedia(folder); // Fetch media for the newly selected folder
     } else {
       setSelectedFolder(null);
-      setCurrentChatMedia([]); 
+      setCurrentChatMedia([]); // Clear media if no folder selected
     }
   };
   
@@ -242,18 +242,18 @@ export default function Home() {
     console.error(`${title}:`, error);
     const description = error.message || defaultMessage;
     toast({ title, description, variant: "destructive" });
-    setAuthError(description); 
+    setAuthError(description); // Display auth-related errors prominently if needed
   };
 
   const handleSendCode = async (fullPhoneNumberFromConnect: string) => {
-    if (!fullPhoneNumberFromConnect || !fullPhoneNumberFromConnect.startsWith('+') || fullPhoneNumberFromConnect.length < 5) { 
+    if (!fullPhoneNumberFromConnect || !fullPhoneNumberFromConnect.startsWith('+') || fullPhoneNumberFromConnect.length < 5) { // Basic validation
       setAuthError("Phone number is required and must be valid (e.g. +972501234567).");
       toast({ title: "Invalid Phone Number", description: "Please select a country and enter a valid number.", variant: "destructive" });
       return;
     }
     setIsConnecting(true);
     setAuthError(null);
-    setPhoneNumber(fullPhoneNumberFromConnect); 
+    setPhoneNumber(fullPhoneNumberFromConnect); // Store the full number for display and later use
     toast({ title: "Sending Code...", description: `Requesting verification code for ${fullPhoneNumberFromConnect}.` });
     
     try {
@@ -299,12 +299,13 @@ export default function Home() {
       const result = await telegramService.signIn(phoneNumber, currentPhoneCode);
       if (result.user) {
         setIsConnected(true);
-        setAuthStep('initial'); 
-        setPhoneCode(''); 
-        setPassword(''); 
-        fetchInitialChats(); 
+        setAuthStep('initial'); // Reset auth flow state
+        setPhoneCode(''); // Clear code
+        setPassword(''); // Clear password
+        fetchInitialChats(); // Fetch chats after successful sign-in
         toast({ title: "Sign In Successful!", description: "Connected to Telegram." });
       } else {
+        // This case should ideally not happen if signIn throws errors for failures
         setAuthError("Sign in failed. Unexpected response from server.");
         toast({ title: "Sign In Failed", description: "Unexpected response from server.", variant: "destructive" });
       }
@@ -312,7 +313,7 @@ export default function Home() {
       if (error.message === '2FA_REQUIRED' && (error as any).srp_id) {
         console.log("2FA required for sign in, srp_id received:", (error as any).srp_id);
         setAuthStep('awaiting_password');
-        setAuthError(null); 
+        setAuthError(null); // Clear previous error, 2FA is expected
         toast({ title: "2FA Required", description: "Please enter your two-factor authentication password." });
       } else {
         console.log("Error signing in (handleSignIn):", error.message, error.originalErrorObject || error);
@@ -336,10 +337,10 @@ export default function Home() {
       const user = await telegramService.checkPassword(currentPassword);
       if (user) {
         setIsConnected(true);
-        setAuthStep('initial'); 
-        setPhoneCode(''); 
-        setPassword(''); 
-        fetchInitialChats(); 
+        setAuthStep('initial'); // Reset auth flow
+        setPhoneCode(''); // Clear code
+        setPassword(''); // Clear password
+        fetchInitialChats(); // Fetch chats after successful 2FA
         toast({ title: "2FA Successful!", description: "Connected to Telegram." });
       } else {
         setAuthError("2FA failed. Unexpected response from server.");
@@ -355,7 +356,7 @@ export default function Home() {
   };
 
   const handleReset = async (performServerLogout = true) => {
-    if (performServerLogout && isConnected) { 
+    if (performServerLogout && isConnected) { // Only try server logout if was connected
         toast({ title: "Disconnecting...", description: "Logging out from Telegram." });
         try {
             await telegramService.signOut();
@@ -364,6 +365,7 @@ export default function Home() {
             toast({ title: "Disconnection Error", description: error.message || "Could not sign out properly from server.", variant: "destructive" });
         }
     }
+    // Reset all local state
     setIsConnected(false);
     setIsProcessingChats(false);
     setAllChats([]);
@@ -376,12 +378,14 @@ export default function Home() {
     setPassword('');
     setAuthError(null);
 
+    // Reset pagination for chats
     setIsLoadingMoreChats(false);
     setHasMoreChats(true);
     setChatsOffsetDate(0);
     setChatsOffsetId(0);
     setChatsOffsetPeer({ _: 'inputPeerEmpty' });
 
+    // Reset pagination for media
     setIsLoadingChatMedia(false);
     setHasMoreChatMedia(true);
     setCurrentMediaOffsetId(0);
@@ -493,13 +497,13 @@ export default function Home() {
               <Loader2 className="animate-spin h-8 w-8 text-primary mb-2" />
               <p className="text-muted-foreground">Loading chats...</p>
             </div>
-          ) : allChats.length === 0 && !isProcessingChats && !authError ? (
+          ) : allChats.length === 0 && !isProcessingChats && !authError ? ( // No chats, no error, not loading
              <div className="text-center py-4">
                 <FolderClosed className="mx-auto h-12 w-12 text-muted-foreground mb-2" />
                 <p className="text-muted-foreground">No chats found.</p>
                 <Button onClick={fetchInitialChats} variant="link" className="mt-2">Try Refreshing</Button>
             </div>
-          ) : authError && allChats.length === 0 && !isProcessingChats ? ( 
+          ) : authError && allChats.length === 0 && !isProcessingChats ? ( // Error, no chats, not loading
             <div className="text-center py-4 text-destructive">
               <p>{authError}</p>
               <Button onClick={fetchInitialChats} variant="link" className="mt-2">Try Refreshing</Button>
