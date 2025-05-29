@@ -3,10 +3,13 @@
 
 import type { CloudFile } from "@/types";
 import { ContentFileItem } from "./content-file-item";
-import { Input } from "@/components/ui/input";
-import { Search, FolderOpen, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Search, FolderOpen, Loader2, CalendarDays, XCircle as ClearIcon } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
 import { useState, useMemo, useEffect } from "react";
+import { format, isToday, isYesterday, startOfDay, isSameDay, isSameMonth, differenceInCalendarMonths } from "date-fns";
 
 interface MainContentViewProps {
   folderName: string | null;
@@ -54,24 +57,32 @@ export function MainContentView({
   onFileViewImageClick,
   onFilePlayVideoClick
 }: MainContentViewProps) {
-  const [searchTerm, setSearchTerm] = useState("");
+  const [searchTerm, setSearchTerm] = useState(""); // For future dialog-based search
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("all");
+  const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
 
   useEffect(() => {
+    // Reset filters when folder changes
     setSearchTerm("");
     setDebouncedSearchTerm("");
-    setActiveTab("all"); // Reset tab when folder changes
+    setActiveTab("all");
+    setSelectedDate(undefined);
   }, [folderName]);
 
-  const updateDebouncedSearchTerm = useMemo(
-    () => debounce((term: string) => setDebouncedSearchTerm(term.toLowerCase()), 300),
-    []
-  );
+  // Debouncing search term for future use if search input is re-added
+  // const updateDebouncedSearchTerm = useMemo(
+  //   () => debounce((term: string) => setDebouncedSearchTerm(term.toLowerCase()), 300),
+  //   []
+  // );
+  // const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+  //   setSearchTerm(event.target.value);
+  //   updateDebouncedSearchTerm(event.target.value);
+  // };
 
-  const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    setSearchTerm(event.target.value);
-    updateDebouncedSearchTerm(event.target.value);
+  const handleSearchButtonClick = () => {
+    console.log("Search button clicked. Implement dialog for search results.");
+    // Here you would open a dialog and manage search term state for that dialog
   };
 
   const filteredByTypeFiles = useMemo(() => {
@@ -99,15 +110,28 @@ export function MainContentView({
     }
   }, [files, activeTab]);
 
-  const searchedAndTypedFiles = useMemo(() => {
-    if (!filteredByTypeFiles) return [];
-    const term = debouncedSearchTerm;
-    if (!term) return filteredByTypeFiles; // If no search term, return all files from the active tab
-    return filteredByTypeFiles.filter(file =>
-      file.name.toLowerCase().includes(term) ||
-      file.type.toLowerCase().includes(term)
-    );
-  }, [filteredByTypeFiles, debouncedSearchTerm]);
+  const displayedAndPossiblyFilteredFiles = useMemo(() => {
+    let processedFiles = filteredByTypeFiles;
+
+    if (selectedDate) {
+      processedFiles = processedFiles.filter(file =>
+        isSameDay(new Date(file.timestamp * 1000), selectedDate)
+      );
+    }
+    // Future: if search term is re-introduced for this view (not dialog)
+    // const term = debouncedSearchTerm;
+    // if (term) {
+    //   processedFiles = processedFiles.filter(file =>
+    //     file.name.toLowerCase().includes(term) ||
+    //     file.type.toLowerCase().includes(term)
+    //   );
+    // }
+    if (!selectedDate) { // Only sort by timestamp if no specific date is selected
+        return processedFiles.sort((a, b) => b.timestamp - a.timestamp);
+    }
+    return processedFiles; // If date is selected, order within day doesn't matter as much or handled by default
+  }, [filteredByTypeFiles, selectedDate, debouncedSearchTerm]);
+
 
   if (!folderName) {
     return (
@@ -118,25 +142,51 @@ export function MainContentView({
     );
   }
 
-  const displayFiles = searchedAndTypedFiles;
-  const noResultsForSearchOrTab = (searchTerm || activeTab !== "all") && displayFiles.length === 0 && !isLoading;
-  const noMediaAtAll = !searchTerm && activeTab === "all" && displayFiles.length === 0 && !isLoading && !hasMore;
+  const displayFiles = displayedAndPossiblyFilteredFiles;
+  const noResultsForFilter = (activeTab !== "all" || selectedDate || searchTerm) && displayFiles.length === 0 && !isLoading;
+  const noMediaAtAll = activeTab === "all" && !selectedDate && !searchTerm && displayFiles.length === 0 && !isLoading && !hasMore;
+
+  let lastDisplayedDay: Date | null = null;
+  let lastDisplayedMonth: Date | null = null;
+
 
   return (
     <div className="space-y-4 h-full flex flex-col p-1 md:p-2 lg:p-4">
       <div className="flex-shrink-0">
         <h1 className="text-3xl font-bold text-primary mb-3 pb-2 border-b">{folderName}</h1>
         <div className="flex flex-col sm:flex-row gap-3 mb-3 items-center">
-          <div className="relative flex-grow w-full sm:w-auto">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
-            <Input
-              type="search"
-              placeholder={`Search in ${folderName}...`}
-              className="pl-10 pr-4 py-2 text-base w-full"
-              value={searchTerm}
-              onChange={handleSearchChange}
-            />
-          </div>
+          <Button variant="outline" onClick={handleSearchButtonClick} className="w-full sm:w-auto">
+            <Search className="mr-2 h-4 w-4" /> Search
+          </Button>
+
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant={"outline"}
+                className="w-full sm:w-auto justify-start text-left font-normal"
+              >
+                <CalendarDays className="mr-2 h-4 w-4" />
+                {selectedDate ? format(selectedDate, "PPP") : <span>Filter by date</span>}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="start">
+              <Calendar
+                mode="single"
+                selected={selectedDate}
+                onSelect={(date) => {
+                    setSelectedDate(date || undefined);
+                    // Close popover on select, if needed by adding a state for popover open/close
+                }}
+                initialFocus
+              />
+            </PopoverContent>
+          </Popover>
+          {selectedDate && (
+            <Button variant="ghost" size="icon" onClick={() => setSelectedDate(undefined)} title="Clear date filter">
+              <ClearIcon className="h-5 w-5 text-muted-foreground hover:text-destructive" />
+            </Button>
+          )}
+          <div className="flex-grow"></div> {/* Spacer */}
           <Tabs defaultValue="all" onValueChange={setActiveTab} value={activeTab} className="w-full sm:w-auto">
             <TabsList className="grid w-full grid-cols-3 sm:w-auto sm:inline-flex h-auto">
               {TABS_CONFIG.map(tab => (
@@ -154,11 +204,13 @@ export function MainContentView({
           <Loader2 className="animate-spin h-12 w-12 text-primary mb-4" />
           <p className="text-lg">Loading media...</p>
         </div>
-      ) : noResultsForSearchOrTab ? (
+      ) : noResultsForFilter ? (
         <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center">
           <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
           <p className="text-lg">
-            No media items matching your filter {searchTerm && `"${searchTerm}"`} in the "{TABS_CONFIG.find(t=>t.value === activeTab)?.label}" tab.
+            No media items found for the current filter
+            {activeTab !== "all" ? ` in "${TABS_CONFIG.find(t=>t.value === activeTab)?.label}"` : ""}
+            {selectedDate ? ` on ${format(selectedDate, "PPP")}` : ""}.
           </p>
         </div>
       ) : noMediaAtAll ? (
@@ -167,13 +219,43 @@ export function MainContentView({
           <p className="text-lg">This chat contains no media items.</p>
         </div>
       ) : (
-        <div className="flex-grow overflow-y-auto space-y-0 pr-1 pb-4"> {/* Added pb-4 for scrollbar visibility */}
-          {displayFiles.length > 0 && (
+        <div className="flex-grow overflow-y-auto space-y-0 pr-1 pb-4">
+          {displayFiles.length > 0 ? (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
               {displayFiles.map((file, index) => {
+                const fileDate = new Date(file.timestamp * 1000);
+                let dayHeader = null;
+                let monthHeader = null;
+
+                if (!selectedDate) { // Only show date grouping if no specific date is selected
+                  if (!lastDisplayedMonth || !isSameMonth(fileDate, lastDisplayedMonth)) {
+                    monthHeader = (
+                      <div key={`month-${file.id}`} className="col-span-full text-lg font-semibold text-primary py-3 mt-4 mb-2 border-b-2 border-primary/30">
+                        {format(fileDate, "MMMM yyyy")}
+                      </div>
+                    );
+                    lastDisplayedMonth = fileDate;
+                    lastDisplayedDay = null; // Reset day when month changes
+                  }
+
+                  if (!lastDisplayedDay || !isSameDay(fileDate, lastDisplayedDay)) {
+                    let dayLabel;
+                    if (isToday(fileDate)) dayLabel = "Today";
+                    else if (isYesterday(fileDate)) dayLabel = "Yesterday";
+                    else dayLabel = format(fileDate, "eeee, MMMM d");
+
+                    dayHeader = (
+                      <div key={`day-${file.id}`} className="col-span-full text-sm font-medium text-muted-foreground py-2 mt-2 mb-1 border-b border-border">
+                        {dayLabel}
+                      </div>
+                    );
+                    lastDisplayedDay = fileDate;
+                  }
+                }
+                
                 const itemContent = (
                   <ContentFileItem
-                    key={`${file.id}-${activeTab}-${index}`} // Ensure key uniqueness when tab changes
+                    key={`${file.id}-${activeTab}-${selectedDate ? format(selectedDate, "yyyy-MM-dd") : 'all'}-${index}`}
                     file={file}
                     style={{ animationDelay: `${index * 30}ms` }}
                     onDetailsClick={onFileDetailsClick}
@@ -182,14 +264,29 @@ export function MainContentView({
                     onPlayVideoClick={onFilePlayVideoClick}
                   />
                 );
-                if (index === displayFiles.length - 1 && hasMore && !isLoading && !searchTerm && activeTab === 'all') { // lastItemRef only for "all" tab without search for now
-                  return <div ref={lastItemRef} key={`ref-${file.id}-${index}`}>{itemContent}</div>;
-                }
-                return itemContent;
+
+                const itemWithRef = (
+                  <div ref={index === displayFiles.length - 1 && hasMore && !isLoading && !selectedDate ? lastItemRef : null} key={`ref-wrap-${file.id}`}>
+                    {itemContent}
+                  </div>
+                );
+                
+                return (
+                  <React.Fragment key={`fragment-${file.id}`}>
+                    {monthHeader}
+                    {dayHeader}
+                    {itemWithRef}
+                  </React.Fragment>
+                );
               })}
             </div>
+          ) : (
+             <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center">
+                <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
+                <p className="text-lg">No media items to display for the current selection.</p>
+             </div>
           )}
-          {isLoading && displayFiles.length > 0 && ( // Show spinner if loading more items for current view
+          {isLoading && displayFiles.length > 0 && (
             <div className="flex justify-center items-center p-4 mt-4">
               <Loader2 className="animate-spin h-8 w-8 text-primary" />
               <p className="ml-3 text-muted-foreground">Loading more media...</p>
@@ -198,7 +295,7 @@ export function MainContentView({
           {!isLoading && !hasMore && displayFiles.length > 0 && (
              <p className="text-center text-sm text-muted-foreground py-4 mt-4">No more media to load for the current filter.</p>
           )}
-           {!isLoading && hasMore && displayFiles.length > 0 && searchTerm === '' && activeTab === 'all' && (
+           {!isLoading && hasMore && displayFiles.length > 0 && !selectedDate && (
              <p className="text-center text-sm text-muted-foreground py-4 mt-4">Scroll down to load more media.</p>
           )}
         </div>
@@ -206,4 +303,3 @@ export function MainContentView({
     </div>
   );
 }
-
