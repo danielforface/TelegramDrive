@@ -111,7 +111,7 @@ export default function Home() {
   const fetchInitialChats = useCallback(async () => {
     if (isProcessingChats || isLoadingMoreChatsRequestInFlightRef.current) return;
     setIsProcessingChats(true);
-    isLoadingMoreChatsRequestInFlightRef.current = false; // Reset this specifically for initial fetch
+    isLoadingMoreChatsRequestInFlightRef.current = false; 
     setAllChats([]);
     setSelectedFolder(null);
     setCurrentChatMedia([]);
@@ -191,7 +191,7 @@ export default function Home() {
   useEffect(() => {
     checkExistingConnection();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Runs once on mount
+  }, []); 
 
   const handleReset = useCallback(async (performServerLogout = true) => {
     if (performServerLogout && isConnected) {
@@ -253,7 +253,7 @@ export default function Home() {
 
   }, [isConnected, toast, videoStreamUrl]); 
 
-  useEffect(() => {
+ useEffect(() => {
     const processQueue = async () => {
       for (let i = 0; i < downloadQueueRef.current.length; i++) {
         const itemInLoop = downloadQueueRef.current[i];
@@ -351,10 +351,10 @@ export default function Home() {
                         file_token: upToDateItem.cdnFileToken,
                         encryption_key: upToDateItem.cdnEncryptionKey,
                         encryption_iv: upToDateItem.cdnEncryptionIv,
-                        file_hashes: upToDateItem.cdnFileHashes,
+                        file_hashes: upToDateItem.cdnFileHashes, // Pass the full array, service might need it
                     },
-                    cdnBlock.offset,
-                    actualLimitForApi,
+                    cdnBlock.offset, // Offset for this specific block
+                    actualLimitForApi, // Limit for this specific block
                     upToDateItem.abortController?.signal
                 );
 
@@ -369,22 +369,27 @@ export default function Home() {
                     console.log(`CDN Hash verified for ${upToDateItem.name}, block ${currentHashBlockIndex}`);
                 }
             } else { 
+                // Direct download logic
                 const bytesNeededForFile = upToDateItem.totalSizeInBytes - upToDateItem.downloadedBytes;
                 const offsetWithinCurrentBlock = upToDateItem.currentOffset % ONE_MB;
                 const bytesLeftInCurrentBlock = ONE_MB - offsetWithinCurrentBlock;
     
+                // Determine the maximum number of bytes we can ideally request in this call,
+                // respecting the 1MB block boundary and our preferred DOWNLOAD_CHUNK_SIZE.
                 let idealRequestSize = Math.min(bytesLeftInCurrentBlock, DOWNLOAD_CHUNK_SIZE);
                 
                 if (bytesNeededForFile <= 0) {
-                    actualLimitForApi = 0;
+                    actualLimitForApi = 0; 
                 } else if (idealRequestSize <= 0) {
-                    actualLimitForApi = bytesNeededForFile > 0 ? KB_1 : 0;
+                     actualLimitForApi = bytesNeededForFile > 0 ? KB_1 : 0;
                 } else if (idealRequestSize < KB_1) {
-                     actualLimitForApi = KB_1;
+                     actualLimitForApi = KB_1; 
                 } else {
                     actualLimitForApi = Math.floor(idealRequestSize / KB_1) * KB_1;
                 }
                 
+                // Final safeguard: if the calculation somehow resulted in 0, but we still need bytes
+                // for the file, and our ideal size was positive, request at least 1KB.
                 if (actualLimitForApi === 0 && bytesNeededForFile > 0 && idealRequestSize > 0) {
                     actualLimitForApi = KB_1;
                 }
@@ -469,6 +474,12 @@ export default function Home() {
 
                     if(q_item.cdnFileToken && q_item.cdnFileHashes) { 
                       nextCdnProcessingIndex = (q_item.cdnCurrentFileHashIndex || 0) + 1;
+                      // For CDN, nextReqOffset for the next actual file part comes from the next cdnFileHash.offset
+                      // but downloadedBytes keeps track of total. The currentOffset for CDN means the offset *within the file*
+                      // from which the *next block* should be fetched based on cdnFileHashes.
+                      // The actual `offset` sent to downloadCdnFileChunk is from cdnFileHashes[nextCdnProcessingIndex].offset.
+                      // For now, let's just use newDownloadedBytes as a placeholder for offset, this needs refinement for CDN.
+                      // A better approach: CDN downloads block by block. The offset is the block's offset.
                       nextReqOffset = newDownloadedBytes; 
                     } else { 
                       nextReqOffset = q_item.currentOffset + chunkSize;
@@ -609,7 +620,7 @@ export default function Home() {
         });
         activeDownloadsRef.current.clear(); 
     };
-  }, []); // Empty dependency array to run only on mount and unmount
+  }, []); 
 
 
   const loadMoreChatsCallback = useCallback(async () => {
@@ -1145,12 +1156,12 @@ export default function Home() {
             isLoading={isConnecting}
             error={authError}
             phoneNumber={phoneNumber} 
-            setPhoneNumberProp={setPhoneNumber} // This prop allows TelegramConnect to suggest updates
+            setPhoneNumberProp={setPhoneNumber} 
             phoneCode={phoneCode}
             setPhoneCode={setPhoneCode}
             password={password}
             setPassword={setPassword}
-            onReset={() => handleReset(authStep !== 'initial')} // Pass false if reset is from initial step (e.g. bad env vars)
+            onReset={() => handleReset(authStep !== 'initial')} 
           />
         </main>
         <footer className="py-4 px-4 sm:px-6 lg:px-8 text-center border-t">
@@ -1169,71 +1180,71 @@ export default function Home() {
         onDisconnect={() => handleReset(true)} 
         onOpenDownloadManager={handleOpenDownloadManager}
       />
-      <div className="flex-1 flex container mx-auto px-0 sm:px-2 lg:px-4 overflow-hidden">
-        {/* Sidebar for Chats */}
-        <aside className="w-64 md:w-72 lg:w-80 p-4 border-r bg-card overflow-y-auto flex-shrink-0">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-semibold text-primary">Chats</h2>
-          </div>
-          {isProcessingChats && allChats.length === 0 ? (
-            <div className="flex flex-col items-center p-4">
-              <Loader2 className="animate-spin h-8 w-8 text-primary mb-2" />
-              <p className="text-muted-foreground">Loading chats...</p>
+      <div className="flex-1 flex overflow-hidden">
+        <div className="flex container mx-auto w-full h-full px-0 sm:px-2 lg:px-4">
+            <aside className="w-64 md:w-72 lg:w-80 p-4 border-r bg-card overflow-y-auto flex-shrink-0">
+            <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-semibold text-primary">Chats</h2>
             </div>
-          ) : allChats.length === 0 && !isProcessingChats && !authError ? (
-             <div className="text-center py-4">
-                <FolderClosed className="mx-auto h-12 w-12 text-muted-foreground mb-2" />
-                <p className="text-muted-foreground">No chats found.</p>
+            {isProcessingChats && allChats.length === 0 ? (
+                <div className="flex flex-col items-center p-4">
+                <Loader2 className="animate-spin h-8 w-8 text-primary mb-2" />
+                <p className="text-muted-foreground">Loading chats...</p>
+                </div>
+            ) : allChats.length === 0 && !isProcessingChats && !authError ? (
+                <div className="text-center py-4">
+                    <FolderClosed className="mx-auto h-12 w-12 text-muted-foreground mb-2" />
+                    <p className="text-muted-foreground">No chats found.</p>
+                    <Button onClick={fetchInitialChats} variant="link" className="mt-2">Try Refreshing</Button>
+                </div>
+            ) : authError && allChats.length === 0 && !isProcessingChats ? (
+                <div className="text-center py-4 text-destructive">
+                <p>{authError}</p>
                 <Button onClick={fetchInitialChats} variant="link" className="mt-2">Try Refreshing</Button>
-            </div>
-          ) : authError && allChats.length === 0 && !isProcessingChats ? (
-            <div className="text-center py-4 text-destructive">
-              <p>{authError}</p>
-              <Button onClick={fetchInitialChats} variant="link" className="mt-2">Try Refreshing</Button>
-            </div>
-          ) : (
-            <SidebarNav
-              folders={allChats}
-              selectedFolderId={selectedFolder?.id || null}
-              onSelectFolder={handleSelectFolder}
-              lastItemRef={lastChatElementRef}
-            />
-          )}
-          {isLoadingMoreChats && (
-            <div className="flex justify-center items-center p-2 mt-2">
-              <Loader2 className="animate-spin h-5 w-5 text-primary" />
-              <p className="ml-2 text-sm text-muted-foreground">Loading more chats...</p>
-            </div>
-          )}
-          {!isLoadingMoreChats && !hasMoreChats && allChats.length > 0 && !isLoadingMoreChatsRequestInFlightRef.current && (
-            <p className="text-center text-xs text-muted-foreground py-2 mt-2">No more chats to load.</p>
-          )}
-        </aside>
+                </div>
+            ) : (
+                <SidebarNav
+                folders={allChats}
+                selectedFolderId={selectedFolder?.id || null}
+                onSelectFolder={handleSelectFolder}
+                lastItemRef={lastChatElementRef}
+                />
+            )}
+            {isLoadingMoreChats && (
+                <div className="flex justify-center items-center p-2 mt-2">
+                <Loader2 className="animate-spin h-5 w-5 text-primary" />
+                <p className="ml-2 text-sm text-muted-foreground">Loading more chats...</p>
+                </div>
+            )}
+            {!isLoadingMoreChats && !hasMoreChats && allChats.length > 0 && !isLoadingMoreChatsRequestInFlightRef.current && (
+                <p className="text-center text-xs text-muted-foreground py-2 mt-2">No more chats to load.</p>
+            )}
+            </aside>
 
-        {/* Main Content Area for Media */}
-        <main className="flex-grow p-4 md:p-6 lg:p-8 overflow-y-auto">
-          {selectedFolder ? (
-            <MainContentView
-              folderName={selectedFolder.name}
-              files={currentChatMedia}
-              isLoading={isLoadingChatMedia && currentChatMedia.length === 0}
-              hasMore={hasMoreChatMedia}
-              lastItemRef={lastMediaItemRef}
-              onFileDetailsClick={handleOpenFileDetails}
-              onQueueDownloadClick={handleQueueDownload}
-              onFileViewImageClick={handleViewImage}
-              onFilePlayVideoClick={handlePlayVideo}
-              isPreparingStream={isPreparingVideoStream}
-              preparingStreamForFileId={preparingVideoStreamForFileId}
-            />
-          ) : (
-            <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground">
-              <LayoutPanelLeft className="w-16 h-16 mb-4 opacity-50" />
-              <p className="text-lg">Select a chat from the sidebar to view its media.</p>
-              {allChats.length > 0 && <p className="text-sm mt-1">Or scroll the chat list to load more chats.</p>}
-            </div>
-          )}
-        </main>
+            <main className="flex-grow p-4 md:p-6 lg:p-8 overflow-y-auto">
+            {selectedFolder ? (
+                <MainContentView
+                folderName={selectedFolder.name}
+                files={currentChatMedia}
+                isLoading={isLoadingChatMedia && currentChatMedia.length === 0}
+                hasMore={hasMoreChatMedia}
+                lastItemRef={lastMediaItemRef}
+                onFileDetailsClick={handleOpenFileDetails}
+                onQueueDownloadClick={handleQueueDownload}
+                onFileViewImageClick={handleViewImage}
+                onFilePlayVideoClick={handlePlayVideo}
+                isPreparingStream={isPreparingVideoStream}
+                preparingStreamForFileId={preparingVideoStreamForFileId}
+                />
+            ) : (
+                <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground">
+                <LayoutPanelLeft className="w-16 h-16 mb-4 opacity-50" />
+                <p className="text-lg">Select a chat from the sidebar to view its media.</p>
+                {allChats.length > 0 && <p className="text-sm mt-1">Or scroll the chat list to load more chats.</p>}
+                </div>
+            )}
+            </main>
+        </div>
       </div>
       <footer className="py-3 px-4 sm:px-6 lg:px-8 text-center border-t text-xs">
         <p className="text-muted-foreground">
@@ -1270,7 +1281,5 @@ export default function Home() {
     </div>
   );
 }
-
-    
 
     
