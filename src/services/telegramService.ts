@@ -53,12 +53,13 @@ class API {
                          "Service cannot be initialized. Please check your .env.local file and restart the server.";
       console.error(errorMessage);
       if (typeof window !== 'undefined' && !(window as any).telegramApiError) (window as any).telegramApiError = errorMessage;
-      // Provide a stub mtproto object to prevent further errors if initialization fails
       this.mtproto = {
         call: async () => Promise.reject(new Error(errorMessage)),
-        updates: { on: () => {} }, // Stub for updates.on
+        updates: { on: () => {} }, 
         setDefaultDc: async () => Promise.reject(new Error(errorMessage)),
-        // Add stubs for any other mtproto methods used directly
+        crypto: { // Add crypto stub for getSRPParams
+            getSRPParams: async () => Promise.reject(new Error(errorMessage)),
+        }
       } as any;
       return;
     }
@@ -66,7 +67,6 @@ class API {
       this.mtproto = new MTProto({
         api_id: API_ID,
         api_hash: API_HASH,
-        // Browser environment uses localStorage by default
       });
       console.log('MTProto client initialized successfully in API class for browser environment.');
 
@@ -100,6 +100,9 @@ class API {
             call: async () => Promise.reject(new Error(errorMessage)),
             updates: { on: () => {} },
             setDefaultDc: async () => Promise.reject(new Error(errorMessage)),
+            crypto: {
+                 getSRPParams: async () => Promise.reject(new Error(errorMessage)),
+            }
         } as any;
     }
   }
@@ -109,14 +112,18 @@ class API {
         const initErrorMsg = (typeof window !== 'undefined' && (window as any).telegramApiError) || CRITICAL_ERROR_MESSAGE_PREFIX + "MTProto not initialized due to API ID/Hash missing/invalid.";
         return Promise.reject(new Error(initErrorMsg));
     }
-    console.log(`API Call: ${method}`, JSON.parse(JSON.stringify(params)), options);
+    console.log(`API Call: ${method}`, JSON.parse(JSON.stringify(params)), options); // Deep clone params for logging
+    
+    let originalErrorObject: any = null;
+
     try {
       const result = await this.mtproto.call(method, params, options);
       return result;
-    } catch (originalError: any) {
-      console.warn(`MTProto call '${method}' raw error object:`, JSON.stringify(originalError, null, 2), originalError);
+    } catch (error: any) {
+      originalErrorObject = error; // Store the original error
+      console.warn(`MTProto call '${method}' raw error object:`, JSON.stringify(error, null, 2), error);
       
-      const { error_code, error_message } = originalError;
+      const { error_code, error_message } = error;
 
       if (error_code === 420 && typeof error_message === 'string' && error_message.startsWith('FLOOD_WAIT_')) {
         const secondsStr = error_message.split('FLOOD_WAIT_')[1];
@@ -135,13 +142,13 @@ class API {
       if (error_code === 303 && migrateErrorMatch) {
         const type = migrateErrorMatch[1];
         const dcId = Number(migrateErrorMatch[2]);
+        const isFileMigrate = type === 'FILE' || type === 'PEER' || type === 'CHAT';
 
         console.log(`${type}_MIGRATE_X error. Attempting to migrate to DC ${dcId} for ${method}...`);
         
         const authMethods = ['auth.sendCode', 'auth.signIn', 'auth.checkPassword', 'auth.logOut'];
-        const fileMethods = ['upload.getFile', 'upload.getCdnFile', 'messages.getHistory', 'users.getUsers'];
-
-        if (type === 'PHONE' || type === 'NETWORK' || type === 'USER' || authMethods.includes(method) || (fileMethods.includes(method) && (type === 'FILE' || type === 'PEER' || type === 'CHAT'))) {
+        
+        if (type === 'PHONE' || type === 'NETWORK' || type === 'USER' || authMethods.includes(method) || (isFileMigrate && method !== 'upload.getFile' && method !== 'upload.getCdnFile') ) {
           console.log(`Setting default DC to ${dcId} due to ${type}_MIGRATE or relevant operation for method ${method}.`);
           await this.mtproto.setDefaultDc(dcId);
         } else { 
@@ -151,11 +158,12 @@ class API {
         return this.call(method, params, options); 
       }
       
+      // Ensure a proper Error object is always thrown
       let processedError: Error;
-      if (originalError instanceof Error && originalError.message) {
-        processedError = originalError;
-      } else if (typeof originalError === 'object' && originalError !== null && (originalError.error_message || originalError.message)) {
-        processedError = new Error(originalError.error_message || originalError.message);
+      if (error instanceof Error && error.message) {
+        processedError = error;
+      } else if (typeof error === 'object' && error !== null && (error.error_message || error.message)) {
+        processedError = new Error(error.error_message || error.message);
       } else {
         const authMethodsForClear = ['auth.sendCode', 'auth.signIn', 'auth.checkPassword'];
         if (authMethodsForClear.includes(method)) {
@@ -164,16 +172,18 @@ class API {
             delete userSession.srp_id;
             delete userSession.srp_params;
         }
-        processedError = new Error(`MTProto call '${method}' failed. Raw error: ${JSON.stringify(originalError)}`);
+        processedError = new Error(`MTProto call '${method}' failed. Raw error: ${JSON.stringify(error)}`);
       }
       
-      if (originalError !== processedError && typeof originalError === 'object' && originalError !== null) {
-        (processedError as any).originalErrorObject = originalError;
+      // Attach the original error object if it's different from the processed one
+      if (originalErrorObject && originalErrorObject !== processedError) {
+        (processedError as any).originalErrorObject = originalErrorObject;
       }
       return Promise.reject(processedError);
     }
   }
 }
+
 
 const api = new API();
 
@@ -187,7 +197,7 @@ let userSession: {
     p: Uint8Array;
     salt1: Uint8Array;
     salt2: Uint8Array;
-    srp_B: Uint8Array;
+    srp_B: Uint8Array; // This is srp_B from server
   };
 } = {};
 
@@ -248,7 +258,7 @@ export function getUserSessionDetails(): { phone?: string; user?: any } {
 }
 
 export async function sendCode(fullPhoneNumber: string): Promise<string> {
-  userSession = { phone: fullPhoneNumber };
+  userSession = { phone: fullPhoneNumber }; // Reset relevant parts of session for new sendCode
   console.log(`Attempting to send code to ${fullPhoneNumber} via API class`);
 
   const sendCodePayload = {
@@ -260,14 +270,17 @@ export async function sendCode(fullPhoneNumber: string): Promise<string> {
 
   try {
     const result = await api.call('auth.sendCode', sendCodePayload);
-    if (!result.phone_code_hash) throw new Error("phone_code_hash not received from Telegram.");
+    if (!result || !result.phone_code_hash) { // Added check for result itself
+        console.error("auth.sendCode did not return phone_code_hash. Result:", result);
+        throw new Error("Failed to send code: phone_code_hash not received from Telegram.");
+    }
     userSession.phone_code_hash = result.phone_code_hash;
     console.log('Verification code sent, phone_code_hash:', userSession.phone_code_hash);
     return userSession.phone_code_hash;
   } catch (error: any) {
-    console.error('Error in sendCode function after api.call:', error.message, (error as any).originalErrorObject || error);
+    console.error('Error in sendCode function after api.call:', error.message, error.originalErrorObject || error);
     const message = error.message || 'Failed to send code.';
-     if (message === 'AUTH_RESTART' || message.includes('AUTH_RESTART')) {
+     if (message === 'AUTH_RESTART' || (error.originalErrorObject?.error_message === 'AUTH_RESTART')) {
          throw new Error('AUTH_RESTART');
     }
     throw error; 
@@ -289,6 +302,7 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
     });
 
     if (result._ === 'auth.authorizationSignUpRequired') {
+      delete userSession.phone_code_hash;
       throw new Error('Sign up required. This app currently only supports sign in for existing accounts.');
     }
 
@@ -297,7 +311,7 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
         userSession.user = result.user;
         saveUserDataToLocalStorage();
     }
-    delete userSession.phone_code_hash;
+    delete userSession.phone_code_hash; // Clear hash after use
     return { user: result.user };
 
   } catch (error: any) {
@@ -316,7 +330,7 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
              throw new Error('Failed to initialize 2FA: Missing critical SRP parameters.');
         }
 
-        userSession.srp_id = passwordData.srp_id.toString(); // Ensure srp_id is a string
+        userSession.srp_id = String(passwordData.srp_id); // Ensure srp_id is a string
         userSession.srp_params = {
             g: passwordData.current_algo.g,
             p: passwordData.current_algo.p,
@@ -324,27 +338,27 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
             salt2: passwordData.current_algo.salt2,
             srp_B: passwordData.srp_B
         };
-
-        delete userSession.phone_code_hash;
+        
+        delete userSession.phone_code_hash; // Clear hash after use
 
         const twoFactorError: any = new Error('2FA_REQUIRED');
         twoFactorError.srp_id = userSession.srp_id; 
         throw twoFactorError;
 
       } catch (getPasswordError: any) {
-        if (getPasswordError.message === '2FA_REQUIRED' && getPasswordError.srp_id) {
+        const getPasswordErrorMessage = getPasswordError.message || getPasswordError.originalErrorObject?.error_message;
+        if (getPasswordErrorMessage === '2FA_REQUIRED' && getPasswordError.srp_id) {
           console.log('2FA required, password details fetched. srp_id:', getPasswordError.srp_id);
         } else {
-          console.log('Error fetching password details for 2FA:', getPasswordError.message, getPasswordError.originalErrorObject || getPasswordError);
+          console.error('Error fetching password details for 2FA:', getPasswordErrorMessage, getPasswordError.originalErrorObject || getPasswordError);
         }
         delete userSession.phone_code_hash;
-        if (getPasswordError.message === '2FA_REQUIRED' && getPasswordError.srp_id) throw getPasswordError;
-        const message = getPasswordError.message || 'Failed to fetch 2FA details.';
-        throw new Error(message);
+        if (getPasswordErrorMessage === '2FA_REQUIRED' && getPasswordError.srp_id) throw getPasswordError; // re-throw the specific 2FA_REQUIRED error
+        throw new Error(getPasswordErrorMessage || 'Failed to fetch 2FA details.');
       }
     }
-    delete userSession.phone_code_hash;
-    throw error;
+    delete userSession.phone_code_hash; // Clear hash in other error cases too
+    throw error; // re-throw original error if not SESSION_PASSWORD_NEEDED
   }
 }
 
@@ -360,6 +374,11 @@ export async function checkPassword(password: string): Promise<any> {
   try {
     const { g, p, salt1, salt2, srp_B } = userSession.srp_params;
     console.log("Attempting to get SRPParams for checkPassword with provided password and stored srp_params.");
+    
+    if (!api.mtproto.crypto || typeof api.mtproto.crypto.getSRPParams !== 'function') {
+        console.error("api.mtproto.crypto.getSRPParams is not available. MTProto might not be fully initialized or crypto utils are missing.");
+        throw new Error("Internal error: SRP calculation service not available.");
+    }
     
     const { A, M1 } = await api.mtproto.crypto.getSRPParams({
         g, p, salt1, salt2, gB: srp_B, password,
@@ -380,14 +399,14 @@ export async function checkPassword(password: string): Promise<any> {
         userSession.user = checkResult.user;
         saveUserDataToLocalStorage();
     }
-    delete userSession.srp_params;
-    delete userSession.srp_id;
+    delete userSession.srp_params; // Clear after use
+    delete userSession.srp_id;     // Clear after use
     return checkResult.user;
 
   } catch (error: any) {
     console.error('Error checking password:', error.message, error.originalErrorObject || error);
-    delete userSession.srp_params;
-    delete userSession.srp_id;
+    delete userSession.srp_params; // Clear on error
+    delete userSession.srp_id;     // Clear on error
 
     const message = error.message || (error.originalErrorObject?.error_message || 'Failed to check 2FA password.');
     if (message === 'PASSWORD_HASH_INVALID') {
@@ -396,7 +415,7 @@ export async function checkPassword(password: string): Promise<any> {
     if (message === 'SRP_ID_INVALID') {
         throw new Error('Session for 2FA has expired or is invalid. Please try logging in again. (SRP_ID_INVALID)');
     }
-    throw error;
+    throw error; // re-throw original error if not handled
   }
 }
 
@@ -419,6 +438,11 @@ export async function signOut(): Promise<void> {
         if (api && api.mtproto && typeof (api.mtproto as any).clearStorage === 'function') {
           await (api.mtproto as any).clearStorage();
           console.log('mtproto-core internal storage cleared.');
+        } else if (api && api.mtproto && typeof (api.mtproto as any).storage?.clear === 'function') {
+            await (api.mtproto as any).storage.clear(); // Try common alternative
+            console.log('mtproto-core internal storage (via storage.clear) cleared.');
+        } else {
+            console.warn('No clearStorage or storage.clear method found on mtproto instance.');
         }
       } catch (e) {
         console.error('Error trying to clear mtproto-core storage:', e);
@@ -443,20 +467,16 @@ export async function isUserConnected(): Promise<boolean> {
 
         if (errorMessage && authErrorMessages.some(authMsg => errorMessage.includes(authMsg))) {
             console.warn("User session no longer valid or API keys incorrect due to:", errorMessage, "Performing local logout.");
-            await signOut(); // This will clear localStorage and userSession
+            await signOut(); 
             return false;
         }
-        // For other errors (e.g., network issues), assume connected if user object exists locally
-        // The actual operation will fail later, but we don't want to log out for a temporary network glitch
         console.warn("API call failed during connected check, but might not be an auth error. User object exists locally. Error:", errorMessage, error.originalErrorObject || error);
-        return true; // Still considered "connected" by UI until an operation fails due to auth
+        return true; 
     }
   }
-  // If userSession.user is null/undefined, try to load from localStorage once more.
   if (typeof window !== 'undefined' && !userSession.user) {
       loadUserDataFromLocalStorage();
       if (userSession.user) {
-          // if user was loaded, re-check connection
           return isUserConnected();
       }
   }
@@ -516,9 +536,9 @@ export async function getChatMediaHistory(
           let mediaObjectForFile = null;
 
           if (msg.media.photo && historyResult.photos) {
-            mediaObjectForFile = historyResult.photos.find((p:any) => p.id?.toString() === msg.media.photo.id?.toString()) || msg.media.photo;
+            mediaObjectForFile = historyResult.photos.find((p:any) => String(p.id) === String(msg.media.photo.id)) || msg.media.photo;
           } else if (msg.media.document && historyResult.documents) {
-            mediaObjectForFile = historyResult.documents.find((d:any) => d.id?.toString() === msg.media.document.id?.toString()) || msg.media.document;
+            mediaObjectForFile = historyResult.documents.find((d:any) => String(d.id) === String(msg.media.document.id)) || msg.media.document;
           } else if (msg.media.photo) {
              mediaObjectForFile = msg.media.photo;
           } else if (msg.media.document) {
@@ -531,7 +551,7 @@ export async function getChatMediaHistory(
             fileName = `photo_${mediaObjectForFile.id?.toString()}_${msg.date}.jpg`;
             const largestSize = mediaObjectForFile.sizes?.find((s:any) => s.type === 'y') || mediaObjectForFile.sizes?.sort((a:any,b:any) => (b.w*b.h) - (a.w*a.h))[0];
             if(largestSize?.size) {
-              totalSizeInBytes = largestSize.size;
+              totalSizeInBytes = Number(largestSize.size); // Ensure number
               fileSize = formatFileSize(totalSizeInBytes);
             }
             dataAiHint = "photograph image";
@@ -552,20 +572,21 @@ export async function getChatMediaHistory(
                   fileType = 'document'; dataAiHint = "document file";
               }
           }
-
+          
+          // Only add if it's a recognized media type and we have the media object
           if ((fileType !== 'unknown' && mediaObjectForFile) || (fileType === 'document' && mediaObjectForFile && totalSizeInBytes && totalSizeInBytes > 0)) {
              mediaFiles.push({
-              id: msg.id.toString(),
+              id: String(msg.id),
               messageId: msg.id,
               name: fileName,
               type: fileType,
               size: fileSize,
               totalSizeInBytes: totalSizeInBytes,
               lastModified: new Date(msg.date * 1000).toLocaleDateString(),
-              url: undefined, // URL needs to be fetched/constructed separately for actual viewing/download
+              url: undefined, 
               dataAiHint: dataAiHint,
               telegramMessage: mediaObjectForFile, 
-              inputPeer: inputPeer // Store the chat's inputPeer for potential refresh operations
+              inputPeer: inputPeer 
             });
           }
         }
@@ -574,9 +595,11 @@ export async function getChatMediaHistory(
       if (historyResult.messages.length > 0) {
         newOffsetId = historyResult.messages[historyResult.messages.length - 1].id;
       }
+      // hasMoreMessages should be true if the API call returned the number of messages we asked for.
+      // This suggests there might be more messages beyond this batch.
       hasMoreMessages = historyResult.messages.length === limit; 
     } else {
-        hasMoreMessages = false;
+        hasMoreMessages = false; // No messages returned, so no more.
     }
 
     return {
@@ -610,7 +633,7 @@ export async function getTelegramChats(
       offset_id: offsetId,
       offset_peer: offsetPeer,
       limit: limit,
-      hash: 0, 
+      hash: 0, // Use number 0 for hash as BigInt might not be directly usable here without mtproto-core internal conversion.
     });
 
     const transformedFolders = transformDialogsToCloudFolders(dialogsResult);
@@ -621,52 +644,56 @@ export async function getTelegramChats(
     let hasMore = false;
 
     if (dialogsResult.dialogs && dialogsResult.dialogs.length > 0) {
+      // If the number of dialogs returned is equal to the limit, it's likely there are more.
       hasMore = dialogsResult.dialogs.length === limit;
 
-      if (hasMore) {
+      if (hasMore) { // Only update offsets if there are more dialogs expected
         const lastDialog = dialogsResult.dialogs[dialogsResult.dialogs.length - 1];
         newOffsetId = lastDialog.top_message; 
 
         const peerForOffset = lastDialog.peer;
         if (peerForOffset._ === 'peerUser') {
-            const user = dialogsResult.users.find((u:any) => u.id?.toString() === peerForOffset.user_id?.toString());
-            if (user && user.access_hash) {
+            const user = dialogsResult.users.find((u:any) => String(u.id) === String(peerForOffset.user_id));
+            if (user && user.access_hash !== undefined) { // Ensure access_hash is present
                  newOffsetPeerInput = { _: 'inputPeerUser', user_id: user.id, access_hash: user.access_hash };
             } else {
-                console.warn('Could not find user or access_hash for peerUser offset:', peerForOffset);
-                newOffsetPeerInput = { _: 'inputPeerEmpty' };
+                console.warn('Could not find user or access_hash for peerUser offset:', peerForOffset, 'Users:', dialogsResult.users);
+                newOffsetPeerInput = { _: 'inputPeerEmpty' }; // Fallback or handle error
             }
         } else if (peerForOffset._ === 'peerChat') {
              newOffsetPeerInput = { _: 'inputPeerChat', chat_id: peerForOffset.chat_id };
         } else if (peerForOffset._ === 'peerChannel') {
-            const chat = dialogsResult.chats.find((c:any) => c.id?.toString() === peerForOffset.channel_id?.toString());
-             if (chat && chat.access_hash) {
+            const chat = dialogsResult.chats.find((c:any) => String(c.id) === String(peerForOffset.channel_id));
+             if (chat && chat.access_hash !== undefined) { // Ensure access_hash is present
                 newOffsetPeerInput = { _: 'inputPeerChannel', channel_id: chat.id, access_hash: chat.access_hash };
             } else {
-                console.warn('Could not find channel or access_hash for peerChannel offset:', peerForOffset);
-                newOffsetPeerInput = { _: 'inputPeerEmpty' };
+                console.warn('Could not find channel or access_hash for peerChannel offset:', peerForOffset, 'Chats:', dialogsResult.chats);
+                newOffsetPeerInput = { _: 'inputPeerEmpty' }; // Fallback or handle error
             }
         } else {
             console.warn('Unknown peer type for offset:', peerForOffset);
-            newOffsetPeerInput = { _: 'inputPeerEmpty' };
+            newOffsetPeerInput = { _: 'inputPeerEmpty' }; // Fallback
         }
         
+        // Attempt to find the date of the last message used for offset_id
         const messages = dialogsResult.messages || [];
-        const lastMessageDetails = messages.find((msg: any) => msg.id?.toString() === newOffsetId?.toString() &&
-          ( (msg.peer_id?._ === 'peerUser' && msg.peer_id?.user_id?.toString() === peerForOffset.user_id?.toString()) ||
-            (msg.peer_id?._ === 'peerChat' && msg.peer_id?.chat_id?.toString() === peerForOffset.chat_id?.toString()) ||
-            (msg.peer_id?._ === 'peerChannel' && msg.peer_id?.channel_id?.toString() === peerForOffset.channel_id?.toString())
+        const lastMessageDetails = messages.find((msg: any) => String(msg.id) === String(newOffsetId) &&
+          ( (msg.peer_id?._ === 'peerUser' && String(msg.peer_id?.user_id) === String(newOffsetPeerInput.user_id)) ||
+            (msg.peer_id?._ === 'peerChat' && String(msg.peer_id?.chat_id) === String(newOffsetPeerInput.chat_id)) ||
+            (msg.peer_id?._ === 'peerChannel' && String(msg.peer_id?.channel_id) === String(newOffsetPeerInput.channel_id))
           )
         );
         
         if (lastMessageDetails && typeof lastMessageDetails.date === 'number') {
           newOffsetDate = lastMessageDetails.date;
-        } else if (hasMore) {
+        } else if (hasMore) { // Only warn if we expect more but couldn't find the date
             console.warn("Could not determine precise next offset_date for pagination from message details. Last dialog:", lastDialog, "Messages:", messages);
+            // Fallback: use date from last dialog if message detail is missing, though less accurate
+            // newOffsetDate = lastDialog.date || newOffsetDate; // This line might be problematic if lastDialog.date isn't available or correct.
         }
       }
     } else {
-        hasMore = false;
+        hasMore = false; // No dialogs returned, so no more.
     }
 
     return {
@@ -687,29 +714,29 @@ export async function getTelegramChats(
 function getPeerTitle(peer: any, chats: any[], users: any[]): string {
   if (!peer) return 'Unknown Peer';
   try {
-    const peerUserIdStr = peer.user_id?.toString();
-    const peerChatIdStr = peer.chat_id?.toString();
-    const peerChannelIdStr = peer.channel_id?.toString();
+    const peerUserIdStr = String(peer.user_id);
+    const peerChatIdStr = String(peer.chat_id);
+    const peerChannelIdStr = String(peer.channel_id);
 
-    if (peer._ === 'peerUser' && peerUserIdStr) {
-      const user = users.find(u => u.id?.toString() === peerUserIdStr);
+    if (peer._ === 'peerUser' && peer.user_id) {
+      const user = users.find(u => String(u.id) === peerUserIdStr);
       if (user) {
         const name = `${user.first_name || ''} ${user.last_name || ''}`.trim();
         return name || `User ${peerUserIdStr}`;
       }
       return `User ${peerUserIdStr}`;
-    } else if (peer._ === 'peerChat' && peerChatIdStr) {
-      const chat = chats.find(c => c.id?.toString() === peerChatIdStr);
+    } else if (peer._ === 'peerChat' && peer.chat_id) {
+      const chat = chats.find(c => String(c.id) === peerChatIdStr);
       return chat ? chat.title : `Chat ${peerChatIdStr}`;
-    } else if (peer._ === 'peerChannel' && peerChannelIdStr) {
-      const channel = chats.find(c => c.id?.toString() === peerChannelIdStr);
+    } else if (peer._ === 'peerChannel' && peer.channel_id) {
+      const channel = chats.find(c => String(c.id) === peerChannelIdStr);
       return channel ? channel.title : `Channel ${peerChannelIdStr}`;
     }
   } catch (e) {
     console.error("Error in getPeerTitle processing peer:", peer, e);
-    if(peer.user_id) return `User ${peer.user_id.toString()}`;
-    if(peer.chat_id) return `Chat ${peer.chat_id.toString()}`;
-    if(peer.channel_id) return `Channel ${peer.channel_id.toString()}`;
+    if(peer.user_id) return `User ${String(peer.user_id)}`;
+    if(peer.chat_id) return `Chat ${String(peer.chat_id)}`;
+    if(peer.channel_id) return `Channel ${String(peer.channel_id)}`;
   }
   return 'Invalid Peer Data';
 }
@@ -723,46 +750,46 @@ function transformDialogsToCloudFolders(dialogsResult: any): CloudFolder[] {
 
   return dialogs.map((dialog: any): CloudFolder | null => {
     if (!dialog || !dialog.peer) {
+      console.warn("Skipping dialog due to missing peer:", dialog);
       return null;
     }
     const peer = dialog.peer;
     const chatTitle = getPeerTitle(peer, chats || [], users || []);
-    let peerId: string | undefined;
     let inputPeerForApiCalls: any | undefined;
 
-    try {
-        const peerUserIdStr = peer.user_id?.toString();
-        const peerChatIdStr = peer.chat_id?.toString();
-        const peerChannelIdStr = peer.channel_id?.toString();
+    const peerUserIdStr = peer.user_id ? String(peer.user_id) : undefined;
+    const peerChatIdStr = peer.chat_id ? String(peer.chat_id) : undefined;
+    const peerChannelIdStr = peer.channel_id ? String(peer.channel_id) : undefined;
 
+    try {
         if (peer._ === 'peerUser' && peerUserIdStr) {
-            peerId = peerUserIdStr;
-            const userAssociated = users?.find((u:any) => u.id?.toString() === peerId);
+            const userAssociated = users?.find((u:any) => String(u.id) === peerUserIdStr);
             if (userAssociated && userAssociated.access_hash !== undefined) {
                 inputPeerForApiCalls = { _: 'inputPeerUser', user_id: userAssociated.id, access_hash: userAssociated.access_hash };
+            } else {
+                 console.warn("Could not create inputPeerUser for dialog (missing user or access_hash):", dialog.peer, "User data:", userAssociated);
             }
         } else if (peer._ === 'peerChat' && peerChatIdStr) {
-            peerId = peerChatIdStr;
             inputPeerForApiCalls = { _: 'inputPeerChat', chat_id: peer.chat_id };
         } else if (peer._ === 'peerChannel' && peerChannelIdStr) {
-            peerId = peerChannelIdStr;
-            const chatAssociated = chats?.find((c:any) => c.id?.toString() === peerId);
+            const chatAssociated = chats?.find((c:any) => String(c.id) === peerChannelIdStr);
             if (chatAssociated && chatAssociated.access_hash !== undefined) {
                 inputPeerForApiCalls = { _: 'inputPeerChannel', channel_id: chatAssociated.id, access_hash: chatAssociated.access_hash };
+            } else {
+                 console.warn("Could not create inputPeerChannel for dialog (missing chat or access_hash):", dialog.peer, "Chat data:", chatAssociated);
             }
         }
     } catch (e) {
         console.error("Error constructing inputPeer for dialog:", dialog, e);
     }
 
-    if (!peerId || !inputPeerForApiCalls) {
-        console.warn("Could not determine peerId or valid inputPeerForApiCalls for dialog:", dialog.peer);
-        return null;
+    if (!inputPeerForApiCalls) {
+        console.warn("Could not determine valid inputPeerForApiCalls for dialog:", dialog.peer, "Dialog object:", dialog);
+        return null; // Skip this dialog if we can't form a valid inputPeer
     }
     
-    const idSuffix = peer.user_id || peer.chat_id || peer.channel_id;
-    // Use a more robust ID generation, e.g., combining type and ID
-    const folderIdBase = `${peer._}-${idSuffix?.toString()}`;
+    const idSuffix = peerUserIdStr || peerChatIdStr || peerChannelIdStr || String(dialog.top_message) || String(Date.now());
+    const folderIdBase = `${peer._}-${idSuffix}`;
 
     return {
       id: folderIdBase,
@@ -799,8 +826,8 @@ export async function prepareFileDownloadInfo(file: CloudFile): Promise<FileDown
           file_reference: mediaObject.file_reference,
           thumb_size: largestSize.type || '',
         };
-        totalSize = largestSize.size || 0;
-        mimeType = 'image/jpeg'; // Default, actual mime_type might be on document
+        totalSize = Number(largestSize.size) || 0;
+        mimeType = 'image/jpeg'; 
       } else {
         console.warn("No sizes found for photo:", mediaObject);
       }
@@ -814,7 +841,7 @@ export async function prepareFileDownloadInfo(file: CloudFile): Promise<FileDown
         id: mediaObject.id,
         access_hash: mediaObject.access_hash,
         file_reference: mediaObject.file_reference,
-        thumb_size: '', // For main document, not thumb
+        thumb_size: '', 
       };
       totalSize = Number(mediaObject.size) || 0;
       mimeType = mediaObject.mime_type || 'application/octet-stream';
@@ -863,7 +890,7 @@ export async function downloadFileChunk(
           file_token: result.file_token,
           encryption_key: result.encryption_key,
           encryption_iv: result.encryption_iv,
-          file_hashes: result.file_hashes, // Array of FileHash objects
+          file_hashes: result.file_hashes || [], // Ensure file_hashes is always an array
         }
       };
     }
@@ -876,7 +903,7 @@ export async function downloadFileChunk(
   } catch (error: any) {
     if (error.name === 'AbortError') {
       console.log('Download chunk aborted.');
-      return { errorType: 'OTHER' }; // Or a specific 'ABORTED' type
+      return { errorType: 'OTHER' }; 
     }
     console.error('Error downloading file chunk:', error.message, error.originalErrorObject || error);
     const errorMessage = error.message || error.originalErrorObject?.error_message;
@@ -889,8 +916,8 @@ export async function downloadFileChunk(
 
 export async function downloadCdnFileChunk(
   cdnRedirectData: NonNullable<FileChunkResponse['cdnRedirectData']>,
-  offset: number, // This should be the offset of the specific hash block
-  limit: number,  // This should be the limit of the specific hash block
+  offset: number, 
+  limit: number,  
   signal?: AbortSignal
 ): Promise<FileChunkResponse> {
   console.log('Downloading CDN chunk:', { dcId: cdnRedirectData.dc_id, offset, limit });
@@ -899,11 +926,11 @@ export async function downloadCdnFileChunk(
       file_token: cdnRedirectData.file_token,
       offset: offset,
       limit: limit,
-    }, { dcId: cdnRedirectData.dc_id, signal }); // Ensure dcId is passed for CDN calls
+    }, { dcId: cdnRedirectData.dc_id, signal }); 
 
     if (result && result._ === 'upload.cdnFile' && result.bytes) {
       console.log(`CDN Chunk received, ${result.bytes.length} bytes.`);
-      // TODO: Decryption might be needed here if encryption_key and encryption_iv are present
+      // Decryption would be needed here if encryption_key and encryption_iv are present
       return { bytes: result.bytes };
     }
     console.warn("upload.getCdnFile did not return expected data.", result);
@@ -914,7 +941,6 @@ export async function downloadCdnFileChunk(
       return { errorType: 'OTHER' };
     }
     console.error('Error downloading CDN file chunk:', error.message, error.originalErrorObject || error);
-    // TODO: Handle CDN specific errors like CDN_TOKEN_INVALID, CDN_DOWNLOAD_INVALID_OFFSET etc.
     return { errorType: 'OTHER' };
   }
 }
@@ -933,34 +959,31 @@ export async function refreshFileReference(item: DownloadQueueItemType): Promise
 
   console.log("Calling messages.getMessages to refresh message details for messageId:", item.messageId, "from peer:", item.inputPeer)
   try {
-    // Important: messages.getMessages expects an array of IDs.
     const messagesResult = await api.call('messages.getMessages', {
       id: [{ _: 'inputMessageID', id: item.messageId }],
     });
 
     console.log("messages.getMessages result for refresh:", messagesResult);
 
-    const updatedMessage = messagesResult?.messages?.find((m: any) => m.id?.toString() === item.messageId.toString());
+    const updatedMessage = messagesResult?.messages?.find((m: any) => String(m.id) === String(item.messageId));
     
     if (updatedMessage?.media) {
       let newFileReference = null;
       let updatedMediaObject = null;
 
       if (updatedMessage.media.photo) {
-        // The full photo object might be in messagesResult.photos
-        const fullPhotoObject = messagesResult.photos?.find((p:any) => p.id?.toString() === updatedMessage.media.photo.id?.toString());
+        const fullPhotoObject = messagesResult.photos?.find((p:any) => String(p.id) === String(updatedMessage.media.photo.id));
         updatedMediaObject = fullPhotoObject || updatedMessage.media.photo;
         newFileReference = updatedMediaObject?.file_reference;
       } else if (updatedMessage.media.document) {
-        // The full document object might be in messagesResult.documents
-        const fullDocumentObject = messagesResult.documents?.find((d:any) => d.id?.toString() === updatedMessage.media.document.id?.toString());
+        const fullDocumentObject = messagesResult.documents?.find((d:any) => String(d.id) === String(updatedMessage.media.document.id));
         updatedMediaObject = fullDocumentObject || updatedMessage.media.document;
         newFileReference = updatedMediaObject?.file_reference;
       }
 
       if (newFileReference && updatedMediaObject) {
         console.log(`New file_reference found:`, newFileReference, "for media object:", updatedMediaObject);
-        return updatedMediaObject; // Return the whole media object (photo or document)
+        return updatedMediaObject; 
       } else {
         console.warn("No new file_reference or media object found in updated message details. UpdatedMsg:", updatedMessage, "Full Result:", messagesResult);
       }
@@ -975,9 +998,6 @@ export async function refreshFileReference(item: DownloadQueueItemType): Promise
 
 export async function calculateSHA256(data: Uint8Array): Promise<Uint8Array> {
   try {
-    // The @cryptography/sha256 library's sha256 function is synchronous
-    // and returns a Uint8Array. We wrap it in a Promise to maintain
-    // an async interface, which can be useful if we switch to Web Crypto API later.
     const hash = cryptoSha256(data);
     return Promise.resolve(hash);
   } catch (error) {
@@ -1008,5 +1028,3 @@ if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
   (window as any).telegramServiceApi = api;
   (window as any).telegramUserSession = userSession;
 }
-
-    
