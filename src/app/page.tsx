@@ -13,14 +13,14 @@ import { ChatSelectionDialog } from "@/components/chat-selection-dialog";
 import { UploadDialog } from "@/components/upload-dialog";
 import type { CloudFolder, CloudFile, DownloadQueueItemType, ExtendedFile } from "@/types";
 import { Button } from "@/components/ui/button";
-import { Loader2, LayoutPanelLeft, MessageSquare } from "lucide-react";
+import { Loader2, LayoutPanelLeft, MessageSquare, RefreshCw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import * as telegramService from "@/services/telegramService";
 import { formatFileSize } from "@/lib/utils";
 
 
 const INITIAL_CHATS_LOAD_LIMIT = 20;
-const SUBSEQUENT_CHATS_LOAD_LIMIT = 10; // Changed from 5 as per earlier logic
+const SUBSEQUENT_CHATS_LOAD_LIMIT = 10;
 const INITIAL_MEDIA_LOAD_LIMIT = 20;
 const SUBSEQUENT_MEDIA_LOAD_LIMIT = 20;
 const DOWNLOAD_CHUNK_SIZE = 512 * 1024; // 512KB per chunk
@@ -34,10 +34,12 @@ export default function Home() {
   const [isConnecting, setIsConnecting] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
 
-  const [isProcessingChats, setIsProcessingChats] = useState(false);
+  const [isProcessingChats, setIsProcessingChats] = useState(false); // For UI loading state
+  const isProcessingChatsRef = useRef(false); // Guard for actual processing logic
+
   const [allChats, setAllChats] = useState<CloudFolder[]>([]);
-  const [isLoadingMoreChats, setIsLoadingMoreChats] = useState(false);
-  const isLoadingMoreChatsRequestInFlightRef = useRef(false);
+  const [isLoadingMoreChats, setIsLoadingMoreChats] = useState(false); // For UI loading state
+  const isLoadingMoreChatsRequestInFlightRef = useRef(false); // Guard for actual processing logic
   const [hasMoreChats, setHasMoreChats] = useState(true);
   const [chatsOffsetDate, setChatsOffsetDate] = useState(0);
   const [chatsOffsetId, setChatsOffsetId] = useState(0);
@@ -74,12 +76,12 @@ export default function Home() {
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false); 
   const [filesToUpload, setFilesToUpload] = useState<ExtendedFile[]>([]); 
   const [isUploadingFiles, setIsUploadingFiles] = useState(false);
-  const uploadAbortControllersRef = useRef<Map<string, AbortController>>(new Map()); // Store controllers per file name/id
+  const uploadAbortControllersRef = useRef<Map<string, AbortController>>(new Map());
 
 
   const headerRef = useRef<HTMLDivElement>(null);
   const footerRef = useRef<HTMLDivElement>(null);
-  const chatListContainerRef = useRef<HTMLDivElement>(null);
+  // const chatListContainerRef = useRef<HTMLDivElement>(null); Removed as sidebar is gone
 
 
   useEffect(() => {
@@ -117,10 +119,14 @@ export default function Home() {
   }, [toast]);
 
   const fetchInitialChats = useCallback(async () => {
-    if (isProcessingChats || isLoadingMoreChatsRequestInFlightRef.current) return;
+    if (isProcessingChatsRef.current) {
+        console.log("fetchInitialChats: Already processing or request in flight, exiting.");
+        return;
+    }
     
-    setIsProcessingChats(true);
-    isLoadingMoreChatsRequestInFlightRef.current = true;
+    isProcessingChatsRef.current = true;
+    setIsProcessingChats(true); // For UI indicator
+    
     setAllChats([]);
     setAuthError(null);
     setChatsOffsetDate(0);
@@ -128,6 +134,7 @@ export default function Home() {
     setChatsOffsetPeer({ _: 'inputPeerEmpty' });
     setHasMoreChats(true);
     setIsLoadingMoreChats(false); 
+    isLoadingMoreChatsRequestInFlightRef.current = false;
     
     toast({ title: "Fetching Chats...", description: "Loading your Telegram conversations." });
 
@@ -147,10 +154,10 @@ export default function Home() {
       handleApiError(error, "Error Fetching Chats", `Could not load your chats. ${error.message || 'Unknown error'}`);
       setHasMoreChats(false);
     } finally {
-      setIsProcessingChats(false);
-      isLoadingMoreChatsRequestInFlightRef.current = false;
+      isProcessingChatsRef.current = false;
+      setIsProcessingChats(false); // For UI indicator
     }
-  }, [toast, handleApiError, isProcessingChats]);
+  }, [toast, handleApiError]);
 
 
   const checkExistingConnection = useCallback(async () => {
@@ -160,13 +167,13 @@ export default function Home() {
       if (previouslyConnected) {
         const storedUser = telegramService.getUserSessionDetails();
         if (storedUser && storedUser.phone) {
-            setPhoneNumber(storedUser.phone);
+            setPhoneNumber(storedUser.phone); // Update phone number from session
         }
-        console.log("User was previously connected. Setting state and fetching chats for dialog.");
+        console.log("User was previously connected. Setting state.");
         setIsConnected(true);
-        setAuthStep('initial');
+        setAuthStep('initial'); // Reset auth step if already connected
         setAuthError(null);
-        await fetchInitialChats(); 
+        // fetchInitialChats will be triggered by the useEffect that depends on isConnected
       } else {
         console.log("No existing connection found or session invalid.");
         setIsConnected(false);
@@ -188,22 +195,27 @@ export default function Home() {
         setAuthError("Connection handshake failed. Check API credentials & localStorage.");
       } else if (errorMessage === 'AUTH_RESTART') {
           toast({ title: "Authentication Expired", description: "Your session needs to be re-initiated. Please enter your phone number again.", variant: "destructive" });
-          setIsConnected(false);
-          setPhoneNumber('');
-          setAuthStep('initial');
-          setAuthError(null);
-          setAllChats([]);
+          // handleReset(false) will be called by handleApiError if it detects AUTH_RESTART
       } else {
          handleApiError(error, "Connection Check Error", `Failed to verify existing connection. ${errorMessage}`);
       }
       setIsConnected(false);
     }
-  }, [toast, fetchInitialChats, handleApiError]);
+  }, [toast, handleApiError]); // Removed fetchInitialChats from here
 
+  // Effect to run once on mount to check existing connection
   useEffect(() => {
     checkExistingConnection();
-  }, [checkExistingConnection]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Empty dependency array ensures this runs only once
 
+  // Effect to fetch initial chats when isConnected becomes true AND chats haven't been loaded yet
+  useEffect(() => {
+    if (isConnected && allChats.length === 0 && !isProcessingChatsRef.current) {
+      fetchInitialChats();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected, fetchInitialChats]); // Keep fetchInitialChats as dependency for stability if its definition changes
 
   const handleReset = useCallback(async (performServerLogout = true) => {
     if (performServerLogout && isConnected) {
@@ -220,7 +232,8 @@ export default function Home() {
     }
 
     setIsConnected(false);
-    setIsProcessingChats(false);
+    // setIsProcessingChats(false); // UI state
+    isProcessingChatsRef.current = false; // Logic guard
     setAllChats([]);
     setSelectedFolder(null);
     setCurrentChatMedia([]);
@@ -231,8 +244,8 @@ export default function Home() {
     setPassword('');
     setAuthError(null);
 
-    setIsLoadingMoreChats(false);
-    isLoadingMoreChatsRequestInFlightRef.current = false;
+    // setIsLoadingMoreChats(false); // UI state
+    isLoadingMoreChatsRequestInFlightRef.current = false; // Logic guard
     setHasMoreChats(true);
     setChatsOffsetDate(0);
     setChatsOffsetId(0);
@@ -270,7 +283,8 @@ export default function Home() {
 
   }, [isConnected, toast, videoStreamUrl]);
 
- useEffect(() => {
+
+  useEffect(() => {
     const processQueue = async () => {
       for (let i = 0; i < downloadQueueRef.current.length; i++) {
         const itemInLoop = downloadQueueRef.current[i];
@@ -340,7 +354,7 @@ export default function Home() {
                             browserDownloadTriggeredRef.current.add(upToDateItem.id);
                             const fullFileBlob = new Blob(upToDateItem.chunks, { type: upToDateItem.telegramMessage?.mime_type || 'application/octet-stream' });
                             const url = URL.createObjectURL(fullFileBlob);
-                            const a = document.createElement('a'); // Define 'a' here
+                            const a = document.createElement('a'); 
                             a.href = url;
                             a.download = upToDateItem.name;
                             document.body.appendChild(a);
@@ -372,8 +386,6 @@ export default function Home() {
                 );
 
                 if (chunkResponse?.bytes && upToDateItem.cdnFileHashes) {
-                    // SHA256 verification for CDN chunks
-                    // Note: This is a simplified version. Real verification might need to handle streams if files are huge.
                     const downloadedHash = await telegramService.calculateSHA256(chunkResponse.bytes);
                     if (!telegramService.areUint8ArraysEqual(downloadedHash, cdnBlock.hash)) {
                         console.error(`CDN Hash Mismatch for ${upToDateItem.name}, block index ${currentHashBlockIndex}. Expected:`, cdnBlock.hash, "Got:", downloadedHash);
@@ -608,16 +620,38 @@ export default function Home() {
         });
         activeDownloadsRef.current.clear(); 
     };
-  }, []); 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Important: Empty dependency array for main download processing loop
+
+
+  // Effect to reset isLoadingMoreChatsRequestInFlightRef.current after isLoadingMoreChats changes to false
+  useEffect(() => {
+    if (!isLoadingMoreChats && isConnected) {
+      const timer = setTimeout(() => {
+        if (isLoadingMoreChatsRequestInFlightRef.current) {
+            // console.log("Resetting isLoadingMoreChatsRequestInFlightRef.current to false after delay");
+        }
+        isLoadingMoreChatsRequestInFlightRef.current = false;
+      }, 150); 
+      return () => clearTimeout(timer);
+    }
+  }, [isLoadingMoreChats, isConnected]);
 
 
   const loadMoreChatsCallback = useCallback(async () => {
-    if (isLoadingMoreChats || isProcessingChats || !hasMoreChats || !isConnected || isLoadingMoreChatsRequestInFlightRef.current) {
+    if (
+        isLoadingMoreChatsRequestInFlightRef.current || // Main guard
+        isLoadingMoreChats || // UI guard
+        isProcessingChatsRef.current || // Initial processing guard
+        !hasMoreChats ||
+        !isConnected
+        ) {
       return;
     }
 
     isLoadingMoreChatsRequestInFlightRef.current = true;
-    setIsLoadingMoreChats(true);
+    setIsLoadingMoreChats(true); // For UI indicator
+
     toast({ title: "Loading More Chats...", description: "Fetching the next batch of conversations." });
     try {
       const response = await telegramService.getTelegramChats(SUBSEQUENT_CHATS_LOAD_LIMIT, chatsOffsetDate, chatsOffsetId, chatsOffsetPeer);
@@ -635,28 +669,30 @@ export default function Home() {
       handleApiError(error, "Error Loading More Chats", `Could not load more chats. ${error.message}`);
       setHasMoreChats(false);
     } finally {
-      isLoadingMoreChatsRequestInFlightRef.current = false;
-      setIsLoadingMoreChats(false);
+      setIsLoadingMoreChats(false); // For UI indicator. isLoadingMoreChatsRequestInFlightRef is handled by the separate useEffect
     }
-  }, [isConnected, isProcessingChats, hasMoreChats, chatsOffsetDate, chatsOffsetId, chatsOffsetPeer, toast, handleApiError, isLoadingMoreChats]);
+  }, [isConnected, hasMoreChats, chatsOffsetDate, chatsOffsetId, chatsOffsetPeer, toast, handleApiError]); // Dependencies: stable ones
   
 
   const observerChats = useRef<IntersectionObserver | null>(null);
   const lastChatElementRef = useCallback((node: HTMLLIElement | null) => {
-    if (isLoadingMoreChats || isProcessingChats || isLoadingMoreChatsRequestInFlightRef.current) return;
+    if (isLoadingMoreChats || isProcessingChatsRef.current || isLoadingMoreChatsRequestInFlightRef.current) {
+      return;
+    }
     if (observerChats.current) observerChats.current.disconnect();
+
     observerChats.current = new IntersectionObserver(entries => {
       if (entries[0].isIntersecting && 
           hasMoreChats && 
-          !isProcessingChats &&
+          !isProcessingChatsRef.current &&
           !isLoadingMoreChats && 
-          !isLoadingMoreChatsRequestInFlightRef.current
+          !isLoadingMoreChatsRequestInFlightRef.current // Critical guard
         ) {
         loadMoreChatsCallback();
       }
     });
     if (node) observerChats.current.observe(node);
-  }, [isLoadingMoreChats, isProcessingChats, hasMoreChats, loadMoreChatsCallback]);
+  }, [isLoadingMoreChats, hasMoreChats, loadMoreChatsCallback]); // Dependencies
 
 
   const fetchInitialChatMedia = useCallback(async (folder: CloudFolder) => {
@@ -742,7 +778,7 @@ export default function Home() {
     }
     setIsConnecting(true);
     setAuthError(null);
-    setPhoneNumber(fullPhoneNumberFromConnect);
+    setPhoneNumber(fullPhoneNumberFromConnect); // Set the full phone number here
     toast({ title: "Sending Code...", description: `Requesting verification code for ${fullPhoneNumberFromConnect}.` });
 
     try {
@@ -772,18 +808,18 @@ export default function Home() {
     }
     setIsConnecting(true);
     setAuthError(null);
-    setPhoneCode(currentPhoneCode);
+    setPhoneCode(currentPhoneCode); // Store the entered phone code
     toast({ title: "Verifying Code...", description: "Checking your verification code with Telegram." });
     try {
-      const result = await telegramService.signIn(phoneNumber, currentPhoneCode);
+      const result = await telegramService.signIn(phoneNumber, currentPhoneCode); // Use phoneNumber state
       if (result.user) {
         setIsConnected(true);
         setAuthStep('initial');
         setPhoneCode('');
         setPassword('');
-        await fetchInitialChats(); 
+        // fetchInitialChats will be triggered by useEffect listening to isConnected
         toast({ title: "Sign In Successful!", description: "Connected to Telegram." });
-      } else {
+      } else { // Should not happen if error handling in signIn service is correct
         setAuthError("Sign in failed. Unexpected response from server.");
         toast({ title: "Sign In Failed", description: "Unexpected response from server.", variant: "destructive" });
       }
@@ -793,7 +829,7 @@ export default function Home() {
         setAuthError(null); 
         toast({ title: "2FA Required", description: "Please enter your two-factor authentication password." });
       } else {
-        console.log("Sign In Failed. Error:", error);
+        // console.log("Sign In Failed. Error:", error); // Already logged in handleApiError
         handleApiError(error, "Sign In Failed", `Could not sign in. ${error.message}`);
       }
     } finally {
@@ -809,7 +845,7 @@ export default function Home() {
     }
     setIsConnecting(true);
     setAuthError(null);
-    setPassword(currentPassword);
+    setPassword(currentPassword); // Store the entered password
     toast({ title: "Verifying Password...", description: "Checking your 2FA password." });
     try {
       const user = await telegramService.checkPassword(currentPassword);
@@ -818,9 +854,9 @@ export default function Home() {
         setAuthStep('initial');
         setPhoneCode('');
         setPassword('');
-        await fetchInitialChats(); 
+        // fetchInitialChats will be triggered by useEffect listening to isConnected
         toast({ title: "2FA Successful!", description: "Connected to Telegram." });
-      } else {
+      } else { // Should not happen
         setAuthError("2FA failed. Unexpected response from server.");
         toast({ title: "2FA Failed", description: "Unexpected response from server.", variant: "destructive" });
       }
@@ -1073,7 +1109,7 @@ export default function Home() {
             console.error("Unexpected error during video stream preparation orchestrator:", error);
         }
     } finally {
-        if (videoStreamAbortControllerRef.current === newController) { // Only update state if this is still the active controller
+        if (videoStreamAbortControllerRef.current === newController) { 
             setIsPreparingVideoStream(false);
             setPreparingVideoStreamForFileId(null);
         }
@@ -1133,7 +1169,6 @@ export default function Home() {
   const handleOpenUploadDialog = () => setIsUploadDialogOpen(true);
   const handleCloseUploadDialog = () => {
      if (isUploadingFiles) {
-      // Optionally, ask for confirmation or just prevent closing
       toast({ title: "Upload in Progress", description: "Please wait for uploads to complete or cancel them before closing.", variant: "default" });
       return;
     }
@@ -1145,7 +1180,12 @@ export default function Home() {
 
   const handleFilesSelectedForUpload = (selectedFiles: FileList | null) => {
     if (selectedFiles) {
-      const newFiles = Array.from(selectedFiles).map(file => file as ExtendedFile);
+      const newFiles = Array.from(selectedFiles).map(file => {
+          const extendedFile = file as ExtendedFile;
+          extendedFile.uploadStatus = 'pending'; // Initialize status
+          extendedFile.uploadProgress = 0;
+          return extendedFile;
+      });
       setFilesToUpload(prevFiles => [...prevFiles, ...newFiles]);
     }
   };
@@ -1158,49 +1198,57 @@ const handleStartUpload = async () => {
 
   setIsUploadingFiles(true);
   const uploadPromises = filesToUpload.map(async (fileToUpload, index) => {
+    // Skip files that are already uploading, completed, or failed (unless a retry mechanism is added for failed)
+    if (fileToUpload.uploadStatus === 'uploading' || fileToUpload.uploadStatus === 'completed') {
+        return;
+    }
+
     const controller = new AbortController();
-    const fileIdentifier = `${fileToUpload.name}-${fileToUpload.lastModified}`; // More unique identifier
+    const fileIdentifier = `${fileToUpload.name}-${fileToUpload.lastModified}`; 
     uploadAbortControllersRef.current.set(fileIdentifier, controller);
 
-    // Update file-specific progress in filesToUpload state
-    const updateProgressForFile = (progress: number) => {
+    const updateProgressForFile = (progress: number, status?: ExtendedFile['uploadStatus']) => {
       setFilesToUpload(prev =>
         prev.map(f =>
           f.name === fileToUpload.name && f.lastModified === fileToUpload.lastModified
-            ? { ...f, uploadProgress: progress, uploadStatus: progress === 100 ? 'completed' : (progress === -1 ? 'failed' : 'uploading') }
+            ? { ...f, 
+                uploadProgress: progress === -1 ? (f.uploadProgress || 0) : progress, 
+                uploadStatus: status || (progress === 100 ? 'completed' : (progress === -1 ? 'failed' : 'uploading')) 
+              }
             : f
         )
       );
-      if (progress >= 0 && progress < 100) {
-          toast({
-            title: "Uploading...",
-            description: `${fileToUpload.name} (${progress}%)`,
-            duration: 3000 // Shorter duration for progress updates
-          });
+      if (progress >= 0 && progress < 100 && status !== 'failed' && status !== 'cancelled') {
+          // toast({ // This can be too noisy, consider updating UI directly in UploadDialog
+          //   title: "Uploading...",
+          //   description: `${fileToUpload.name} (${progress}%)`,
+          //   duration: 2000 
+          // });
       }
     };
     
-    updateProgressForFile(0); // Initial progress state
+    updateProgressForFile(0, 'uploading'); 
 
     try {
-      console.log(`Starting upload for: ${fileToUpload.name}. Will use method for big files: ${fileToUpload.size > 10 * 1024 * 1024}`);
+      console.log(`Starting upload for: ${fileToUpload.name}. Big file: ${fileToUpload.size > 10 * 1024 * 1024}`);
       await telegramService.uploadFile(
         selectedFolder.inputPeer,
         fileToUpload,
-        updateProgressForFile,
+        (percent) => updateProgressForFile(percent, percent === 100 ? 'completed' : 'uploading'),
         controller.signal
       );
       toast({ title: "Upload Successful!", description: `${fileToUpload.name} uploaded to ${selectedFolder.name}.` });
-      if (selectedFolder.id === selectedFolder?.id) { // Refresh media if upload was to current chat
+      updateProgressForFile(100, 'completed');
+      if (selectedFolder && selectedFolder.id === selectedFolder?.id) { 
          fetchInitialChatMedia(selectedFolder);
       }
     } catch (error: any) {
-      if (error.message?.includes('Upload aborted')) {
+      if (error.name === 'AbortError' || error.message?.includes('Upload aborted')) {
         toast({ title: "Upload Cancelled", description: `${fileToUpload.name} upload was cancelled.`, variant: "default" });
-         updateProgressForFile(-1); // Mark as failed or cancelled
+         updateProgressForFile(-1, 'cancelled'); 
       } else {
         toast({ title: "Upload Failed", description: `Could not upload ${fileToUpload.name}: ${error.message}`, variant: "destructive" });
-        updateProgressForFile(-1); // Mark as failed
+        updateProgressForFile(-1, 'failed'); 
       }
       console.error(`Error uploading ${fileToUpload.name}:`, error);
     } finally {
@@ -1211,13 +1259,11 @@ const handleStartUpload = async () => {
   try {
     await Promise.all(uploadPromises);
   } catch (error) {
-     // This catch is mostly for Promise.all itself, individual errors are handled above
-    console.error("One or more uploads failed in the batch.", error);
+    console.error("One or more uploads encountered an issue in the batch processing itself.", error);
   } finally {
     setIsUploadingFiles(false);
-    // Decide if filesToUpload should be cleared here or based on individual success/failure
-    // For now, let's clear them if all uploads attempted (regardless of outcome)
-    setFilesToUpload(prev => prev.filter(f => f.uploadStatus !== 'completed')); // Keep failed ones for retry?
+    // Keep files in list to show status, or filter based on status:
+    // setFilesToUpload(prev => prev.filter(f => f.uploadStatus !== 'completed')); 
   }
 };
 
@@ -1235,7 +1281,7 @@ const handleStartUpload = async () => {
             isLoading={isConnecting}
             error={authError}
             phoneNumber={phoneNumber}
-            setPhoneNumber={setPhoneNumber}
+            setPhoneNumber={setPhoneNumber} // For the TelegramConnect component to update the shared state
             phoneCode={phoneCode}
             setPhoneCode={setPhoneCode}
             password={password}
@@ -1262,7 +1308,45 @@ const handleStartUpload = async () => {
         onOpenChatSelectionDialog={handleOpenChatSelectionDialog}
       />
       <div className="flex-1 flex overflow-hidden min-h-0">
-        <main className="flex-1 overflow-y-auto bg-background">
+        {/* <aside ref={chatListContainerRef} className="w-64 md:w-72 lg:w-80 p-1 border-r bg-card overflow-y-auto flex-shrink-0 rounded-lg shadow-md">
+            {isProcessingChats && allChats.length === 0 ? (
+                 <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
+                    <Loader2 className="animate-spin h-8 w-8 text-primary mb-2" />
+                    <span>Loading chats...</span>
+                </div>
+            ) : allChats.length === 0 && !authError ? (
+                 <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
+                    <FolderClosed className="w-12 h-12 mb-3 opacity-50" />
+                    <p className="text-sm text-center">No chats found or still loading.</p>
+                    <Button variant="outline" size="sm" onClick={fetchInitialChats} className="mt-3">
+                        <RefreshCw className="mr-2 h-4 w-4" /> Refresh
+                    </Button>
+                </div>
+            ) : (
+                <ScrollArea className="h-full w-full p-3">
+                    <ul className="space-y-1.5">
+                        {allChats.map((folder, index) => (
+                        <ChatListItem
+                            key={folder.id}
+                            folder={folder}
+                            isSelected={folder.id === selectedFolder?.id}
+                            onSelect={() => handleSelectFolder(folder.id)}
+                            ref={index === allChats.length - 1 ? lastChatElementRef : null}
+                        />
+                        ))}
+                    </ul>
+                    {isLoadingMoreChats && (
+                        <div className="flex items-center justify-center py-3">
+                        <Loader2 className="animate-spin h-5 w-5 text-primary" />
+                        </div>
+                    )}
+                    {!isLoadingMoreChats && !hasMoreChats && allChats.length > 0 && (
+                        <p className="text-xs text-muted-foreground text-center py-3">All chats loaded.</p>
+                    )}
+                </ScrollArea>
+            )}
+        </aside> */}
+        <main className="flex-1 overflow-y-auto bg-background"> {/* Changed from flex-grow */}
            <div className="container mx-auto h-full px-4 sm:px-6 lg:px-8 py-4 md:py-6 lg:py-8">
             {selectedFolder ? (
                 <MainContentView
@@ -1361,6 +1445,5 @@ const handleStartUpload = async () => {
     </div>
   );
 }
-
 
     
