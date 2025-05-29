@@ -14,13 +14,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Button } from "@/components/ui/button"; // Added for DropdownMenuTrigger asChild
+import { Button } from "@/components/ui/button";
 
 interface ContentFileItemProps {
   file: CloudFile;
   style?: React.CSSProperties;
   onDetailsClick: (file: CloudFile) => void;
-  onDownloadClick: (file: CloudFile) => void;
+  onQueueDownloadClick: (file: CloudFile) => void;
   onViewImageClick?: (file: CloudFile) => void;
   onPlayVideoClick?: (file: CloudFile) => void;
 }
@@ -45,17 +45,14 @@ const FileTypeIcon = ({ type, name, dataAiHint }: { type: CloudFile['type'], nam
 };
 
 export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
-  ({ file, style, onDetailsClick, onDownloadClick, onViewImageClick, onPlayVideoClick }, ref) => {
+  ({ file, style, onDetailsClick, onQueueDownloadClick, onViewImageClick, onPlayVideoClick }, ref) => {
     
-    const handleCardClick = () => {
-      // Default action on left click can be details, or view if image/video
-      if (file.type === 'image' && onViewImageClick && file.url) {
-        onViewImageClick(file);
-      } else if (file.type === 'video' && onPlayVideoClick && file.url) {
-        onPlayVideoClick(file);
-      } else {
-        onDetailsClick(file);
+    const handleCardClick = (e: MouseEvent) => {
+      // Prevent DropdownMenu from triggering this if click originated from menu
+      if ((e.target as HTMLElement).closest('[role="menuitem"]')) {
+        return;
       }
+      onDetailsClick(file);
     };
 
     return (
@@ -69,10 +66,9 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
             )}
             style={style}
             onClick={handleCardClick}
-            onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && handleCardClick()}
+            onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && handleCardClick(e as any)}
             tabIndex={0}
             aria-label={`File: ${file.name}, Type: ${file.type}`}
-            // onContextMenu is handled by DropdownMenuTrigger
           >
             <TooltipProvider delayDuration={300}>
               <Tooltip>
@@ -96,11 +92,11 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
             <Info className="mr-2 h-4 w-4" />
             <span>Details</span>
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onDownloadClick(file); }}>
+          <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onQueueDownloadClick(file); }}>
             <Download className="mr-2 h-4 w-4" />
             <span>Download</span>
           </DropdownMenuItem>
-          {file.type === 'image' && onViewImageClick && (
+          {file.type === 'image' && onViewImageClick && file.url && (
             <>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onViewImageClick(file); }}>
@@ -109,7 +105,7 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
               </DropdownMenuItem>
             </>
           )}
-          {file.type === 'video' && onPlayVideoClick && (
+          {file.type === 'video' && onPlayVideoClick && file.url && (
             <>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onPlayVideoClick(file); }}>

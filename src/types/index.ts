@@ -33,3 +33,10 @@ export interface MediaHistoryResponse {
   nextOffsetId?: number; // ID of the last message fetched, for next pagination
   hasMore: boolean;
 }
+
+export type DownloadStatus = 'queued' | 'downloading' | 'completed' | 'failed';
+
+export interface DownloadQueueItemType extends CloudFile {
+  status: DownloadStatus;
+  progress: number; // 0-100
+}

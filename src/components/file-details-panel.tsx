@@ -21,7 +21,7 @@ interface FileDetailsPanelProps {
   file: CloudFile | null;
   isOpen: boolean;
   onClose: () => void;
-  onDownload: (file: CloudFile) => void;
+  onQueueDownload: (file: CloudFile) => void;
 }
 
 function formatValue(value: any): string {
@@ -30,17 +30,15 @@ function formatValue(value: any): string {
     // Handle BigInt-like structures from MTProto
     if (value._ === 'long' && typeof value.value === 'string') return value.value;
     if (typeof value.toString === 'function' && value.toString() !== '[object Object]') {
-       // Prefer toString if it's meaningful (like for BigInt or Date)
-       // Avoid for generic objects that just return "[object Object]"
        if(value instanceof Date) return value.toLocaleString();
-       // Add other specific types if needed, e.g. BigInt, before falling to JSON.stringify
     }
     try {
       return JSON.stringify(value, (key, val) => {
         if (key === 'photoSize' || key === 'videoSize' || key === 'thumbSize') return undefined; 
         if (key === 'photo' && val && (val as any)._ === 'photoEmpty') return undefined;
         if (key === 'document' && val && (val as any)._ === 'documentEmpty') return undefined;
-        if (typeof val === 'bigint') return val.toString(); // For native BigInt if they appear
+        if (typeof val === 'bigint') return val.toString(); 
+        if (val instanceof Uint8Array) return `Uint8Array(len:${val.length})`; // Basic representation for byte arrays
         return val;
       }, 2);
     } catch (e) {
@@ -63,9 +61,9 @@ function renderTelegramMessageDetails(details: any, indentLevel = 0) {
         if (key === 'photo' && value && (value as any)._ === 'photoEmpty') return null;
         if (key === 'document' && value && (value as any)._ === 'documentEmpty') return null;
 
-        if (typeof value === 'object' && value !== null && !Array.isArray(value) && !(value._ === 'long' && typeof value.value === 'string')) {
+        if (typeof value === 'object' && value !== null && !Array.isArray(value) && !(value._ === 'long' && typeof value.value === 'string') && !(value instanceof Uint8Array)) {
           const subKeys = Object.keys(value);
-          const hasNonPrimitiveSubValues = subKeys.some(subKey => typeof (value as any)[subKey] === 'object' && (value as any)[subKey] !== null);
+          const hasNonPrimitiveSubValues = subKeys.some(subKey => typeof (value as any)[subKey] === 'object' && (value as any)[subKey] !== null && !((value as any)[subKey] instanceof Uint8Array));
 
           if (hasNonPrimitiveSubValues && subKeys.length < 10 && indentLevel < 3) { 
             return (
@@ -88,13 +86,13 @@ function renderTelegramMessageDetails(details: any, indentLevel = 0) {
 }
 
 
-export function FileDetailsPanel({ file, isOpen, onClose, onDownload }: FileDetailsPanelProps) {
+export function FileDetailsPanel({ file, isOpen, onClose, onQueueDownload }: FileDetailsPanelProps) {
   const { toast } = useToast();
   if (!file) return null;
 
   const handleDownloadClick = () => {
     if (file) {
-      onDownload(file);
+      onQueueDownload(file);
     } else {
       toast({ title: "Error", description: "No file selected for download.", variant: "destructive"});
     }

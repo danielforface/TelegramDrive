@@ -9,7 +9,8 @@ import { MainContentView } from "@/components/main-content-view/main-content-vie
 import { FileDetailsPanel } from "@/components/file-details-panel";
 import { ImageViewer } from "@/components/image-viewer";
 import { VideoPlayer } from "@/components/video-player";
-import type { CloudFolder, CloudFile } from "@/types";
+import { DownloadManagerDialog } from "@/components/download-manager-dialog";
+import type { CloudFolder, CloudFile, DownloadQueueItemType } from "@/types";
 import { Button } from "@/components/ui/button";
 import { RefreshCw, Loader2, LayoutPanelLeft, FolderClosed } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -51,6 +52,9 @@ export default function Home() {
   const [isVideoPlayerOpen, setIsVideoPlayerOpen] = useState(false);
   const [playingVideoUrl, setPlayingVideoUrl] = useState<string | null>(null);
   const [playingVideoName, setPlayingVideoName] = useState<string | undefined>(undefined);
+
+  const [isDownloadManagerOpen, setIsDownloadManagerOpen] = useState(false);
+  const [downloadQueue, setDownloadQueue] = useState<DownloadQueueItemType[]>([]);
 
   const { toast } = useToast();
 
@@ -257,15 +261,16 @@ export default function Home() {
       setAuthStep('awaiting_code');
       toast({ title: "Code Sent!", description: "Please check Telegram for your verification code." });
     } catch (error: any) {
-      console.error("Error in handleSendCode:", error.message, error.originalErrorObject || error);
-      if (error.message === 'AUTH_RESTART' || (error.originalErrorObject?.error_message === 'AUTH_RESTART')) {
+      const errorMessage = error.message || "An unexpected error occurred.";
+      console.error("Error in handleSendCode:", errorMessage, error.originalErrorObject || error);
+      if (errorMessage === 'AUTH_RESTART' || (error.originalErrorObject?.error_message === 'AUTH_RESTART')) {
         toast({
           title: "Authentication Restarted",
           description: "The authentication process needs to be restarted. Please try entering your phone number again.",
           variant: "destructive",
         });
         handleReset(false);
-      } else if (error.message && error.message.includes("Invalid hash in mt_dh_gen_ok")) {
+      } else if (errorMessage && errorMessage.includes("Invalid hash in mt_dh_gen_ok")) {
         toast({
           title: "Connection Handshake Failed",
           description: "Could not establish a secure connection. Please check your API ID/Hash in .env.local, ensure it's correct, restart the server, and try clearing your browser's localStorage for this site.",
@@ -274,8 +279,8 @@ export default function Home() {
         });
         setAuthError("Connection handshake failed. Check API credentials and localStorage. See console for details.");
       } else {
-        setAuthError(error.message || "Failed to send code. Please check the phone number and try again.");
-        toast({ title: "Error Sending Code", description: error.message || "Failed to send code.", variant: "destructive" });
+        setAuthError(errorMessage);
+        toast({ title: "Error Sending Code", description: errorMessage, variant: "destructive" });
       }
     } finally {
       setIsConnecting(false);
@@ -380,6 +385,7 @@ export default function Home() {
     setIsLoadingChatMedia(false);
     setHasMoreChatMedia(true);
     setCurrentMediaOffsetId(0);
+    setDownloadQueue([]);
   };
 
   const handleOpenFileDetails = (file: CloudFile) => {
@@ -392,17 +398,23 @@ export default function Home() {
     // setSelectedFileForDetails(null); // Keep selected file to avoid flicker if re-opened quickly
   };
 
-  const handleDownloadFile = (file: CloudFile) => {
-    console.log("Download requested for:", file.name, file.url);
-    if (!file.url) {
-      toast({ title: "Download Unavailable", description: "No download URL available for this file yet. Full download logic not yet implemented.", variant: "destructive" });
-      // TODO: Implement actual file fetching from Telegram if URL is missing
-      // This would involve using telegramService.downloadFile(file.telegramMessage.media...) or similar
-    } else {
-      // This is a temporary solution for direct URLs
-      window.open(file.url, '_blank');
-    }
+  const handleQueueDownload = (file: CloudFile) => {
+    console.log("Download queued for:", file.name);
+    setDownloadQueue(prevQueue => {
+      // Avoid adding duplicates if already in queue (optional)
+      if (prevQueue.find(item => item.id === file.id)) {
+        toast({ title: "Already in Queue", description: `${file.name} is already in the download queue.`});
+        return prevQueue;
+      }
+      const newItem: DownloadQueueItemType = { ...file, status: 'queued', progress: 0 };
+      return [...prevQueue, newItem];
+    });
+    setIsDownloadManagerOpen(true);
+    // This is where you would call the actual download logic in a real scenario
+    // For now, we just log the preparation info from telegramService
+    telegramService.prepareFileDownloadInfo(file);
   };
+
 
   const handleViewImage = (file: CloudFile) => {
     if (file.type === 'image' && file.url) {
@@ -410,7 +422,7 @@ export default function Home() {
       setViewingImageName(file.name);
       setIsImageViewerOpen(true);
     } else if (file.type === 'image' && !file.url) {
-      toast({ title: "Cannot View Image", description: "Image URL is not available for preview.", variant: "destructive"});
+      toast({ title: "Cannot View Image", description: "Image URL is not available for preview. Actual download needed.", variant: "destructive"});
       // Potentially try to fetch URL here if needed
     } else if (file.type !== 'image') {
       toast({ title: "Not an Image", description: "This file is not an image and cannot be viewed here.", variant: "default"});
@@ -423,12 +435,15 @@ export default function Home() {
       setPlayingVideoName(file.name);
       setIsVideoPlayerOpen(true);
     } else if (file.type === 'video' && !file.url) {
-      toast({ title: "Cannot Play Video", description: "Video URL is not available for playback.", variant: "destructive"});
+      toast({ title: "Cannot Play Video", description: "Video URL is not available for playback. Actual download needed.", variant: "destructive"});
       // Potentially try to fetch URL here if needed
     } else if (file.type !== 'video') {
       toast({ title: "Not a Video", description: "This file is not a video and cannot be played here.", variant: "default"});
     }
   };
+
+  const handleOpenDownloadManager = () => setIsDownloadManagerOpen(true);
+  const handleCloseDownloadManager = () => setIsDownloadManagerOpen(false);
 
 
   if (!isConnected) {
@@ -463,14 +478,15 @@ export default function Home() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <Header />
+      <Header 
+        isConnected={isConnected}
+        onDisconnect={() => handleReset(true)}
+        onOpenDownloadManager={handleOpenDownloadManager}
+      />
       <div className="flex-grow flex container mx-auto px-0 sm:px-2 lg:px-4 py-4 overflow-hidden">
         <aside className="w-64 md:w-72 lg:w-80 p-4 border-r bg-card overflow-y-auto flex-shrink-0">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-semibold text-primary">Chats</h2>
-            <Button variant="outline" size="sm" onClick={() => handleReset(true)} title="Disconnect and Reset">
-              <RefreshCw className="h-4 w-4" />
-            </Button>
           </div>
           {isProcessingChats && allChats.length === 0 ? (
             <div className="flex flex-col items-center p-4">
@@ -516,7 +532,7 @@ export default function Home() {
               hasMore={hasMoreChatMedia}
               lastItemRef={lastMediaItemRef}
               onFileDetailsClick={handleOpenFileDetails}
-              onFileDownloadClick={handleDownloadFile}
+              onQueueDownloadClick={handleQueueDownload}
               onFileViewImageClick={handleViewImage}
               onFilePlayVideoClick={handlePlayVideo}
             />
@@ -538,7 +554,7 @@ export default function Home() {
         file={selectedFileForDetails}
         isOpen={isDetailsPanelOpen}
         onClose={handleCloseFileDetails}
-        onDownload={handleDownloadFile}
+        onQueueDownload={handleQueueDownload}
       />
       <ImageViewer
         isOpen={isImageViewerOpen}
@@ -551,6 +567,11 @@ export default function Home() {
         onClose={() => setIsVideoPlayerOpen(false)}
         videoUrl={playingVideoUrl}
         videoName={playingVideoName}
+      />
+      <DownloadManagerDialog
+        isOpen={isDownloadManagerOpen}
+        onClose={handleCloseDownloadManager}
+        queue={downloadQueue}
       />
     </div>
   );
