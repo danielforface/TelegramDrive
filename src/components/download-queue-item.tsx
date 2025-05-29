@@ -40,60 +40,79 @@ const StatusIndicator = ({ status }: { status: DownloadQueueItemType['status']})
         case 'paused': return <Badge variant="outline"><Pause className="w-3 h-3 mr-1" />Paused</Badge>;
         case 'completed': return <Badge variant="default" className="bg-green-600 hover:bg-green-700 text-primary-foreground"><CheckCircle2 className="w-3 h-3 mr-1" />Completed</Badge>;
         case 'failed': return <Badge variant="destructive"><AlertCircle className="w-3 h-3 mr-1" />Failed</Badge>;
-        case 'cancelled': return <Badge variant="destructive"><XCircle className="w-3 h-3 mr-1" />Cancelled</Badge>;
+        case 'cancelled': return <Badge variant="destructive" className="bg-orange-500 hover:bg-orange-600"><XCircle className="w-3 h-3 mr-1" />Cancelled</Badge>;
         default: return <Badge variant="outline">{status}</Badge>;
     }
 };
 
 export function DownloadQueueItem({ item, onCancel, onPause, onResume }: DownloadQueueItemProps) {
+  const downloadedSize = item.downloadedBytes ? formatFileSize(item.downloadedBytes) : '0 Bytes';
+  const totalFormattedSize = item.totalSizeInBytes ? formatFileSize(item.totalSizeInBytes) : (item.size || 'N/A');
+
+
   return (
     <Card className="w-full overflow-hidden shadow-sm hover:shadow-md transition-shadow duration-150">
       <CardContent className="p-3 flex flex-col space-y-2">
         <div className="flex items-center justify-between">
-            <div className="flex items-center min-w-0 flex-1"> {/* Added flex-1 here */}
+            <div className="flex items-center min-w-0 flex-1 mr-2">
                 <FileTypeIcon type={item.type} name={item.name} />
                 <span className="text-sm font-medium truncate" title={item.name}>{item.name}</span>
             </div>
             <StatusIndicator status={item.status} />
         </div>
         
-        {(item.status === 'downloading' || item.status === 'paused' || item.status === 'completed') && (
+        {(item.status === 'downloading' || item.status === 'paused' || item.status === 'completed') && item.progress !== undefined && (
              <Progress value={item.progress} className="h-2 my-1" />
         )}
         <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>{item.size || 'N/A'}</span>
+            {(item.status === 'downloading' || item.status === 'paused') && item.totalSizeInBytes ? (
+                <span>{downloadedSize} / {totalFormattedSize}</span>
+            ) : (
+                 <span>{totalFormattedSize}</span>
+            )}
             {(item.status === 'downloading' || item.status === 'paused') && item.progress > 0 && item.progress < 100 && (
                 <span>{item.progress}%</span>
             )}
+             {item.status === 'completed' && (
+                <span className="text-green-600">Completed</span>
+            )}
         </div>
 
-        {(item.status === 'downloading' || item.status === 'paused') && (
-          <div className="flex gap-2 mt-2 justify-end">
+        <div className="flex gap-2 mt-1 justify-end items-center">
             {item.status === 'downloading' && (
-              <Button variant="outline" size="sm" onClick={onPause}>
-                <Pause className="h-4 w-4 mr-1" /> Pause
+              <Button variant="outline" size="sm" onClick={onPause} className="px-2 py-1 text-xs">
+                <Pause className="h-3 w-3 mr-1" /> Pause
               </Button>
             )}
             {item.status === 'paused' && (
-              <Button variant="outline" size="sm" onClick={onResume}>
-                <Play className="h-4 w-4 mr-1" /> Resume
+              <Button variant="outline" size="sm" onClick={onResume} className="px-2 py-1 text-xs">
+                <Play className="h-3 w-3 mr-1" /> Resume
               </Button>
             )}
-            <Button variant="destructive" size="sm" onClick={onCancel}>
-              <XCircle className="h-4 w-4 mr-1" /> Cancel
-            </Button>
-          </div>
-        )}
-        {/* Optional: Add a retry button for failed/cancelled items */}
-        {(item.status === 'failed' || item.status === 'cancelled') && (
-             <div className="flex gap-2 mt-2 justify-end">
-                <Button variant="outline" size="sm" onClick={onResume}> {/* Resume can act as retry */}
-                    <RotateCcw className="h-4 w-4 mr-1" /> Retry
+            {(item.status === 'downloading' || item.status === 'paused' || item.status === 'queued') && (
+                 <Button variant="destructive" size="sm" onClick={onCancel} className="px-2 py-1 text-xs">
+                    <XCircle className="h-3 w-3 mr-1" /> Cancel
+                 </Button>
+            )}
+             {(item.status === 'failed' || item.status === 'cancelled') && (
+                <Button variant="outline" size="sm" onClick={onResume} className="px-2 py-1 text-xs">
+                    <RotateCcw className="h-3 w-3 mr-1" /> Retry
                 </Button>
-            </div>
-        )}
-
+            )}
+        </div>
       </CardContent>
     </Card>
   );
+}
+
+// Helper function (can be moved to utils if used elsewhere)
+function formatFileSize(bytesInput: number | string | undefined | null, decimals = 2): string {
+  if (bytesInput === null || bytesInput === undefined) return 'N/A';
+  const bytes = typeof bytesInput === 'string' ? parseInt(bytesInput, 10) : bytesInput;
+  if (isNaN(bytes) || bytes === 0) return '0 Bytes';
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
 }

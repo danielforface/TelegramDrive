@@ -3,12 +3,13 @@ export interface CloudFile {
   id: string; // Message ID can serve as ID
   name: string;
   type: 'image' | 'video' | 'audio' | 'document' | 'unknown';
-  size?: string;
+  size?: string; // Formatted size string
   lastModified?: string; // Will be message date
   url?: string; // Optional URL for linking or viewing (requires further implementation)
   dataAiHint?: string;
   messageId: number; // Keep original message ID for offset
   telegramMessage?: any; // To store the original Telegram message object
+  totalSizeInBytes?: number; // Raw size in bytes for download progress calculation
 }
 
 export interface CloudFolder { // Represents a Chat
@@ -39,5 +40,9 @@ export type DownloadStatus = 'queued' | 'downloading' | 'paused' | 'completed' |
 export interface DownloadQueueItemType extends CloudFile {
   status: DownloadStatus;
   progress: number; // 0-100
+  downloadedBytes?: number;
+  location?: any; // To store InputFileLocation
+  chunks?: Uint8Array[]; // To store downloaded chunks
+  currentOffset?: number;
+  abortController?: AbortController;
 }
-

@@ -20,8 +20,7 @@ const INITIAL_CHATS_LOAD_LIMIT = 20;
 const SUBSEQUENT_CHATS_LOAD_LIMIT = 5;
 const INITIAL_MEDIA_LOAD_LIMIT = 20;
 const SUBSEQUENT_MEDIA_LOAD_LIMIT = 20;
-const DOWNLOAD_PROGRESS_INTERVAL_MS = 500; // Speed of simulated download progress
-const DOWNLOAD_PROGRESS_INCREMENT = 5; // % increment per interval
+const DOWNLOAD_CHUNK_SIZE = 512 * 1024; // 512KB per chunk
 
 
 type AuthStep = 'initial' | 'awaiting_code' | 'awaiting_password';
@@ -57,7 +56,9 @@ export default function Home() {
 
   const [isDownloadManagerOpen, setIsDownloadManagerOpen] = useState(false);
   const [downloadQueue, setDownloadQueue] = useState<DownloadQueueItemType[]>([]);
-  const downloadIntervalsRef = useRef<Record<string, NodeJS.Timeout>>({});
+  
+  // Ref to track which downloads are currently being processed by the useEffect
+  const activeDownloadsRef = useRef<Set<string>>(new Set());
 
 
   const { toast } = useToast();
@@ -100,37 +101,112 @@ export default function Home() {
 
 
   useEffect(() => {
-    // Manage download intervals
-    downloadQueue.forEach(item => {
-      if (item.status === 'downloading' && !downloadIntervalsRef.current[item.id]) {
-        // Start interval for this item
-        downloadIntervalsRef.current[item.id] = setInterval(() => {
-          setDownloadQueue(prevQ =>
-            prevQ.map(qItem => {
-              if (qItem.id === item.id && qItem.status === 'downloading') {
-                const newProgress = Math.min(qItem.progress + DOWNLOAD_PROGRESS_INCREMENT, 100);
-                if (newProgress === 100) {
-                  clearInterval(downloadIntervalsRef.current[item.id]);
-                  delete downloadIntervalsRef.current[item.id];
-                  return { ...qItem, progress: 100, status: 'completed' };
-                }
-                return { ...qItem, progress: newProgress };
-              }
-              return qItem;
-            })
-          );
-        }, DOWNLOAD_PROGRESS_INTERVAL_MS);
-      } else if (item.status !== 'downloading' && downloadIntervalsRef.current[item.id]) {
-        // Clear interval for this item if it's not 'downloading' anymore
-        clearInterval(downloadIntervalsRef.current[item.id]);
-        delete downloadIntervalsRef.current[item.id];
-      }
-    });
+    const processQueue = async () => {
+      for (const item of downloadQueue) {
+        if (item.status === 'downloading' && 
+            item.location && 
+            item.totalSizeInBytes && 
+            (item.downloadedBytes || 0) < item.totalSizeInBytes &&
+            !activeDownloadsRef.current.has(item.id) // Ensure only one processor per item
+            ) {
+          
+          activeDownloadsRef.current.add(item.id); // Mark as active
 
-    // Cleanup all intervals on component unmount
+          try {
+            const currentOffset = item.currentOffset || 0;
+            const remainingBytes = item.totalSizeInBytes - currentOffset;
+            const limit = Math.min(DOWNLOAD_CHUNK_SIZE, remainingBytes);
+
+            if (limit <= 0) { // Should not happen if (item.downloadedBytes || 0) < item.totalSizeInBytes
+               setDownloadQueue(prevQ => prevQ.map(q => q.id === item.id ? { ...q, status: 'completed', progress: 100 } : q));
+               activeDownloadsRef.current.delete(item.id);
+               continue;
+            }
+            
+            const chunkData = await telegramService.downloadFileChunk(
+              item.location,
+              currentOffset,
+              limit,
+              item.abortController?.signal
+            );
+
+            if (item.abortController?.signal.aborted) {
+              console.log(`Download for ${item.name} was aborted during chunk fetch.`);
+              setDownloadQueue(prevQ => prevQ.map(q => q.id === item.id ? { ...q, status: 'cancelled' } : q));
+              activeDownloadsRef.current.delete(item.id);
+              continue;
+            }
+            
+            if (chunkData && chunkData.bytes) {
+              const newDownloadedBytes = currentOffset + chunkData.bytes.length;
+              const newProgress = Math.min(100, Math.floor((newDownloadedBytes / item.totalSizeInBytes) * 100));
+              const newChunks = [...(item.chunks || []), chunkData.bytes];
+
+              setDownloadQueue(prevQ =>
+                prevQ.map(q => {
+                  if (q.id === item.id) {
+                    if (newDownloadedBytes >= item.totalSizeInBytes!) {
+                      // Download complete, trigger browser download
+                      const fullFileBlob = new Blob(newChunks, { type: item.telegramMessage?.media?.document?.mime_type || 'application/octet-stream' });
+                      const url = URL.createObjectURL(fullFileBlob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = item.name;
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      console.log(`File ${item.name} downloaded and saved.`);
+      return { ...q, status: 'completed', progress: 100, downloadedBytes: newDownloadedBytes, chunks: [] /* Clear chunks */ };
+                    }
+                    // Continue downloading
+                    return { 
+                      ...q, 
+                      downloadedBytes: newDownloadedBytes, 
+                      progress: newProgress, 
+                      currentOffset: newDownloadedBytes, 
+                      chunks: newChunks 
+                    };
+                  }
+                  return q;
+                })
+              );
+            } else {
+              // Chunk download failed or returned no data (and not aborted)
+              console.error(`Failed to download chunk for ${item.name} or no data returned.`);
+              setDownloadQueue(prevQ => prevQ.map(q => q.id === item.id ? { ...q, status: 'failed' } : q));
+            }
+          } catch (error: any) {
+             if (error.name === 'AbortError') {
+                console.log(`Download for ${item.name} aborted by user.`);
+                // Status already set by handleCancelDownload
+             } else {
+                console.error(`Error processing download for ${item.name}:`, error);
+                setDownloadQueue(prevQ => prevQ.map(q => q.id === item.id ? { ...q, status: 'failed' } : q));
+             }
+          } finally {
+             activeDownloadsRef.current.delete(item.id); // Unmark, allowing reprocessing if needed
+          }
+        } else if (item.status === 'paused' || item.status === 'completed' || item.status === 'failed' || item.status === 'cancelled') {
+            if(activeDownloadsRef.current.has(item.id)){
+                activeDownloadsRef.current.delete(item.id); // Ensure inactive items are not marked active
+            }
+        }
+      }
+    };
+
+    // Simple trigger for processing the queue. Could be more sophisticated.
+    const intervalId = setInterval(processQueue, 1000); // Check queue every second
+
     return () => {
-      Object.values(downloadIntervalsRef.current).forEach(clearInterval);
-      downloadIntervalsRef.current = {};
+        clearInterval(intervalId);
+        // Abort any ongoing downloads when component unmounts
+        downloadQueue.forEach(item => {
+            if (item.status === 'downloading' && item.abortController && !item.abortController.signal.aborted) {
+                item.abortController.abort();
+            }
+        });
+        activeDownloadsRef.current.clear();
     };
   }, [downloadQueue]);
 
@@ -428,9 +504,14 @@ export default function Home() {
     setHasMoreChatMedia(true);
     setCurrentMediaOffsetId(0);
     
+    // Clear download queue and abort ongoing downloads
+    downloadQueue.forEach(item => {
+      if (item.abortController && !item.abortController.signal.aborted) {
+        item.abortController.abort();
+      }
+    });
     setDownloadQueue([]);
-    Object.values(downloadIntervalsRef.current).forEach(clearInterval);
-    downloadIntervalsRef.current = {};
+    activeDownloadsRef.current.clear();
   };
 
   const handleOpenFileDetails = (file: CloudFile) => {
@@ -442,37 +523,83 @@ export default function Home() {
     setIsDetailsPanelOpen(false);
   };
 
-  const handleQueueDownload = (file: CloudFile) => {
-    telegramService.prepareFileDownloadInfo(file); // Logs info, doesn't download
-    
-    setDownloadQueue(prevQueue => {
-      if (prevQueue.find(item => item.id === file.id)) {
-        toast({ title: "Already in Queue", description: `${file.name} is already being processed.`});
-        return prevQueue;
-      }
-      // Add with 'downloading' status to trigger useEffect for progress simulation
-      const newItem: DownloadQueueItemType = { ...file, status: 'downloading', progress: 0 };
-      return [...prevQueue, newItem];
-    });
-    setIsDownloadManagerOpen(true);
-    toast({ title: "Download Started", description: `${file.name} has been added to the queue and started.`});
+  const handleQueueDownload = async (file: CloudFile) => {
+    if (downloadQueue.find(item => item.id === file.id && (item.status === 'downloading' || item.status === 'queued'))) {
+      toast({ title: "Already in Queue", description: `${file.name} is already being processed or queued.` });
+      setIsDownloadManagerOpen(true); // Open manager if already in queue
+      return;
+    }
+
+    toast({ title: "Preparing Download...", description: `Getting details for ${file.name}.` });
+    const downloadInfo = await telegramService.prepareFileDownloadInfo(file);
+
+    if (downloadInfo && downloadInfo.location && downloadInfo.totalSize > 0) {
+      const controller = new AbortController();
+      const newItem: DownloadQueueItemType = {
+        ...file,
+        status: 'downloading', // Start downloading immediately
+        progress: 0,
+        downloadedBytes: 0,
+        currentOffset: 0,
+        chunks: [],
+        location: downloadInfo.location,
+        totalSizeInBytes: downloadInfo.totalSize,
+        abortController: controller,
+      };
+      setDownloadQueue(prevQueue => {
+        // Remove if previously existed (e.g. failed/cancelled) then add new
+        const filteredQueue = prevQueue.filter(item => item.id !== file.id);
+        return [...filteredQueue, newItem];
+      });
+      setIsDownloadManagerOpen(true);
+      toast({ title: "Download Started", description: `${file.name} added to queue and started.` });
+    } else {
+      toast({ title: "Download Failed", description: `Could not prepare ${file.name} for download. File info missing or invalid.`, variant: "destructive" });
+    }
   };
 
   const handleCancelDownload = (itemId: string) => {
-    setDownloadQueue(prevQueue => prevQueue.map(item => item.id === itemId ? {...item, status: 'cancelled', progress: 0} : item));
-    // The useEffect will clear the interval
+    setDownloadQueue(prevQueue =>
+      prevQueue.map(item => {
+        if (item.id === itemId) {
+          if (item.abortController && !item.abortController.signal.aborted) {
+            item.abortController.abort();
+            console.log(`Abort signal sent for item ${itemId}`);
+          }
+          return { ...item, status: 'cancelled', progress: 0 };
+        }
+        return item;
+      })
+    );
     toast({ title: "Download Cancelled", description: `Download for item ${itemId} has been cancelled.`});
   };
 
   const handlePauseDownload = (itemId: string) => {
-    setDownloadQueue(prevQueue => prevQueue.map(item => item.id === itemId ? {...item, status: 'paused'} : item));
-     // The useEffect will clear the interval
+    setDownloadQueue(prevQueue => 
+        prevQueue.map(item => 
+            item.id === itemId && item.status === 'downloading' ? 
+            {...item, status: 'paused'} : item
+        )
+    );
     toast({ title: "Download Paused", description: `Download for item ${itemId} has been paused.`});
   };
 
   const handleResumeDownload = (itemId: string) => {
-    setDownloadQueue(prevQueue => prevQueue.map(item => item.id === itemId ? {...item, status: 'downloading'} : item));
-    // The useEffect will start a new interval or continue if it was just a state update
+     // If retrying a failed/cancelled item, it might need to re-prepare
+    const itemToResume = downloadQueue.find(item => item.id === itemId);
+    if (itemToResume && (itemToResume.status === 'failed' || itemToResume.status === 'cancelled')) {
+        // Re-queue it to trigger full preparation again
+        toast({ title: "Retrying Download...", description: `Preparing ${itemToResume.name} again.` });
+        handleQueueDownload(itemToResume); // This will create a new AbortController etc.
+        return;
+    }
+
+    setDownloadQueue(prevQueue => 
+        prevQueue.map(item => 
+            item.id === itemId && item.status === 'paused' ? 
+            {...item, status: 'downloading'} : item
+        )
+    );
     toast({ title: "Download Resumed", description: `Download for item ${itemId} has been resumed.`});
   };
 
@@ -483,7 +610,7 @@ export default function Home() {
       setViewingImageName(file.name);
       setIsImageViewerOpen(true);
     } else if (file.type === 'image' && !file.url) {
-      toast({ title: "Cannot View Image", description: "Image URL is not available for preview. Actual download needed.", variant: "destructive"});
+      toast({ title: "Cannot View Image", description: "Image URL is not available for preview. Try downloading.", variant: "default"});
     } else if (file.type !== 'image') {
       toast({ title: "Not an Image", description: "This file is not an image and cannot be viewed here.", variant: "default"});
     }
@@ -495,7 +622,7 @@ export default function Home() {
       setPlayingVideoName(file.name);
       setIsVideoPlayerOpen(true);
     } else if (file.type === 'video' && !file.url) {
-      toast({ title: "Cannot Play Video", description: "Video URL is not available for playback. Actual download needed.", variant: "destructive"});
+      toast({ title: "Cannot Play Video", description: "Video URL is not available for playback. Try downloading.", variant: "default"});
     } else if (file.type !== 'video') {
       toast({ title: "Not a Video", description: "This file is not a video and cannot be played here.", variant: "default"});
     }

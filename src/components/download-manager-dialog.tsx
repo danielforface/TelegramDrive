@@ -2,7 +2,6 @@
 "use client";
 
 import type { DownloadQueueItemType } from "@/types";
-import { Button } from "@/components/ui/button";
 import {
   Sheet,
   SheetContent,
@@ -32,6 +31,9 @@ export function DownloadManagerDialog({
   onPause,
   onResume 
 }: DownloadManagerDialogProps) {
+  const activeDownloads = queue.filter(item => item.status === 'downloading' || item.status === 'queued' || item.status === 'paused').length;
+  const completedDownloads = queue.filter(item => item.status === 'completed').length;
+  
   return (
     <Sheet open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <SheetContent className="sm:max-w-md w-[90vw] p-0 flex flex-col" side="right">
@@ -41,17 +43,19 @@ export function DownloadManagerDialog({
             <SheetTitle>Download Manager</SheetTitle>
           </div>
           <SheetDescription>
-            {queue.length > 0 ? `${queue.length} item(s) in queue.` : "Your download queue is empty."}
+            {queue.length === 0 
+              ? "Your download queue is empty."
+              : `${activeDownloads} active, ${completedDownloads} completed. Total: ${queue.length}.`}
           </SheetDescription>
         </SheetHeader>
 
-        <ScrollArea className="flex-grow overflow-y-auto p-4 space-y-3">
+        <ScrollArea className="flex-grow overflow-y-auto p-4 space-y-3 bg-muted/20">
           {queue.length === 0 && (
             <p className="text-sm text-muted-foreground text-center py-4">
               No files currently in the download queue.
             </p>
           )}
-          {queue.map((item) => (
+          {queue.slice().reverse().map((item) => ( // Show newest first
             <DownloadQueueItem 
               key={item.id} 
               item={item} 
@@ -62,9 +66,9 @@ export function DownloadManagerDialog({
           ))}
         </ScrollArea>
 
-        <SheetFooter className="p-6 border-t flex-shrink-0">
+        <SheetFooter className="p-4 border-t flex-shrink-0">
            <div className="flex justify-end w-full">
-             {/* Placeholder for future actions like "Clear All Completed" */}
+             {/* Placeholder for future actions like "Clear All Completed" or "Clear All" */}
            </div>
         </SheetFooter>
       </SheetContent>
