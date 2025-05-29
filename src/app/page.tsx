@@ -15,7 +15,6 @@ import { Button } from "@/components/ui/button";
 import { RefreshCw, Loader2, LayoutPanelLeft, FolderClosed, Download } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import * as telegramService from "@/services/telegramService";
-// import { formatFileSize } from "@/lib/utils"; // No longer directly used here
 
 
 const INITIAL_CHATS_LOAD_LIMIT = 20;
@@ -89,12 +88,12 @@ export default function Home() {
     } else if (error.message === 'AUTH_RESTART') {
         description = "Authentication process needs to be restarted. Please try entering your phone number again.";
         setAuthError(description);
-        handleReset(false); // Reset state if AUTH_RESTART is caught here
+        handleReset(false); 
     } else {
         setAuthError(description);
     }
     toast({ title, description, variant: "destructive", duration: error.message && error.message.includes("Invalid hash") ? 10000 : 5000 });
-  }, [toast]); // Added handleReset to dependency array if it's stable
+  }, [toast]); 
 
 
   const fetchInitialChats = useCallback(async () => {
@@ -173,7 +172,7 @@ export default function Home() {
   useEffect(() => {
     checkExistingConnection();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Runs once on mount
+  }, []); 
 
   const handleReset = useCallback(async (performServerLogout = true) => {
     if (performServerLogout && isConnected) { 

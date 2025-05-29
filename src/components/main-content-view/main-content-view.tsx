@@ -73,16 +73,6 @@ export function MainContentView({
     setSelectedDate(undefined);
   }, [folderName]);
 
-  // Debouncing search term for future use if search input is re-added
-  // const updateDebouncedSearchTerm = useMemo(
-  //   () => debounce((term: string) => setDebouncedSearchTerm(term.toLowerCase()), 300),
-  //   []
-  // );
-  // const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-  //   setSearchTerm(event.target.value);
-  //   updateDebouncedSearchTerm(event.target.value);
-  // };
-
   const handleSearchButtonClick = () => {
     console.log("Search button clicked. Implement dialog for search results.");
     // Here you would open a dialog and manage search term state for that dialog

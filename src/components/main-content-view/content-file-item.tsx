@@ -14,15 +14,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Button } from "@/components/ui/button"; // Added for explicit button use if needed, but not currently used in card footer
 
 interface ContentFileItemProps {
   file: CloudFile;
   style?: React.CSSProperties;
   onDetailsClick: (file: CloudFile) => void;
   onQueueDownloadClick: (file: CloudFile) => void;
-  onViewImageClick: (file: CloudFile) => void; // Changed prop name for consistency
-  onPlayVideoClick: (file: CloudFile) => void; // Changed prop name for consistency
+  onViewImageClick: (file: CloudFile) => void;
+  onPlayVideoClick: (file: CloudFile) => void;
 }
 
 const FileTypeIcon = ({ type, name, dataAiHint }: { type: CloudFile['type'], name: string, dataAiHint?: string }) => {
@@ -57,7 +56,7 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
     };
 
     const handleDropdownSelect = (event: Event) => {
-        event.preventDefault(); // Prevents the dropdown from closing if necessary, and stops card click
+        event.preventDefault(); 
     };
     
     return (
@@ -73,19 +72,17 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
             onClick={handleCardClick}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
-                // Allow Enter/Space on Card to open details, unless on dropdown trigger
                 if (!(e.target as HTMLElement).closest('[data-radix-dropdown-menu-trigger]')) {
                   handleCardClick(e as any);
                 }
               }
             }}
-            tabIndex={0} // Make card focusable for keyboard navigation
+            tabIndex={0} 
             aria-label={`File: ${file.name}, Type: ${file.type}`}
           >
             <TooltipProvider delayDuration={300}>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  {/* This div is necessary for TooltipTrigger when Card is asChild */}
                   <div className="flex flex-col items-center justify-center text-center p-3 flex-grow w-full overflow-hidden">
                     <FileTypeIcon type={file.type} name={file.name} dataAiHint={file.dataAiHint} />
                     <p className="text-xs font-medium mt-2 truncate w-full px-1" title={file.name}>{file.name}</p>
@@ -109,7 +106,7 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
             <Download className="mr-2 h-4 w-4" />
             <span>Download</span>
           </DropdownMenuItem>
-          {file.type === 'image' && file.url && (
+          {file.type === 'image' && (
             <>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onViewImageClick(file); }}>
@@ -118,7 +115,7 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
               </DropdownMenuItem>
             </>
           )}
-          {file.type === 'video' && file.url && (
+          {file.type === 'video' && (
             <>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onPlayVideoClick(file); }}>
@@ -134,4 +131,3 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
 );
 
 ContentFileItem.displayName = "ContentFileItem";
-
