@@ -5,7 +5,7 @@ import * as React from "react";
 import type { CloudFile } from "@/types";
 import { ContentFileItem } from "./content-file-item";
 import { Button } from "@/components/ui/button";
-import { Search, FolderOpen, Loader2, CalendarDays, XCircle as ClearIcon } from "lucide-react";
+import { Search, FolderOpen, Loader2, CalendarDays, XCircle as ClearIcon, UploadCloud } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
@@ -22,6 +22,7 @@ interface MainContentViewProps {
   onQueueDownloadClick: (file: CloudFile) => void;
   onFileViewImageClick: (file: CloudFile) => void;
   onFilePlayVideoClick: (file: CloudFile) => void;
+  onOpenUploadDialog: () => void; // New prop for opening upload dialog
   isPreparingStream?: boolean;
   preparingStreamForFileId?: string | null;
 }
@@ -47,23 +48,25 @@ export function MainContentView({
   onQueueDownloadClick,
   onFileViewImageClick,
   onFilePlayVideoClick,
+  onOpenUploadDialog,
   isPreparingStream,
   preparingStreamForFileId
 }: MainContentViewProps) {
-  const [searchTerm, setSearchTerm] = useState(""); 
   const [activeTab, setActiveTab] = useState("all");
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState(""); // Placeholder for future search dialog integration
 
 
   useEffect(() => {
-    setSearchTerm("");
     setActiveTab("all");
     setSelectedDate(undefined);
+    setSearchTerm(""); // Reset search term when folder changes
   }, [folderName]);
 
   const handleSearchButtonClick = () => {
-    console.log("Search button clicked. Implement dialog for search results.");
+    // This will eventually open a search dialog. For now, it does nothing.
+    console.log("Search button clicked. Dialog to be implemented.");
   };
 
   const filteredByTypeFiles = useMemo(() => {
@@ -96,12 +99,12 @@ export function MainContentView({
 
     if (selectedDate) {
       processedFiles = processedFiles.filter(file =>
-        isSameDay(new Date(file.timestamp * 1000), selectedDate)
+        file.timestamp && isSameDay(new Date(file.timestamp * 1000), selectedDate)
       );
     }
     
     if (!selectedDate) { 
-        return processedFiles.sort((a, b) => b.timestamp - a.timestamp);
+        return processedFiles.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
     }
     return processedFiles; 
   }, [filteredByTypeFiles, selectedDate]);
@@ -112,6 +115,7 @@ export function MainContentView({
       <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-8">
         <FolderOpen className="w-20 h-20 mb-6 opacity-40" />
         <p className="text-xl font-medium">Select a chat to view its media.</p>
+        <p className="text-sm">Use the button in the header or the placeholder above to choose a chat.</p>
       </div>
     );
   }
@@ -128,7 +132,7 @@ export function MainContentView({
     <div className="space-y-4 h-full flex flex-col p-1 md:p-2 lg:p-4">
       <div className="flex-shrink-0">
         <h1 className="text-3xl font-bold text-primary mb-3 pb-2 border-b">{folderName}</h1>
-        <div className="flex flex-col sm:flex-row gap-3 mb-3 items-center">
+        <div className="flex flex-col sm:flex-row gap-3 mb-3 items-center flex-wrap">
           <Button variant="outline" onClick={handleSearchButtonClick} className="w-full sm:w-auto">
             <Search className="mr-2 h-4 w-4" /> Search
           </Button>
@@ -137,7 +141,7 @@ export function MainContentView({
             <PopoverTrigger asChild>
               <Button
                 variant={"outline"}
-                className="w-full sm:w-auto justify-start text-left font-normal"
+                className="w-full sm:w-auto justify-start text-left font-normal min-w-[200px]"
               >
                 <CalendarDays className="mr-2 h-4 w-4" />
                 {selectedDate ? format(selectedDate, "PPP") : <span>Filter by date</span>}
@@ -160,9 +164,13 @@ export function MainContentView({
               <ClearIcon className="h-5 w-5 text-muted-foreground hover:text-destructive" />
             </Button>
           )}
+           <Button variant="outline" onClick={onOpenUploadDialog} className="w-full sm:w-auto">
+            <UploadCloud className="mr-2 h-4 w-4" /> Upload File
+          </Button>
+
           <div className="flex-grow"></div> {/* Spacer */}
           <Tabs defaultValue="all" onValueChange={setActiveTab} value={activeTab} className="w-full sm:w-auto">
-            <TabsList className="grid w-full grid-cols-3 sm:w-auto sm:inline-flex h-auto">
+            <TabsList className="grid w-full grid-cols-3 sm:grid-cols-none sm:inline-flex h-auto">
               {TABS_CONFIG.map(tab => (
                 <TabsTrigger key={tab.value} value={tab.value} className="px-3 py-1.5 text-xs sm:text-sm">
                   {tab.label}
@@ -197,6 +205,7 @@ export function MainContentView({
           {displayFiles.length > 0 ? (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
               {displayFiles.map((file, index) => {
+                if (!file.timestamp) return null; // Skip files without a timestamp for date grouping
                 const fileDate = new Date(file.timestamp * 1000);
                 let dayHeader = null;
                 let monthHeader = null;
@@ -232,7 +241,7 @@ export function MainContentView({
                     key={`${file.id}-${activeTab}-${selectedDate ? format(selectedDate, "yyyy-MM-dd") : 'all'}-${index}`}
                     file={file}
                     style={{ animationDelay: `${index * 30}ms` }}
-                    onDetailsClick={onFileDetailsClick}
+                    onDetailsClick={onFileDetailsClick} // Correct prop name
                     onQueueDownloadClick={onQueueDownloadClick}
                     onViewImageClick={onFileViewImageClick}
                     onPlayVideoClick={onFilePlayVideoClick}
@@ -241,17 +250,19 @@ export function MainContentView({
                   />
                 );
 
-                const itemWithRef = (
-                  <div ref={index === displayFiles.length - 1 && hasMore && !isLoading && !selectedDate ? lastItemRef : null} key={`ref-wrap-${file.id}`}>
-                    {itemContent}
-                  </div>
-                );
+                const itemWithRefWrapper = (node: HTMLDivElement | null) => {
+                  if (index === displayFiles.length - 1 && hasMore && !isLoading && !selectedDate) {
+                    if (lastItemRef) lastItemRef(node);
+                  }
+                };
                 
                 return (
                   <React.Fragment key={`fragment-${file.id}`}>
                     {monthHeader}
                     {dayHeader}
-                    {itemWithRef}
+                    <div ref={itemWithRefWrapper}>
+                       {itemContent}
+                    </div>
                   </React.Fragment>
                 );
               })}
@@ -279,5 +290,3 @@ export function MainContentView({
     </div>
   );
 }
-
-    
