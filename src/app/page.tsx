@@ -7,6 +7,8 @@ import { TelegramConnect } from "@/components/telegram-connect";
 import { SidebarNav } from "@/components/layout/sidebar-nav";
 import { MainContentView } from "@/components/main-content-view/main-content-view";
 import { FileDetailsPanel } from "@/components/file-details-panel";
+import { ImageViewer } from "@/components/image-viewer";
+import { VideoPlayer } from "@/components/video-player";
 import type { CloudFolder, CloudFile } from "@/types";
 import { Button } from "@/components/ui/button";
 import { RefreshCw, Loader2, LayoutPanelLeft, FolderClosed } from "lucide-react";
@@ -42,11 +44,17 @@ export default function Home() {
   const [selectedFileForDetails, setSelectedFileForDetails] = useState<CloudFile | null>(null);
   const [isDetailsPanelOpen, setIsDetailsPanelOpen] = useState(false);
 
+  const [isImageViewerOpen, setIsImageViewerOpen] = useState(false);
+  const [viewingImageUrl, setViewingImageUrl] = useState<string | null>(null);
+  const [viewingImageName, setViewingImageName] = useState<string | undefined>(undefined);
+
+  const [isVideoPlayerOpen, setIsVideoPlayerOpen] = useState(false);
+  const [playingVideoUrl, setPlayingVideoUrl] = useState<string | null>(null);
+  const [playingVideoName, setPlayingVideoName] = useState<string | undefined>(undefined);
+
   const { toast } = useToast();
 
   const [authStep, setAuthStep] = useState<AuthStep>('initial');
-  // phoneNumber will store the full phone number (country code + national part)
-  // It's set by handleSendCode after TelegramConnect constructs it.
   const [phoneNumber, setPhoneNumber] = useState(''); 
   const [phoneCode, setPhoneCode] = useState('');
   const [password, setPassword] = useState('');
@@ -57,9 +65,9 @@ export default function Home() {
     try {
       const previouslyConnected = await telegramService.isUserConnected();
       if (previouslyConnected) {
-        const storedUser = telegramService.getUserSessionDetails(); // Assuming you add this to telegramService
+        const storedUser = telegramService.getUserSessionDetails(); 
         if (storedUser && storedUser.phone) {
-            setPhoneNumber(storedUser.phone); // Restore phone number for display if needed
+            setPhoneNumber(storedUser.phone); 
         }
         console.log("User was previously connected. Setting state and fetching chats.");
         setIsConnected(true);
@@ -233,14 +241,13 @@ export default function Home() {
   };
 
   const handleSendCode = async (fullPhoneNumberFromConnect: string) => {
-    if (!fullPhoneNumberFromConnect || !fullPhoneNumberFromConnect.startsWith('+') || fullPhoneNumberFromConnect.length < 5) { // Basic validation
+    if (!fullPhoneNumberFromConnect || !fullPhoneNumberFromConnect.startsWith('+') || fullPhoneNumberFromConnect.length < 5) { 
       setAuthError("Phone number is required and must be valid (e.g. +972501234567).");
       toast({ title: "Invalid Phone Number", description: "Please select a country and enter a valid number.", variant: "destructive" });
       return;
     }
     setIsConnecting(true);
     setAuthError(null);
-    // Update page's phoneNumber state to the full number that will be used for API call and display
     setPhoneNumber(fullPhoneNumberFromConnect); 
     toast({ title: "Sending Code...", description: `Requesting verification code for ${fullPhoneNumberFromConnect}.` });
     
@@ -250,7 +257,7 @@ export default function Home() {
       toast({ title: "Code Sent!", description: "Please check Telegram for your verification code." });
     } catch (error: any) {
       console.error("Error in handleSendCode:", error.message, error.originalErrorObject || error);
-      if (error.message === 'AUTH_RESTART') {
+      if (error.message === 'AUTH_RESTART' || (error.originalErrorObject?.error_message === 'AUTH_RESTART')) {
         toast({
           title: "Authentication Restarted",
           description: "The authentication process needs to be restarted. Please try entering your phone number again.",
@@ -283,7 +290,6 @@ export default function Home() {
     setAuthError(null);
     toast({ title: "Verifying Code...", description: "Checking your verification code with Telegram." });
     try {
-      // phoneNumber state in page.tsx should be the full number at this point
       const result = await telegramService.signIn(phoneNumber, currentPhoneCode);
       if (result.user) {
         setIsConnected(true);
@@ -303,7 +309,7 @@ export default function Home() {
         setAuthError(null); 
         toast({ title: "2FA Required", description: "Please enter your two-factor authentication password." });
       } else {
-        console.error("Error signing in (handleSignIn):", error.message, error.originalErrorObject || error);
+        console.log("Error signing in (handleSignIn):", error.message, error.originalErrorObject || error);
         setAuthError(error.message || "Sign in failed. Invalid code or other issue.");
         toast({ title: "Sign In Failed", description: error.message || "Invalid code or other issue.", variant: "destructive" });
       }
@@ -359,7 +365,7 @@ export default function Home() {
     setCurrentChatMedia([]);
     setIsConnecting(false);
     setAuthStep('initial');
-    setPhoneNumber(''); // Clear the full phone number
+    setPhoneNumber('');
     setPhoneCode('');
     setPassword('');
     setAuthError(null);
@@ -382,7 +388,39 @@ export default function Home() {
 
   const handleCloseFileDetails = () => {
     setIsDetailsPanelOpen(false);
-    setSelectedFileForDetails(null);
+    // setSelectedFileForDetails(null); // Keep selected file to avoid flicker if re-opened quickly
+  };
+
+  const handleDownloadFile = (file: CloudFile) => {
+    console.log("Download requested for:", file.name, file.url);
+    if (!file.url) {
+      toast({ title: "Download Unavailable", description: "No download URL available for this file yet.", variant: "destructive" });
+      // TODO: Implement actual file fetching from Telegram if URL is missing
+    } else {
+      window.open(file.url, '_blank');
+    }
+  };
+
+  const handleViewImage = (file: CloudFile) => {
+    if (file.type === 'image' && file.url) {
+      setViewingImageUrl(file.url);
+      setViewingImageName(file.name);
+      setIsImageViewerOpen(true);
+    } else if (file.type === 'image' && !file.url) {
+      toast({ title: "Cannot View Image", description: "Image URL is not available for preview.", variant: "destructive"});
+      // Potentially try to fetch URL here if needed
+    }
+  };
+
+  const handlePlayVideo = (file: CloudFile) => {
+     if (file.type === 'video' && file.url) {
+      setPlayingVideoUrl(file.url);
+      setPlayingVideoName(file.name);
+      setIsVideoPlayerOpen(true);
+    } else if (file.type === 'video' && !file.url) {
+      toast({ title: "Cannot Play Video", description: "Video URL is not available for playback.", variant: "destructive"});
+      // Potentially try to fetch URL here if needed
+    }
   };
 
 
@@ -398,8 +436,8 @@ export default function Home() {
             onCheckPassword={handleCheckPassword}
             isLoading={isConnecting}
             error={authError}
-            phoneNumber={phoneNumber} // Pass full phone number for display
-            setPhoneNumber={setPhoneNumber} // This prop is now mainly for page.tsx to update its own state
+            phoneNumber={phoneNumber} 
+            setPhoneNumber={setPhoneNumber} 
             phoneCode={phoneCode}
             setPhoneCode={setPhoneCode}
             password={password}
@@ -470,7 +508,10 @@ export default function Home() {
               isLoading={isLoadingChatMedia && currentChatMedia.length === 0} 
               hasMore={hasMoreChatMedia}
               lastItemRef={lastMediaItemRef}
-              onFileClick={handleOpenFileDetails}
+              onFileDetailsClick={handleOpenFileDetails}
+              onFileDownloadClick={handleDownloadFile}
+              onFileViewImageClick={handleViewImage}
+              onFilePlayVideoClick={handlePlayVideo}
             />
           ) : (
             <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground">
@@ -490,6 +531,19 @@ export default function Home() {
         file={selectedFileForDetails}
         isOpen={isDetailsPanelOpen}
         onClose={handleCloseFileDetails}
+        onDownload={handleDownloadFile}
+      />
+      <ImageViewer
+        isOpen={isImageViewerOpen}
+        onClose={() => setIsImageViewerOpen(false)}
+        imageUrl={viewingImageUrl}
+        imageName={viewingImageName}
+      />
+      <VideoPlayer
+        isOpen={isVideoPlayerOpen}
+        onClose={() => setIsVideoPlayerOpen(false)}
+        videoUrl={playingVideoUrl}
+        videoName={playingVideoName}
       />
     </div>
   );

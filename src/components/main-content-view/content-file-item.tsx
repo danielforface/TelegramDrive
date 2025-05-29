@@ -3,17 +3,25 @@
 
 import React, { forwardRef, type MouseEvent } from "react";
 import type { CloudFile } from "@/types";
-import { FileText, Image as ImageIcon, Video, FileAudio, FileQuestion, Download, AlertCircle } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardFooter } from "@/components/ui/card";
+import { FileText, Image as ImageIcon, Video, FileAudio, FileQuestion, Download, Info, Eye, PlayCircle } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface ContentFileItemProps {
   file: CloudFile;
   style?: React.CSSProperties;
-  onClick: (file: CloudFile) => void;
+  onDetailsClick: (file: CloudFile) => void;
+  onDownloadClick: (file: CloudFile) => void;
+  onViewImageClick?: (file: CloudFile) => void;
+  onPlayVideoClick?: (file: CloudFile) => void;
 }
 
 const FileTypeIcon = ({ type, name, dataAiHint }: { type: CloudFile['type'], name: string, dataAiHint?: string }) => {
@@ -35,42 +43,84 @@ const FileTypeIcon = ({ type, name, dataAiHint }: { type: CloudFile['type'], nam
   }
 };
 
-export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(({ file, style, onClick }, ref) => {
-  
-  const handleItemClick = () => {
-    onClick(file);
-  };
+export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
+  ({ file, style, onDetailsClick, onDownloadClick, onViewImageClick, onPlayVideoClick }, ref) => {
+    
+    const handleCardClick = () => {
+      // Default action on left click can be details, or view if image/video
+      if (file.type === 'image' && onViewImageClick) {
+        onViewImageClick(file);
+      } else if (file.type === 'video' && onPlayVideoClick) {
+        onPlayVideoClick(file);
+      } else {
+        onDetailsClick(file);
+      }
+    };
 
-  return (
-    <Card
-      ref={ref}
-      className={cn(
-        "flex flex-col h-40 w-full overflow-hidden rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200 animate-item-enter cursor-pointer",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-      )}
-      style={style}
-      onClick={handleItemClick}
-      onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && handleItemClick()}
-      tabIndex={0}
-      aria-label={`File: ${file.name}, Type: ${file.type}`}
-    >
-      <TooltipProvider delayDuration={300}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <CardContent className="flex flex-col items-center justify-center text-center p-3 flex-grow w-full overflow-hidden">
-              <FileTypeIcon type={file.type} name={file.name} dataAiHint={file.dataAiHint} />
-              <p className="text-xs font-medium mt-2 truncate w-full" title={file.name}>{file.name}</p>
-            </CardContent>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" align="center">
-            <p className="font-semibold">{file.name}</p>
-            <p>Type: {file.type}</p>
-            {file.size && <p>Size: {file.size}</p>}
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
-    </Card>
-  );
-});
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Card
+            ref={ref}
+            className={cn(
+              "flex flex-col h-40 w-full overflow-hidden rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200 animate-item-enter cursor-pointer",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            )}
+            style={style}
+            onClick={handleCardClick}
+            onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && handleCardClick()}
+            tabIndex={0}
+            aria-label={`File: ${file.name}, Type: ${file.type}`}
+            // onContextMenu={(e) => e.preventDefault()} // Let DropdownMenuTrigger handle it
+          >
+            <TooltipProvider delayDuration={300}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <CardContent className="flex flex-col items-center justify-center text-center p-3 flex-grow w-full overflow-hidden">
+                    <FileTypeIcon type={file.type} name={file.name} dataAiHint={file.dataAiHint} />
+                    <p className="text-xs font-medium mt-2 truncate w-full" title={file.name}>{file.name}</p>
+                  </CardContent>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" align="center">
+                  <p className="font-semibold">{file.name}</p>
+                  <p>Type: {file.type}</p>
+                  {file.size && <p>Size: {file.size}</p>}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </Card>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent className="w-56" align="start">
+          <DropdownMenuItem onClick={() => onDetailsClick(file)}>
+            <Info className="mr-2 h-4 w-4" />
+            <span>Details</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onDownloadClick(file)}>
+            <Download className="mr-2 h-4 w-4" />
+            <span>Download</span>
+          </DropdownMenuItem>
+          {file.type === 'image' && onViewImageClick && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => onViewImageClick(file)}>
+                <Eye className="mr-2 h-4 w-4" />
+                <span>View Image</span>
+              </DropdownMenuItem>
+            </>
+          )}
+          {file.type === 'video' && onPlayVideoClick && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => onPlayVideoClick(file)}>
+                <PlayCircle className="mr-2 h-4 w-4" />
+                <span>Play Video</span>
+              </DropdownMenuItem>
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  }
+);
 
 ContentFileItem.displayName = "ContentFileItem";
