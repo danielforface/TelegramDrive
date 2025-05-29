@@ -35,6 +35,7 @@ export default function Home() {
   const [isProcessingChats, setIsProcessingChats] = useState(false);
   const [allChats, setAllChats] = useState<CloudFolder[]>([]);
   const [isLoadingMoreChats, setIsLoadingMoreChats] = useState(false);
+  const isLoadingMoreChatsRequestInFlightRef = useRef(false); // Prevents flood requests
   const [hasMoreChats, setHasMoreChats] = useState(true);
   const [chatsOffsetDate, setChatsOffsetDate] = useState(0);
   const [chatsOffsetId, setChatsOffsetId] = useState(0);
@@ -88,6 +89,7 @@ export default function Home() {
     setChatsOffsetId(0);
     setChatsOffsetPeer({ _: 'inputPeerEmpty' });
     setHasMoreChats(true);
+    isLoadingMoreChatsRequestInFlightRef.current = false; // Reset flood guard
     toast({ title: "Fetching Chats...", description: "Loading your Telegram conversations." });
 
     try {
@@ -123,11 +125,11 @@ export default function Home() {
         setIsConnected(true);
         setAuthStep('initial');
         setAuthError(null);
-        fetchInitialChats(); // Call fetchInitialChats here
+        fetchInitialChats(); 
       } else {
         console.log("No existing connection found or session invalid.");
         setIsConnected(false);
-        handleReset(false); // Pass false to avoid server logout if not connected
+        handleReset(false); 
       }
     } catch (error: any) {
       console.warn("Error checking existing connection:", error.message, error.originalErrorObject || error);
@@ -141,7 +143,7 @@ export default function Home() {
         setAuthError("Connection handshake failed. Check API credentials & localStorage.");
       } else if (error.message === 'AUTH_RESTART') {
           toast({ title: "Authentication Expired", description: "Your session needs to be re-initiated. Please enter your phone number again.", variant: "destructive" });
-          handleReset(false); // Pass false to avoid server logout
+          handleReset(false); 
       }
       setIsConnected(false);
     }
@@ -154,13 +156,10 @@ export default function Home() {
 
   useEffect(() => {
     const processQueue = async () => {
-      // Use downloadQueueRef.current to access the latest queue state
-      // without making downloadQueue a dependency of this useEffect
       for (let i = 0; i < downloadQueueRef.current.length; i++) {
         const itemInLoop = downloadQueueRef.current[i];
-
-        // Ensure we have the latest item state if it was updated by another process
         const currentItemFromState = downloadQueue.find(q => q.id === itemInLoop.id);
+
         if (!currentItemFromState) {
             console.warn(`Item ${itemInLoop.id} no longer in queue, skipping processing.`);
             if(activeDownloadsRef.current.has(itemInLoop.id)) {
@@ -170,7 +169,6 @@ export default function Home() {
         }
         const upToDateItem = currentItemFromState;
 
-
         if (upToDateItem.abortController?.signal.aborted && upToDateItem.status !== 'cancelled' && upToDateItem.status !== 'failed' && upToDateItem.status !== 'completed') {
              console.log(`Download for ${upToDateItem.name} was already aborted (found in processQueue start), status: ${upToDateItem.status}. Ensuring it's marked cancelled.`);
              setDownloadQueue(prevQ => prevQ.map(q => q.id === upToDateItem.id ? { ...q, status: 'cancelled', progress: 0, downloadedBytes: 0 } : q));
@@ -179,7 +177,6 @@ export default function Home() {
              }
              continue;
         }
-
 
         if (upToDateItem.status === 'downloading' &&
             upToDateItem.location &&
@@ -193,7 +190,6 @@ export default function Home() {
           try {
             const currentOffset = upToDateItem.currentOffset || 0;
             const remainingBytes = upToDateItem.totalSizeInBytes - upToDateItem.downloadedBytes;
-
 
             if (remainingBytes <= 0) {
                 setDownloadQueue(prevQ => prevQ.map(q => q.id === upToDateItem.id ? { ...q, status: 'completed', progress: 100, downloadedBytes: upToDateItem.totalSizeInBytes!, currentOffset: upToDateItem.totalSizeInBytes! } : q));
@@ -252,37 +248,20 @@ export default function Home() {
                     console.log(`CDN Hash verified for ${upToDateItem.name}, block ${currentHashBlockIndex}`);
                 }
             } else {
-                // Direct Download Path
                 const bytesNeededForFile = upToDateItem.totalSizeInBytes - upToDateItem.downloadedBytes;
                 const offsetWithinCurrentBlock = upToDateItem.currentOffset % ONE_MB;
                 const bytesLeftInCurrentBlock = ONE_MB - offsetWithinCurrentBlock;
-
-                // Determine how much data to request in this specific API call
-                // It's the minimum of: remaining file, remaining in 1MB block, preferred chunk size
                 const dataToRequest = Math.min(bytesNeededForFile, bytesLeftInCurrentBlock, DOWNLOAD_CHUNK_SIZE);
 
                 if (dataToRequest <= 0 && bytesNeededForFile > 0) {
-                    console.warn(`Direct download for ${upToDateItem.name}: dataToRequest calc is ${dataToRequest}, but ${bytesNeededForFile} bytes still needed. This can happen if leftInBlock or DOWNLOAD_CHUNK_SIZE is too small for a KB alignment, or at the very end.`);
-                    actualLimitForApi = 0; // Will be handled by the check below
-                } else if (dataToRequest <=0 && bytesNeededForFile <= 0) {
-                     actualLimitForApi = 0; // File is complete
+                    actualLimitForApi = bytesNeededForFile >= KB_1 ? KB_1 : bytesNeededForFile;
+                } else if (dataToRequest <= 0 && bytesNeededForFile <= 0) {
+                    actualLimitForApi = 0;
                 } else {
-                    // Ensure actualLimitForApi is a multiple of KB_1 if dataToRequest >= KB_1
                     actualLimitForApi = dataToRequest >= KB_1 ? Math.floor(dataToRequest / KB_1) * KB_1 : dataToRequest;
-                    // If dataToRequest was < KB_1 but > 0, actualLimitForApi is now dataToRequest.
-                    // Telegram docs say 'limit must be divisible by 1KB' for precise. This might be an issue for the last tiny chunk.
-                    // Let's enforce that limit is >= KB_1 if we are to make a call, unless it's the very last bit.
-                    if (actualLimitForApi < KB_1 && actualLimitForApi > 0 && bytesNeededForFile > actualLimitForApi) { // If it's not the very last chunk
-                        console.warn(`Calculated API limit for ${upToDateItem.name} is ${actualLimitForApi} (<1KB) but not the last chunk. Risk of LIMIT_INVALID. Bytes needed: ${bytesNeededForFile}`);
-                        // This case is tricky. For now, let's proceed and see if Telegram handles the last smaller-than-1KB precise chunk.
-                        // If this fails with LIMIT_INVALID, we'd need a more complex strategy for the last chunk.
-                    }
-                     if (actualLimitForApi === 0 && bytesNeededForFile > 0) {
-                        // This means dataToRequest was > 0 but < KB_1, and then floor made it 0.
-                        // If bytesNeededForFile is also < KB_1, it means it's the last small chunk.
-                        actualLimitForApi = bytesNeededForFile; // Request the exact remaining amount for the last chunk
-                        console.log(`Adjusted API limit for last small chunk of ${upToDateItem.name} to ${actualLimitForApi}`);
-                    }
+                     if (actualLimitForApi === 0 && dataToRequest > 0) { // If dataToRequest was < 1KB and not 0
+                        actualLimitForApi = dataToRequest; // Allow smaller than 1KB for last chunk
+                     }
                 }
                 
                 console.log(`Processing direct download for ${upToDateItem.name}, offset: ${upToDateItem.currentOffset}, API limit: ${actualLimitForApi}, dataToRequest: ${dataToRequest}, neededForFile: ${bytesNeededForFile}, leftInBlock: ${bytesLeftInCurrentBlock}, totalSize: ${upToDateItem.totalSizeInBytes}`);
@@ -336,10 +315,10 @@ export default function Home() {
                         hash: fh.hash,
                     })),
                     cdnCurrentFileHashIndex: 0,
-                    currentOffset: 0,
-                    downloadedBytes: 0,
+                    currentOffset: 0, // Reset offset for CDN processing logic
+                    downloadedBytes: 0, // Reset downloaded bytes for CDN
                     progress: 0,
-                    chunks: [],
+                    chunks: [], // Clear existing chunks if any
                 } : q_item));
             } else if (chunkResponse?.errorType === 'FILE_REFERENCE_EXPIRED') {
                 console.log(`File reference expired for ${upToDateItem.name}. Attempting to refresh.`);
@@ -360,9 +339,7 @@ export default function Home() {
 
                     if(q_item.cdnFileToken && q_item.cdnFileHashes) {
                       nextCdnProcessingIndex = (q_item.cdnCurrentFileHashIndex || 0) + 1;
-                      // For CDN, currentOffset on the item tracks total downloaded bytes relative to CDN blocks
-                      // The actual offset for the API call is from cdnFileHashes[n].offset
-                      nextReqOffset = newDownloadedBytes; // This item's 'currentOffset' conceptually means 'bytes processed for CDN'
+                      nextReqOffset = newDownloadedBytes; 
                     } else {
                       nextReqOffset = q_item.currentOffset + chunkSize;
                     }
@@ -433,7 +410,6 @@ export default function Home() {
                 const updatedMediaObject = await telegramService.refreshFileReference(upToDateItem);
                 if (updatedMediaObject && updatedMediaObject.file_reference) {
                     let newLocation;
-                    // Reconstruct location based on updatedMediaObject
                     if (updatedMediaObject._ === 'photo' && updatedMediaObject.id && updatedMediaObject.access_hash && updatedMediaObject.file_reference) {
                         const largestSize = updatedMediaObject.sizes?.find((s: any) => s.type === 'y') || updatedMediaObject.sizes?.sort((a: any, b: any) => (b.w * b.h) - (a.w * a.h))[0];
                         newLocation = {
@@ -449,7 +425,7 @@ export default function Home() {
                             id: updatedMediaObject.id,
                             access_hash: updatedMediaObject.access_hash,
                             file_reference: updatedMediaObject.file_reference,
-                            thumb_size: '', // Or determine appropriately if it's a thumbnail of a document
+                            thumb_size: '', 
                         };
                     }
 
@@ -457,9 +433,9 @@ export default function Home() {
                     if (newLocation) {
                         setDownloadQueue(prevQ => prevQ.map(q_item => q_item.id === upToDateItem.id ? {
                             ...q_item,
-                            status: 'downloading', // Resume download
+                            status: 'downloading', 
                             location: newLocation,
-                            telegramMessage: { ...(q_item.telegramMessage || {}), ...updatedMediaObject } // Update stored message
+                            telegramMessage: { ...(q_item.telegramMessage || {}), ...updatedMediaObject } 
                         } : q_item));
                         console.log(`File reference for ${upToDateItem.name} refreshed. Resuming download.`);
                     } else {
@@ -490,7 +466,6 @@ export default function Home() {
         clearInterval(intervalId);
         console.log("Home component unmounting or main download effect re-running. Aborting downloads for items still in resumable states.");
         downloadQueueRef.current.forEach(item => {
-            // Abort only if the item is in a state where it might be actively fetching or could resume fetching
             if (item.abortController && !item.abortController.signal.aborted &&
                 (item.status === 'downloading' || item.status === 'refreshing_reference' || item.status === 'queued' || item.status === 'paused')) {
                 console.log(`Cleanup: Aborting download for ${item.name} (status: ${item.status})`);
@@ -499,12 +474,16 @@ export default function Home() {
         });
         activeDownloadsRef.current.clear();
     };
-  }, []); // IMPORTANT: Empty dependency array to run only on mount and unmount
+  }, [downloadQueue]); 
 
 
   const loadMoreChatsCallback = useCallback(async () => {
-    if (isLoadingMoreChats || !hasMoreChats || !isConnected || isProcessingChats) return;
+    if (isLoadingMoreChats || isProcessingChats || !hasMoreChats || !isConnected || isLoadingMoreChatsRequestInFlightRef.current) {
+      return;
+    }
+    
     setIsLoadingMoreChats(true);
+    isLoadingMoreChatsRequestInFlightRef.current = true;
     toast({ title: "Loading More Chats...", description: "Fetching the next batch of conversations." });
     try {
       const response = await telegramService.getTelegramChats(SUBSEQUENT_CHATS_LOAD_LIMIT, chatsOffsetDate, chatsOffsetId, chatsOffsetPeer);
@@ -523,14 +502,15 @@ export default function Home() {
       setHasMoreChats(false);
     } finally {
       setIsLoadingMoreChats(false);
+      isLoadingMoreChatsRequestInFlightRef.current = false;
     }
   }, [isConnected, isProcessingChats, isLoadingMoreChats, hasMoreChats, chatsOffsetDate, chatsOffsetId, chatsOffsetPeer, toast]);
 
   const lastChatElementRef = useCallback((node: HTMLLIElement | null) => {
-    if (isLoadingMoreChats || isProcessingChats) return;
+    if (isLoadingMoreChats || isProcessingChats || isLoadingMoreChatsRequestInFlightRef.current) return;
     if (observerChats.current) observerChats.current.disconnect();
     observerChats.current = new IntersectionObserver(entries => {
-      if (entries[0].isIntersecting && hasMoreChats && !isLoadingMoreChats && !isProcessingChats) {
+      if (entries[0].isIntersecting && hasMoreChats && !isLoadingMoreChats && !isProcessingChats && !isLoadingMoreChatsRequestInFlightRef.current) {
         loadMoreChatsCallback();
       }
     });
@@ -636,7 +616,7 @@ export default function Home() {
     }
     setIsConnecting(true);
     setAuthError(null);
-    setPhoneNumber(fullPhoneNumberFromConnect);
+    setPhoneNumber(fullPhoneNumberFromConnect); // Save full number for later display/use
     toast({ title: "Sending Code...", description: `Requesting verification code for ${fullPhoneNumberFromConnect}.` });
 
     try {
@@ -675,7 +655,7 @@ export default function Home() {
         setPassword('');
         fetchInitialChats();
         toast({ title: "Sign In Successful!", description: "Connected to Telegram." });
-      } else {
+      } else { // Should not happen if signIn throws for 2FA or other errors
         setAuthError("Sign in failed. Unexpected response from server.");
         toast({ title: "Sign In Failed", description: "Unexpected response from server.", variant: "destructive" });
       }
@@ -683,7 +663,7 @@ export default function Home() {
       if (error.message === '2FA_REQUIRED' && (error as any).srp_id) {
         console.log("2FA required for sign in, srp_id received:", (error as any).srp_id);
         setAuthStep('awaiting_password');
-        setAuthError(null);
+        setAuthError(null); // Clear previous errors like "SESSION_PASSWORD_NEEDED" if any
         toast({ title: "2FA Required", description: "Please enter your two-factor authentication password." });
       } else {
         handleApiError(error, "Sign In Failed", `Could not sign in. ${error.message}`);
@@ -747,6 +727,7 @@ export default function Home() {
     setAuthError(null);
 
     setIsLoadingMoreChats(false);
+    isLoadingMoreChatsRequestInFlightRef.current = false;
     setHasMoreChats(true);
     setChatsOffsetDate(0);
     setChatsOffsetId(0);
@@ -806,7 +787,7 @@ export default function Home() {
         messageId: file.messageId,
         telegramMessage: file.telegramMessage,
         inputPeer: file.inputPeer,
-        status: 'downloading', // Start as downloading to be picked by processQueue
+        status: 'downloading', 
         progress: 0,
         downloadedBytes: 0,
         currentOffset: 0,
@@ -832,8 +813,6 @@ export default function Home() {
         console.log(`User cancelling download for ${itemToCancel.name}`);
         itemToCancel.abortController.abort("User cancelled download");
     }
-    // The useEffect processQueue will pick up the aborted signal and update status to 'cancelled'
-    // Or, we can proactively set it here.
     setDownloadQueue(prevQueue =>
       prevQueue.map(item =>
         item.id === itemId ? { ...item, status: 'cancelled', progress: 0, downloadedBytes: 0 } : item
@@ -928,7 +907,7 @@ export default function Home() {
             isLoading={isConnecting}
             error={authError}
             phoneNumber={phoneNumber}
-            setPhoneNumber={setPhoneNumber}
+            setPhoneNumber={setPhoneNumber} // Pass this down for TelegramConnect internal use or display
             phoneCode={phoneCode}
             setPhoneCode={setPhoneCode}
             password={password}
@@ -987,7 +966,7 @@ export default function Home() {
               <p className="ml-2 text-sm text-muted-foreground">Loading more chats...</p>
             </div>
           )}
-          {!isLoadingMoreChats && !hasMoreChats && allChats.length > 0 && (
+          {!isLoadingMoreChats && !hasMoreChats && allChats.length > 0 && !isLoadingMoreChatsRequestInFlightRef.current && (
             <p className="text-center text-xs text-muted-foreground py-2 mt-2">No more chats to load.</p>
           )}
         </aside>
@@ -1048,5 +1027,7 @@ export default function Home() {
     </div>
   );
 }
+
+    
 
     
