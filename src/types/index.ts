@@ -1,4 +1,5 @@
 
+
 export interface CloudFile {
   id: string; // Message ID can serve as ID
   name: string;
@@ -43,8 +44,14 @@ export type DownloadStatus =
   | 'completed'
   | 'failed'
   | 'cancelled'
-  | 'cdn_redirect' // Indicates that the item is waiting for CDN download path
-  | 'refreshing_reference'; // Indicates that the item is waiting for file reference refresh
+  | 'cdn_redirect' 
+  | 'refreshing_reference'; 
+
+export interface FileHash {
+  offset: number; // Using number as BigInt might be problematic for direct JS usage without library
+  limit: number;
+  hash: Uint8Array;
+}
 
 export interface DownloadQueueItemType extends CloudFile {
   status: DownloadStatus;
@@ -60,7 +67,8 @@ export interface DownloadQueueItemType extends CloudFile {
   cdnFileToken?: Uint8Array;
   cdnEncryptionKey?: Uint8Array;
   cdnEncryptionIv?: Uint8Array;
-  cdnFileHashes?: any[];
+  cdnFileHashes?: FileHash[];
+  cdnCurrentFileHashIndex?: number;
 }
 
 export interface FileDownloadInfo {
@@ -79,7 +87,8 @@ export interface FileChunkResponse {
     file_token: Uint8Array;
     encryption_key: Uint8Array;
     encryption_iv: Uint8Array;
-    file_hashes: any[];
+    file_hashes: any[]; // Raw FileHash objects from MTProto
   };
   errorType?: 'FILE_REFERENCE_EXPIRED' | 'OTHER';
 }
+
