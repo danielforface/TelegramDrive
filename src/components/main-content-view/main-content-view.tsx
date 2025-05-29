@@ -10,11 +10,11 @@ import { useState, useMemo, useEffect } from "react";
 interface MainContentViewProps {
   folderName: string | null;
   files: CloudFile[];
-  isLoading: boolean; 
+  isLoading: boolean;
   hasMore: boolean;
   lastItemRef?: (node: HTMLDivElement | null) => void;
   onFileDetailsClick: (file: CloudFile) => void;
-  onFileDownloadClick: (file: CloudFile) => void;
+  onQueueDownloadClick: (file: CloudFile) => void; // Changed from onFileDownloadClick
   onFileViewImageClick: (file: CloudFile) => void;
   onFilePlayVideoClick: (file: CloudFile) => void;
 }
@@ -28,17 +28,17 @@ function debounce<F extends (...args: any[]) => any>(func: F, waitFor: number) {
     }
     timeout = setTimeout(() => func(...args), waitFor);
   };
-  return debounced as (...args: Parameters<F>) => ReturnType<F>; 
+  return debounced as (...args: Parameters<F>) => ReturnType<F>;
 }
 
-export function MainContentView({ 
-  folderName, 
-  files, 
-  isLoading, 
-  hasMore, 
-  lastItemRef, 
+export function MainContentView({
+  folderName,
+  files,
+  isLoading,
+  hasMore,
+  lastItemRef,
   onFileDetailsClick,
-  onFileDownloadClick,
+  onQueueDownloadClick, // Changed from onFileDownloadClick
   onFileViewImageClick,
   onFilePlayVideoClick
 }: MainContentViewProps) {
@@ -69,7 +69,7 @@ export function MainContentView({
     );
   }, [files, debouncedSearchTerm]);
 
-  if (!folderName) { 
+  if (!folderName) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-8">
         <FolderOpen className="w-20 h-20 mb-6 opacity-40" />
@@ -77,7 +77,7 @@ export function MainContentView({
       </div>
     );
   }
-  
+
   const displayFiles = filteredFiles;
   const noResultsForSearch = searchTerm && displayFiles.length === 0 && !isLoading;
   const noMediaAtAll = !searchTerm && displayFiles.length === 0 && !isLoading && !hasMore;
@@ -120,11 +120,11 @@ export function MainContentView({
               {displayFiles.map((file, index) => {
                 const itemContent = (
                   <ContentFileItem
-                    key={file.id + '-' + index} 
+                    key={file.id + '-' + index}
                     file={file}
                     style={{ animationDelay: `${index * 30}ms` }}
                     onDetailsClick={onFileDetailsClick}
-                    onDownloadClick={onFileDownloadClick}
+                    onQueueDownloadClick={onQueueDownloadClick} // Ensured correct prop is passed
                     onViewImageClick={file.type === 'image' ? onFileViewImageClick : undefined}
                     onPlayVideoClick={file.type === 'video' ? onFilePlayVideoClick : undefined}
                   />
@@ -137,7 +137,7 @@ export function MainContentView({
               })}
             </div>
           )}
-          {isLoading && displayFiles.length > 0 && ( 
+          {isLoading && displayFiles.length > 0 && (
             <div className="flex justify-center items-center p-4 mt-4">
               <Loader2 className="animate-spin h-8 w-8 text-primary" />
               <p className="ml-3 text-muted-foreground">Loading more media...</p>

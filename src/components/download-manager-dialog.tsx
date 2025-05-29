@@ -54,12 +54,11 @@ export function DownloadManagerDialog({ isOpen, onClose, queue }: DownloadManage
         </ScrollArea>
 
         <SheetFooter className="p-6 border-t flex-shrink-0">
-          <div className="flex justify-end w-full">
-            <Button variant="outline" onClick={onClose}>
-              <X className="mr-2 h-4 w-4" /> Close
-            </Button>
-            {/* Add clear queue button later if needed */}
-          </div>
+          {/* Removed the redundant Close button from footer */}
+          {/* If other footer actions are needed in the future, they can be added here */}
+           <div className="flex justify-end w-full">
+             {/* Example: <Button variant="destructive">Clear Queue</Button> */}
+           </div>
         </SheetFooter>
       </SheetContent>
     </Sheet>
