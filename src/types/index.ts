@@ -48,7 +48,7 @@ export type DownloadStatus =
   | 'refreshing_reference'; 
 
 export interface FileHash {
-  offset: number; // Using number as BigInt might be problematic for direct JS usage without library
+  offset: number; 
   limit: number;
   hash: Uint8Array;
 }
@@ -78,17 +78,35 @@ export interface FileDownloadInfo {
 }
 
 // For upload.getFile and upload.getCdnFile responses
-export interface FileChunkResponse {
-  bytes?: Uint8Array;
-  type?: string; // storage.FileType
-  isCdnRedirect?: boolean;
-  cdnRedirectData?: {
+// Using a discriminated union for better type safety
+type SuccessfulFileChunk_Bytes = { 
+  bytes: Uint8Array; 
+  type: string; // storage.FileType
+  isCdnRedirect?: never; 
+  cdnRedirectData?: never; 
+  errorType?: never; 
+};
+
+type SuccessfulFileChunk_CdnRedirect = { 
+  bytes?: never; 
+  type?: never; 
+  isCdnRedirect: true; 
+  cdnRedirectData: {
     dc_id: number;
     file_token: Uint8Array;
     encryption_key: Uint8Array;
     encryption_iv: Uint8Array;
     file_hashes: any[]; // Raw FileHash objects from MTProto
-  };
-  errorType?: 'FILE_REFERENCE_EXPIRED' | 'OTHER';
-}
+  }; 
+  errorType?: never; 
+};
 
+type ErrorFileChunk = { 
+  bytes?: never; 
+  type?: never; 
+  isCdnRedirect?: never; 
+  cdnRedirectData?: never; 
+  errorType: 'FILE_REFERENCE_EXPIRED' | 'OTHER'; 
+};
+
+export type FileChunkResponse = SuccessfulFileChunk_Bytes | SuccessfulFileChunk_CdnRedirect | ErrorFileChunk;
