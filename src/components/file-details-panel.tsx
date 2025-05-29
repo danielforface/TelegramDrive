@@ -117,7 +117,7 @@ export function FileDetailsPanel({ file, isOpen, onClose, onQueueDownload }: Fil
             <h4 className="text-sm font-semibold mb-2 text-primary">Basic Information</h4>
             <div className="space-y-1 text-sm">
               <p><strong className="text-muted-foreground">Name:</strong> {file.name}</p>
-              <p><strong className="text-muted-foreground">Type:</strong> <Badge variant="outline">{file.type}</Badge></p>
+              <div><strong className="text-muted-foreground">Type:</strong> <Badge variant="outline">{file.type}</Badge></div>
               {file.size && <p><strong className="text-muted-foreground">Size:</strong> {file.size}</p>}
               {file.lastModified && <p><strong className="text-muted-foreground">Date:</strong> {file.lastModified}</p>}
               {file.dataAiHint && <p><strong className="text-muted-foreground">AI Hint:</strong> {file.dataAiHint}</p>}
@@ -149,3 +149,4 @@ export function FileDetailsPanel({ file, isOpen, onClose, onQueueDownload }: Fil
     </Sheet>
   );
 }
+
