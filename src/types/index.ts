@@ -34,9 +34,10 @@ export interface MediaHistoryResponse {
   hasMore: boolean;
 }
 
-export type DownloadStatus = 'queued' | 'downloading' | 'completed' | 'failed';
+export type DownloadStatus = 'queued' | 'downloading' | 'paused' | 'completed' | 'failed' | 'cancelled';
 
 export interface DownloadQueueItemType extends CloudFile {
   status: DownloadStatus;
   progress: number; // 0-100
 }
+
