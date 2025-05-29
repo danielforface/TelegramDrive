@@ -163,7 +163,7 @@ let userSession: {
 } = {};
 
 const USER_SESSION_KEY = 'telegram_user_session';
-const USER_PHONE_KEY = 'telegram_user_phone';
+const USER_PHONE_KEY = 'telegram_user_phone'; // Added for storing phone number
 
 function saveUserToLocalStorage(user: any) {
   if (typeof window !== 'undefined') {
@@ -183,10 +183,10 @@ function loadUserFromLocalStorage(): any | null {
   if (typeof window !== 'undefined') {
     try {
       const storedUser = localStorage.getItem(USER_SESSION_KEY);
-      const storedPhone = localStorage.getItem(USER_PHONE_KEY);
+      const storedPhone = localStorage.getItem(USER_PHONE_KEY); // Load phone
       if (storedUser) {
         const parsedUser = JSON.parse(storedUser);
-        if (storedPhone) {
+        if (storedPhone) { // If phone was stored, restore it to userSession
             userSession.phone = storedPhone; 
         }
         console.log('User session (and phone) loaded from localStorage.');
@@ -195,15 +195,22 @@ function loadUserFromLocalStorage(): any | null {
     } catch (e) {
       console.error('Error loading user session from localStorage:', e);
       localStorage.removeItem(USER_SESSION_KEY); 
-      localStorage.removeItem(USER_PHONE_KEY);
+      localStorage.removeItem(USER_PHONE_KEY); // Clear phone too
     }
   }
   return null;
 }
 
 export function getUserSessionDetails(): { phone?: string; user?: any } {
+    // Ensure userSession.phone is available if userSession.user is
+    // This is useful for display purposes on the UI if the user reloads
+    if (userSession.user && !userSession.phone && typeof window !== 'undefined') {
+        const storedPhone = localStorage.getItem(USER_PHONE_KEY);
+        if (storedPhone) userSession.phone = storedPhone;
+    }
     return { phone: userSession.phone, user: userSession.user };
 }
+
 
 if (typeof window !== 'undefined') {
     const loadedUser = loadUserFromLocalStorage();
@@ -213,7 +220,7 @@ if (typeof window !== 'undefined') {
 }
 
 export async function sendCode(fullPhoneNumber: string): Promise<string> {
-  userSession = { phone: fullPhoneNumber }; // Reset parts of session, keep phone
+  userSession = { phone: fullPhoneNumber }; 
   console.log(`Attempting to send code to ${fullPhoneNumber} via API class`);
 
   const sendCodePayload = {
@@ -230,7 +237,7 @@ export async function sendCode(fullPhoneNumber: string): Promise<string> {
     console.log('Verification code sent, phone_code_hash:', userSession.phone_code_hash);
     return userSession.phone_code_hash;
   } catch (error: any) {
-    console.error('Error in sendCode function after api.call:', error.message, error.originalErrorObject || error);
+    console.error('Error in sendCode function after api.call:', error.message, (error as any).originalErrorObject || error);
     const message = error.message || 'Failed to send code.';
      if (message === 'AUTH_RESTART' || (error.originalErrorObject?.error_message === 'AUTH_RESTART')) {
          throw new Error('AUTH_RESTART');
@@ -245,7 +252,7 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
     throw new Error('phone_code_hash not set. Call sendCode first.');
   }
   if (userSession.phone !== fullPhoneNumber) {
-    console.warn(`Phone number mismatch: session has ${userSession.phone}, trying to sign in with ${fullPhoneNumber}. Using session phone.`);
+    console.warn(`Phone number mismatch: session has ${userSession.phone}, trying to sign in with ${fullPhoneNumber}. Using session phone: ${userSession.phone}.`);
   }
 
   try {
@@ -271,7 +278,6 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
     const errorMessage = error.message || (error.originalErrorObject?.error_message);
     console.warn('Error in signIn function after api.call:', errorMessage, error.originalErrorObject || error);
 
-
     if (errorMessage === 'SESSION_PASSWORD_NEEDED') {
       console.log('2FA password needed. Fetching password details...');
       try {
@@ -283,7 +289,7 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
              delete userSession.phone_code_hash;
              throw new Error('Failed to initialize 2FA: Missing critical SRP parameters.');
         }
-
+        
         userSession.srp_id = passwordData.srp_id.toString(); 
         userSession.srp_params = { 
             g: passwordData.current_algo.g,
@@ -292,6 +298,8 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
             salt2: passwordData.current_algo.salt2, 
             srp_B: passwordData.srp_B 
         };
+        
+        delete userSession.phone_code_hash; // Crucial to delete before throwing 2FA_REQUIRED
 
         const twoFactorError: any = new Error('2FA_REQUIRED');
         twoFactorError.srp_id = userSession.srp_id; 
@@ -301,7 +309,6 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
         // Check if it's the expected 2FA_REQUIRED error re-thrown from above
         if (getPasswordError.message === '2FA_REQUIRED' && getPasswordError.srp_id) {
           console.log('2FA required, password details fetched. srp_id:', getPasswordError.srp_id);
-          // phone_code_hash should be deleted before throwing 2FA_REQUIRED
         } else {
           // For any other error during getPassword
           console.error('Error fetching password details for 2FA:', getPasswordError.message, getPasswordError.originalErrorObject || getPasswordError);
@@ -326,7 +333,7 @@ export async function checkPassword(password: string): Promise<any> {
 
   try {
     const { g, p, salt1, salt2, srp_B } = userSession.srp_params;
-    console.log("Attempting to get SRPParams for checkPassword with provided password and stored srp_params via api.mtproto.crypto.getSRPParams.");
+    console.log("Attempting to get SRPParams for checkPassword with provided password and stored srp_params using api.mtproto.crypto.getSRPParams.");
     
     const { A, M1 } = await api.mtproto.crypto.getSRPParams({ 
         g,
@@ -352,14 +359,12 @@ export async function checkPassword(password: string): Promise<any> {
         userSession.user = checkResult.user;
         saveUserToLocalStorage(userSession.user); 
     }
-    // Clear SRP params after attempt, regardless of success/failure
     delete userSession.srp_params;
     delete userSession.srp_id;
     return checkResult.user;
 
   } catch (error: any) {
     console.error('Error checking password:', error.message, error.originalErrorObject || error);
-    // Clear SRP params on any error during checkPassword
     delete userSession.srp_params;
     delete userSession.srp_id;
 
@@ -413,12 +418,13 @@ export async function getChatMediaHistory(
     console.log('Chat media history raw result:', historyResult);
 
     const mediaFiles: CloudFile[] = [];
-    let newOffsetId: number | undefined = offsetId; // Default to current offset if no messages
+    let newOffsetId: number | undefined = offsetId; 
     let hasMore = false;
 
     if (historyResult.messages && historyResult.messages.length > 0) {
       historyResult.messages.forEach((msg: any) => {
-        if (msg.media && msg.media._ !== 'messageMediaEmpty' && msg.media._ !== 'messageMediaWebPage') {
+        // Only process messages that are messageMediaPhoto or messageMediaDocument
+        if (msg.media && (msg.media._ === 'messageMediaPhoto' || msg.media._ === 'messageMediaDocument')) {
           let fileType: CloudFile['type'] = 'unknown';
           let fileName = `file_${msg.id}`;
           let fileSize: string | undefined;
@@ -454,36 +460,38 @@ export async function getChatMediaHistory(
             }
           }
           
-          mediaFiles.push({
-            id: msg.id.toString(),
-            messageId: msg.id,
-            name: fileName,
-            type: fileType,
-            size: fileSize,
-            lastModified: new Date(msg.date * 1000).toLocaleDateString(),
-            dataAiHint: dataAiHint,
-            telegramMessage: msg, 
-          });
+          // Ensure we only add if a valid fileType was determined (not 'unknown' unless it has a size from document)
+          if (fileType !== 'unknown' || (fileType === 'unknown' && fileSize)) {
+            mediaFiles.push({
+              id: msg.id.toString(),
+              messageId: msg.id,
+              name: fileName,
+              type: fileType,
+              size: fileSize,
+              lastModified: new Date(msg.date * 1000).toLocaleDateString(),
+              dataAiHint: dataAiHint,
+              telegramMessage: msg, 
+            });
+          }
         }
       });
 
-      if (mediaFiles.length > 0) { // If we actually processed media files
+      if (mediaFiles.length > 0) { 
         newOffsetId = mediaFiles[mediaFiles.length - 1].messageId;
-      } else if (historyResult.messages.length > 0) { // If there were messages, but none were media we kept
+      } else if (historyResult.messages.length > 0) { 
         newOffsetId = historyResult.messages[historyResult.messages.length - 1].id;
       }
       
-      hasMore = historyResult.messages.length === limit;
+      hasMore = historyResult.messages.length === limit; // More accurately, hasMore is true if the API potentially has more items.
+                                                        // If we filtered all `limit` messages out, hasMore could still be true.
     } else {
         hasMore = false; 
     }
     
-    const filteredMediaFiles = mediaFiles.filter(f => f.type !== 'unknown' || (f.type === 'unknown' && f.size));
-
     return {
-      files: filteredMediaFiles,
+      files: mediaFiles, // mediaFiles already contains only the filtered items
       nextOffsetId: newOffsetId,
-      hasMore: hasMore && filteredMediaFiles.length > 0, 
+      hasMore: hasMore, 
     };
 
   } catch (error:any) {
