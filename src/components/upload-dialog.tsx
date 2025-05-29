@@ -13,17 +13,18 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { UploadCloud, FileText, X, Loader2 } from "lucide-react";
+import { UploadCloud, FileText, X, Loader2, CheckCircle, AlertTriangle } from "lucide-react"; // Added CheckCircle, AlertTriangle
 import { useToast } from "@/hooks/use-toast";
 import { formatFileSize } from '@/lib/utils';
+import type { ExtendedFile } from '@/types'; // Import ExtendedFile
 
 interface UploadDialogProps {
   isOpen: boolean;
   onClose: () => void;
   onFilesSelected: (files: FileList | null) => void;
   onUpload: () => void;
-  selectedFiles: File[];
-  isLoading?: boolean; // For showing loading state during upload
+  selectedFiles: ExtendedFile[]; // Use ExtendedFile here
+  isLoading?: boolean; 
 }
 
 export function UploadDialog({
@@ -41,6 +42,13 @@ export function UploadDialog({
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     onFilesSelected(event.target.files);
+    if(event.target.files && event.target.files.length > 0) {
+        toast({ title: "Files Selected", description: `${event.target.files.length} file(s) added to upload queue.`});
+    }
+    // Clear the input value to allow selecting the same file again
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
   };
 
   const handleDropZoneClick = () => {
@@ -65,21 +73,25 @@ export function UploadDialog({
     setIsDraggingOver(false);
     if (event.dataTransfer.files && event.dataTransfer.files.length > 0) {
       onFilesSelected(event.dataTransfer.files);
+       toast({ title: "Files Dropped", description: `${event.dataTransfer.files.length} file(s) added to upload queue.`});
       event.dataTransfer.clearData();
     }
-  }, [onFilesSelected]);
+  }, [onFilesSelected, toast]);
 
   const handleUploadClick = () => {
-    if (selectedFiles.length === 0) {
+    if (selectedFiles.filter(f => f.uploadStatus !== 'completed' && f.uploadStatus !== 'uploading').length === 0) {
       toast({
-        title: "No files selected",
-        description: "Please select files to upload.",
-        variant: "destructive",
+        title: "No new files to upload",
+        description: "Please select new files or clear completed/failed ones to upload again.",
+        variant: "default",
       });
       return;
     }
     onUpload();
   };
+  
+  const filesReadyForUpload = selectedFiles.filter(f => f.uploadStatus !== 'completed' && f.uploadStatus !== 'uploading').length;
+
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -123,16 +135,24 @@ export function UploadDialog({
 
           {selectedFiles.length > 0 && (
             <div className="space-y-2">
-              <h4 className="text-sm font-medium text-muted-foreground">Selected files:</h4>
-              <ScrollArea className="h-32 border rounded-md p-2">
-                <ul className="space-y-1">
+              <h4 className="text-sm font-medium text-muted-foreground">Selected files ({selectedFiles.length}):</h4>
+              <ScrollArea className="h-40 border rounded-md p-2 bg-muted/20">
+                <ul className="space-y-1.5">
                   {selectedFiles.map((file, index) => (
-                    <li key={index} className="text-xs flex items-center justify-between p-1 bg-muted/50 rounded">
-                      <div className="flex items-center truncate">
+                    <li key={`${file.name}-${file.lastModified}-${index}`} className="text-xs flex items-center justify-between p-2 bg-background rounded shadow-sm">
+                      <div className="flex items-center truncate flex-1 min-w-0 mr-2">
                         <FileText className="w-4 h-4 mr-2 flex-shrink-0 text-muted-foreground" />
                         <span className="truncate" title={file.name}>{file.name}</span>
                       </div>
-                      <span className="text-muted-foreground flex-shrink-0 ml-2">{formatFileSize(file.size)}</span>
+                      <div className="flex items-center flex-shrink-0">
+                        <span className="text-muted-foreground mr-2">{formatFileSize(file.size)}</span>
+                        {file.uploadStatus === 'uploading' && file.uploadProgress !== undefined && (
+                           <span className="text-primary text-xs mr-1">({file.uploadProgress}%)</span>
+                        )}
+                        {file.uploadStatus === 'uploading' && <Loader2 className="w-4 h-4 text-primary animate-spin" />}
+                        {file.uploadStatus === 'completed' && <CheckCircle className="w-4 h-4 text-green-500" />}
+                        {file.uploadStatus === 'failed' && <AlertTriangle className="w-4 h-4 text-red-500" />}
+                      </div>
                     </li>
                   ))}
                 </ul>
@@ -145,14 +165,14 @@ export function UploadDialog({
           <Button variant="outline" onClick={onClose} disabled={isLoading}>
             Cancel
           </Button>
-          <Button onClick={handleUploadClick} disabled={selectedFiles.length === 0 || isLoading}>
+          <Button onClick={handleUploadClick} disabled={filesReadyForUpload === 0 || isLoading}>
             {isLoading ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 Uploading...
               </>
             ) : (
-              `Upload ${selectedFiles.length} File${selectedFiles.length !== 1 ? 's' : ''}`
+              `Upload ${filesReadyForUpload > 0 ? filesReadyForUpload : ''} File${filesReadyForUpload !== 1 ? 's' : ''}`
             )}
           </Button>
         </DialogFooter>
@@ -160,3 +180,6 @@ export function UploadDialog({
     </Dialog>
   );
 }
+
+
+    

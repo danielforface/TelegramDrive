@@ -10,8 +10,8 @@ import { ImageViewer } from "@/components/image-viewer";
 import { VideoPlayer } from "@/components/video-player";
 import { DownloadManagerDialog } from "@/components/download-manager-dialog";
 import { ChatSelectionDialog } from "@/components/chat-selection-dialog";
-import { UploadDialog } from "@/components/upload-dialog"; // New Dialog for Upload
-import type { CloudFolder, CloudFile, DownloadQueueItemType } from "@/types";
+import { UploadDialog } from "@/components/upload-dialog";
+import type { CloudFolder, CloudFile, DownloadQueueItemType, ExtendedFile } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Loader2, LayoutPanelLeft, MessageSquare } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -20,7 +20,7 @@ import { formatFileSize } from "@/lib/utils";
 
 
 const INITIAL_CHATS_LOAD_LIMIT = 20;
-const SUBSEQUENT_CHATS_LOAD_LIMIT = 10;
+const SUBSEQUENT_CHATS_LOAD_LIMIT = 10; // Changed from 5 as per earlier logic
 const INITIAL_MEDIA_LOAD_LIMIT = 20;
 const SUBSEQUENT_MEDIA_LOAD_LIMIT = 20;
 const DOWNLOAD_CHUNK_SIZE = 512 * 1024; // 512KB per chunk
@@ -71,11 +71,15 @@ export default function Home() {
   const browserDownloadTriggeredRef = useRef(new Set<string>());
 
   const [isChatSelectionDialogOpen, setIsChatSelectionDialogOpen] = useState(false);
-  const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false); // State for Upload Dialog
-  const [filesToUpload, setFilesToUpload] = useState<File[]>([]); // State for files selected for upload
+  const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false); 
+  const [filesToUpload, setFilesToUpload] = useState<ExtendedFile[]>([]); 
+  const [isUploadingFiles, setIsUploadingFiles] = useState(false);
+  const uploadAbortControllersRef = useRef<Map<string, AbortController>>(new Map()); // Store controllers per file name/id
+
 
   const headerRef = useRef<HTMLDivElement>(null);
   const footerRef = useRef<HTMLDivElement>(null);
+  const chatListContainerRef = useRef<HTMLDivElement>(null);
 
 
   useEffect(() => {
@@ -123,7 +127,7 @@ export default function Home() {
     setChatsOffsetId(0);
     setChatsOffsetPeer({ _: 'inputPeerEmpty' });
     setHasMoreChats(true);
-    setIsLoadingMoreChats(false);
+    setIsLoadingMoreChats(false); 
     
     toast({ title: "Fetching Chats...", description: "Loading your Telegram conversations." });
 
@@ -147,6 +151,7 @@ export default function Home() {
       isLoadingMoreChatsRequestInFlightRef.current = false;
     }
   }, [toast, handleApiError, isProcessingChats]);
+
 
   const checkExistingConnection = useCallback(async () => {
     console.log("Checking existing connection...");
@@ -172,7 +177,8 @@ export default function Home() {
       }
     } catch (error: any) {
       console.warn("Error checking existing connection:", error.message, error.originalErrorObject || error);
-      if (error.message?.includes("Invalid hash in mt_dh_gen_ok")) {
+      const errorMessage = error.message || (error.originalErrorObject?.error_message);
+      if (errorMessage?.includes("Invalid hash in mt_dh_gen_ok")) {
         toast({
           title: "Connection Handshake Failed",
           description: "Could not establish a secure connection. Please verify your API ID/Hash in .env.local. If correct, try clearing localStorage for this site and restarting the server.",
@@ -180,7 +186,7 @@ export default function Home() {
           duration: 10000,
         });
         setAuthError("Connection handshake failed. Check API credentials & localStorage.");
-      } else if (error.message === 'AUTH_RESTART') {
+      } else if (errorMessage === 'AUTH_RESTART') {
           toast({ title: "Authentication Expired", description: "Your session needs to be re-initiated. Please enter your phone number again.", variant: "destructive" });
           setIsConnected(false);
           setPhoneNumber('');
@@ -188,7 +194,7 @@ export default function Home() {
           setAuthError(null);
           setAllChats([]);
       } else {
-         handleApiError(error, "Connection Check Error", `Failed to verify existing connection. ${error.message}`);
+         handleApiError(error, "Connection Check Error", `Failed to verify existing connection. ${errorMessage}`);
       }
       setIsConnected(false);
     }
@@ -258,6 +264,9 @@ export default function Home() {
     setIsChatSelectionDialogOpen(false);
     setIsUploadDialogOpen(false);
     setFilesToUpload([]);
+    uploadAbortControllersRef.current.forEach(controller => controller.abort("User reset application state"));
+    uploadAbortControllersRef.current.clear();
+    setIsUploadingFiles(false);
 
   }, [isConnected, toast, videoStreamUrl]);
 
@@ -331,6 +340,7 @@ export default function Home() {
                             browserDownloadTriggeredRef.current.add(upToDateItem.id);
                             const fullFileBlob = new Blob(upToDateItem.chunks, { type: upToDateItem.telegramMessage?.mime_type || 'application/octet-stream' });
                             const url = URL.createObjectURL(fullFileBlob);
+                            const a = document.createElement('a'); // Define 'a' here
                             a.href = url;
                             a.download = upToDateItem.name;
                             document.body.appendChild(a);
@@ -362,12 +372,16 @@ export default function Home() {
                 );
 
                 if (chunkResponse?.bytes && upToDateItem.cdnFileHashes) {
+                    // SHA256 verification for CDN chunks
+                    // Note: This is a simplified version. Real verification might need to handle streams if files are huge.
                     const downloadedHash = await telegramService.calculateSHA256(chunkResponse.bytes);
                     if (!telegramService.areUint8ArraysEqual(downloadedHash, cdnBlock.hash)) {
+                        console.error(`CDN Hash Mismatch for ${upToDateItem.name}, block index ${currentHashBlockIndex}. Expected:`, cdnBlock.hash, "Got:", downloadedHash);
                         setDownloadQueue(prevQ => prevQ.map(q => q.id === upToDateItem.id ? { ...q, status: 'failed', error_message: 'CDN Hash Mismatch' } : q));
                         activeDownloadsRef.current.delete(upToDateItem.id);
                         continue;
                     }
+                     console.log(`CDN Hash OK for ${upToDateItem.name}, block ${currentHashBlockIndex}`);
                 }
             } else {
                 
@@ -779,6 +793,7 @@ export default function Home() {
         setAuthError(null); 
         toast({ title: "2FA Required", description: "Please enter your two-factor authentication password." });
       } else {
+        console.log("Sign In Failed. Error:", error);
         handleApiError(error, "Sign In Failed", `Could not sign in. ${error.message}`);
       }
     } finally {
@@ -823,6 +838,7 @@ export default function Home() {
 
   const handleCloseFileDetails = () => {
     setIsDetailsPanelOpen(false);
+    setSelectedFileForDetails(null);
   };
 
   const handleQueueDownload = useCallback(async (file: CloudFile) => {
@@ -883,9 +899,8 @@ export default function Home() {
     if (itemToCancel && itemToCancel.abortController && !itemToCancel.abortController.signal.aborted) {
         itemToCancel.abortController.abort("User cancelled download");
     }
-    // State update to 'cancelled' will be handled by the processQueue useEffect
     toast({ title: "Download Cancelled", description: `Download for ${itemToCancel?.name || 'item'} has been cancelled.`});
-  }, []);
+  }, [toast]);
 
   const handlePauseDownload = useCallback((itemId: string) => {
     setDownloadQueue(prevQueue =>
@@ -895,7 +910,7 @@ export default function Home() {
         )
     );
     toast({ title: "Download Paused", description: `Download for item has been paused.`});
-  }, []);
+  }, [toast]);
 
   const handleResumeDownload = useCallback((itemId: string) => {
     const itemToResume = downloadQueueRef.current.find(item => item.id === itemId);
@@ -917,7 +932,6 @@ export default function Home() {
             inputPeer: itemToResume.inputPeer, 
         };
         setDownloadQueue(prevQ => prevQ.filter(q => q.id !== itemId));
-        // Use a short timeout to ensure the removal is processed before re-queuing
         setTimeout(() => {
             handleQueueDownload(originalFileProps);
         }, 50);
@@ -931,7 +945,7 @@ export default function Home() {
         )
     );
     toast({ title: "Download Resumed", description: `Download for item has been resumed.`});
-  }, [handleQueueDownload]);
+  }, [handleQueueDownload, toast]);
 
 
   const handleViewImage = useCallback((file: CloudFile) => {
@@ -967,12 +981,12 @@ export default function Home() {
         const bytesLeftInCurrentMBBlockVideo = ONE_MB - offsetWithinCurrentMBBlockVideo;
         
         let idealBytesToRequestVideo = Math.min(DOWNLOAD_CHUNK_SIZE, bytesLeftInCurrentMBBlockVideo, bytesNeededForVideo);
-        let limitForApiCallVideo;
+        let limitForApiCallVideo: number;
 
         if (bytesNeededForVideo <= 0) {
             limitForApiCallVideo = 0;
         } else if (idealBytesToRequestVideo <= 0) {
-            limitForApiCallVideo = bytesNeededForVideo > 0 ? KB_1 : 0;
+             limitForApiCallVideo = bytesNeededForVideo > 0 ? KB_1 : 0;
         } else if (idealBytesToRequestVideo < KB_1) {
             limitForApiCallVideo = KB_1;
         } else {
@@ -981,6 +995,7 @@ export default function Home() {
         if (limitForApiCallVideo === 0 && bytesNeededForVideo > 0 && idealBytesToRequestVideo > 0) {
             limitForApiCallVideo = KB_1;
         }
+
         if (limitForApiCallVideo <= 0) break;
 
 
@@ -1058,7 +1073,7 @@ export default function Home() {
             console.error("Unexpected error during video stream preparation orchestrator:", error);
         }
     } finally {
-        if (videoStreamAbortControllerRef.current === newController) {
+        if (videoStreamAbortControllerRef.current === newController) { // Only update state if this is still the active controller
             setIsPreparingVideoStream(false);
             setPreparingVideoStreamForFileId(null);
         }
@@ -1115,33 +1130,96 @@ export default function Home() {
   const handleCloseDownloadManager = () => setIsDownloadManagerOpen(false);
   const handleOpenChatSelectionDialog = () => setIsChatSelectionDialogOpen(true);
 
-  // Upload Dialog Handlers
   const handleOpenUploadDialog = () => setIsUploadDialogOpen(true);
   const handleCloseUploadDialog = () => {
+     if (isUploadingFiles) {
+      // Optionally, ask for confirmation or just prevent closing
+      toast({ title: "Upload in Progress", description: "Please wait for uploads to complete or cancel them before closing.", variant: "default" });
+      return;
+    }
     setIsUploadDialogOpen(false);
-    setFilesToUpload([]); // Clear selected files on close
+    setFilesToUpload([]); 
+    uploadAbortControllersRef.current.forEach(controller => controller.abort("Upload dialog closed"));
+    uploadAbortControllersRef.current.clear();
   };
 
   const handleFilesSelectedForUpload = (selectedFiles: FileList | null) => {
     if (selectedFiles) {
-      setFilesToUpload(Array.from(selectedFiles));
+      const newFiles = Array.from(selectedFiles).map(file => file as ExtendedFile);
+      setFilesToUpload(prevFiles => [...prevFiles, ...newFiles]);
     }
   };
 
-  const handleStartUpload = async () => {
-    if (filesToUpload.length === 0 || !selectedFolder || !selectedFolder.inputPeer) {
-      toast({ title: "Upload Error", description: "No files selected or no target chat chosen.", variant: "destructive" });
-      return;
+const handleStartUpload = async () => {
+  if (filesToUpload.length === 0 || !selectedFolder || !selectedFolder.inputPeer) {
+    toast({ title: "Upload Error", description: "No files selected or no target chat chosen.", variant: "destructive" });
+    return;
+  }
+
+  setIsUploadingFiles(true);
+  const uploadPromises = filesToUpload.map(async (fileToUpload, index) => {
+    const controller = new AbortController();
+    const fileIdentifier = `${fileToUpload.name}-${fileToUpload.lastModified}`; // More unique identifier
+    uploadAbortControllersRef.current.set(fileIdentifier, controller);
+
+    // Update file-specific progress in filesToUpload state
+    const updateProgressForFile = (progress: number) => {
+      setFilesToUpload(prev =>
+        prev.map(f =>
+          f.name === fileToUpload.name && f.lastModified === fileToUpload.lastModified
+            ? { ...f, uploadProgress: progress, uploadStatus: progress === 100 ? 'completed' : (progress === -1 ? 'failed' : 'uploading') }
+            : f
+        )
+      );
+      if (progress >= 0 && progress < 100) {
+          toast({
+            title: "Uploading...",
+            description: `${fileToUpload.name} (${progress}%)`,
+            duration: 3000 // Shorter duration for progress updates
+          });
+      }
+    };
+    
+    updateProgressForFile(0); // Initial progress state
+
+    try {
+      console.log(`Starting upload for: ${fileToUpload.name}. Will use method for big files: ${fileToUpload.size > 10 * 1024 * 1024}`);
+      await telegramService.uploadFile(
+        selectedFolder.inputPeer,
+        fileToUpload,
+        updateProgressForFile,
+        controller.signal
+      );
+      toast({ title: "Upload Successful!", description: `${fileToUpload.name} uploaded to ${selectedFolder.name}.` });
+      if (selectedFolder.id === selectedFolder?.id) { // Refresh media if upload was to current chat
+         fetchInitialChatMedia(selectedFolder);
+      }
+    } catch (error: any) {
+      if (error.message?.includes('Upload aborted')) {
+        toast({ title: "Upload Cancelled", description: `${fileToUpload.name} upload was cancelled.`, variant: "default" });
+         updateProgressForFile(-1); // Mark as failed or cancelled
+      } else {
+        toast({ title: "Upload Failed", description: `Could not upload ${fileToUpload.name}: ${error.message}`, variant: "destructive" });
+        updateProgressForFile(-1); // Mark as failed
+      }
+      console.error(`Error uploading ${fileToUpload.name}:`, error);
+    } finally {
+      uploadAbortControllersRef.current.delete(fileIdentifier);
     }
-    toast({ title: "Uploading...", description: `Starting upload of ${filesToUpload.length} file(s) to ${selectedFolder.name}. (Placeholder - actual upload not implemented)` });
-    console.log("Files to upload to peer:", selectedFolder.inputPeer, filesToUpload);
-    // Placeholder for actual upload logic using telegramService
-    // e.g., await telegramService.uploadFile(selectedFolder.inputPeer, filesToUpload[0]);
-    // After successful upload, you might want to refresh the media list for the current chat
-    // and clear filesToUpload and close the dialog.
-    // For now:
-    // handleCloseUploadDialog();
-  };
+  });
+
+  try {
+    await Promise.all(uploadPromises);
+  } catch (error) {
+     // This catch is mostly for Promise.all itself, individual errors are handled above
+    console.error("One or more uploads failed in the batch.", error);
+  } finally {
+    setIsUploadingFiles(false);
+    // Decide if filesToUpload should be cleared here or based on individual success/failure
+    // For now, let's clear them if all uploads attempted (regardless of outcome)
+    setFilesToUpload(prev => prev.filter(f => f.uploadStatus !== 'completed')); // Keep failed ones for retry?
+  }
+};
 
 
   if (!isConnected) {
@@ -1214,6 +1292,12 @@ export default function Home() {
                       <span>Loading initial chat list...</span>
                     </div>
                   )}
+                   { !isProcessingChats && allChats.length === 0 && !authError && isConnected && (
+                     <div className="mt-4 flex items-center text-sm">
+                        <MessageSquare className="mr-2 h-5 w-5 text-muted-foreground" />
+                        <span>Your chat list appears to be empty or still loading. Click "Select a Chat".</span>
+                    </div>
+                    )}
                 </div>
             )}
           </div>
@@ -1272,9 +1356,11 @@ export default function Home() {
         onFilesSelected={handleFilesSelectedForUpload}
         onUpload={handleStartUpload}
         selectedFiles={filesToUpload}
-        isLoading={false} // Placeholder, update if you implement real upload status
+        isLoading={isUploadingFiles}
       />
     </div>
   );
 }
 
+
+    

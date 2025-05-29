@@ -1,26 +1,26 @@
 
 
 export interface CloudFile {
-  id: string; // Message ID can serve as ID
+  id: string; 
   name: string;
   type: 'image' | 'video' | 'audio' | 'document' | 'unknown';
-  size?: string; // Formatted size string
-  timestamp: number; // Unix timestamp (seconds) of the message
-  url?: string; // Optional URL for linking or viewing
+  size?: string; 
+  timestamp: number; 
+  url?: string; 
   dataAiHint?: string;
-  messageId: number; // Keep original message ID for offset
-  telegramMessage?: any; // To store the original Telegram message object
-  totalSizeInBytes?: number; // Raw size in bytes for download progress calculation
-  inputPeer?: any; // The inputPeer of the chat this file belongs to, for refreshing references
+  messageId: number; 
+  telegramMessage?: any; 
+  totalSizeInBytes?: number; 
+  inputPeer?: any; 
 }
 
-export interface CloudFolder { // Represents a Chat
-  id: string; // Unique ID for the chat folder
-  name: string; // Chat title
-  folders: CloudFolder[]; // Will be empty now for chat folders
-  files: CloudFile[];    // Populated by getChatMediaHistory
+export interface CloudFolder { 
+  id: string; 
+  name: string; 
+  folders: CloudFolder[]; 
+  files: CloudFile[];    
   isChatFolder?: boolean;
-  inputPeer?: any; // MTProto InputPeer object for this chat
+  inputPeer?: any; 
 }
 
 export interface GetChatsPaginatedResponse {
@@ -55,21 +55,20 @@ export interface FileHash {
 
 export interface DownloadQueueItemType extends CloudFile {
   status: DownloadStatus;
-  progress: number; // 0-100
+  progress: number; 
   downloadedBytes: number;
-  location?: any; // To store InputFileLocation
+  location?: any; 
   chunks?: Uint8Array[];
   currentOffset: number;
   abortController?: AbortController;
-  totalSizeInBytes: number; // Should be non-optional for active downloads
-  // For CDN redirects
+  totalSizeInBytes: number; 
   cdnDcId?: number;
   cdnFileToken?: Uint8Array;
   cdnEncryptionKey?: Uint8Array;
   cdnEncryptionIv?: Uint8Array;
   cdnFileHashes?: FileHash[];
   cdnCurrentFileHashIndex?: number;
-  error_message?: string; // To store error messages for failed downloads
+  error_message?: string; 
 }
 
 export interface FileDownloadInfo {
@@ -78,10 +77,10 @@ export interface FileDownloadInfo {
     mimeType: string;
 }
 
-// For upload.getFile and upload.getCdnFile responses
+
 type SuccessfulFileChunk_Bytes = {
   bytes: Uint8Array;
-  type: string; // storage.FileType
+  type: string; 
   isCdnRedirect?: never;
   cdnRedirectData?: never;
   errorType?: never;
@@ -96,7 +95,7 @@ type SuccessfulFileChunk_CdnRedirect = {
     file_token: Uint8Array;
     encryption_key: Uint8Array;
     encryption_iv: Uint8Array;
-    file_hashes: any[]; // Raw FileHash objects from MTProto
+    file_hashes: AppFileHash[]; // Changed from any[] to AppFileHash[]
   };
   errorType?: never;
 };
@@ -110,3 +109,12 @@ type ErrorFileChunk = {
 };
 
 export type FileChunkResponse = SuccessfulFileChunk_Bytes | SuccessfulFileChunk_CdnRedirect | ErrorFileChunk;
+
+// For file uploads, to track progress in UI if needed
+export interface ExtendedFile extends File {
+  uploadProgress?: number;
+  uploadStatus?: 'pending' | 'uploading' | 'completed' | 'failed' | 'cancelled';
+}
+
+
+    
