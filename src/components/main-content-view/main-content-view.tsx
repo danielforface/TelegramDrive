@@ -10,7 +10,7 @@ import { useState, useMemo, useEffect } from "react";
 interface MainContentViewProps {
   folderName: string | null;
   files: CloudFile[];
-  isLoading: boolean; // For initial load state of media for the folder
+  isLoading: boolean; 
   hasMore: boolean;
   lastItemRef?: (node: HTMLDivElement | null) => void;
   onFileDetailsClick: (file: CloudFile) => void;
@@ -28,7 +28,7 @@ function debounce<F extends (...args: any[]) => any>(func: F, waitFor: number) {
     }
     timeout = setTimeout(() => func(...args), waitFor);
   };
-  return debounced as (...args: Parameters<F>) => ReturnType<F>; // Cast to original function type
+  return debounced as (...args: Parameters<F>) => ReturnType<F>; 
 }
 
 export function MainContentView({ 
@@ -45,13 +45,11 @@ export function MainContentView({
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
 
-  // Reset search term when folder changes
   useEffect(() => {
     setSearchTerm("");
     setDebouncedSearchTerm("");
   }, [folderName]);
 
-  // Debounced update for search term
   const updateDebouncedSearchTerm = useMemo(
     () => debounce((term: string) => setDebouncedSearchTerm(term.toLowerCase()), 300),
     []
@@ -65,7 +63,6 @@ export function MainContentView({
   const filteredFiles = useMemo(() => {
     if (!files) return [];
     const term = debouncedSearchTerm;
-    // Filter by name or type (case-insensitive)
     return files.filter(file =>
       file.name.toLowerCase().includes(term) ||
       file.type.toLowerCase().includes(term)
@@ -84,7 +81,6 @@ export function MainContentView({
   const displayFiles = filteredFiles;
   const noResultsForSearch = searchTerm && displayFiles.length === 0 && !isLoading;
   const noMediaAtAll = !searchTerm && displayFiles.length === 0 && !isLoading && !hasMore;
-
 
   return (
     <div className="space-y-6 h-full flex flex-col p-1 md:p-2 lg:p-4">
@@ -133,6 +129,7 @@ export function MainContentView({
                     onPlayVideoClick={file.type === 'video' ? onFilePlayVideoClick : undefined}
                   />
                 );
+                // Attach ref to the div wrapper for the last item for IntersectionObserver
                 if (index === displayFiles.length - 1 && lastItemRef) {
                   return <div ref={lastItemRef} key={`ref-${file.id}-${index}`}>{itemContent}</div>;
                 }

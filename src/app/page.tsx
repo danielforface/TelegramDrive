@@ -83,7 +83,8 @@ export default function Home() {
       console.warn("Error checking existing connection:", error.message);
       setIsConnected(false);
       handleReset(false);
-      setAuthError(`Failed to check connection: ${error.message}`);
+      // Do not set authError here as it might show up on initial load unnecessarily
+      // setAuthError(`Failed to check connection: ${error.message}`);
     }
   }, []); 
 
@@ -394,9 +395,11 @@ export default function Home() {
   const handleDownloadFile = (file: CloudFile) => {
     console.log("Download requested for:", file.name, file.url);
     if (!file.url) {
-      toast({ title: "Download Unavailable", description: "No download URL available for this file yet.", variant: "destructive" });
+      toast({ title: "Download Unavailable", description: "No download URL available for this file yet. Full download logic not yet implemented.", variant: "destructive" });
       // TODO: Implement actual file fetching from Telegram if URL is missing
+      // This would involve using telegramService.downloadFile(file.telegramMessage.media...) or similar
     } else {
+      // This is a temporary solution for direct URLs
       window.open(file.url, '_blank');
     }
   };
@@ -409,6 +412,8 @@ export default function Home() {
     } else if (file.type === 'image' && !file.url) {
       toast({ title: "Cannot View Image", description: "Image URL is not available for preview.", variant: "destructive"});
       // Potentially try to fetch URL here if needed
+    } else if (file.type !== 'image') {
+      toast({ title: "Not an Image", description: "This file is not an image and cannot be viewed here.", variant: "default"});
     }
   };
 
@@ -420,6 +425,8 @@ export default function Home() {
     } else if (file.type === 'video' && !file.url) {
       toast({ title: "Cannot Play Video", description: "Video URL is not available for playback.", variant: "destructive"});
       // Potentially try to fetch URL here if needed
+    } else if (file.type !== 'video') {
+      toast({ title: "Not a Video", description: "This file is not a video and cannot be played here.", variant: "default"});
     }
   };
 

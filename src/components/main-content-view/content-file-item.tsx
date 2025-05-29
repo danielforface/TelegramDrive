@@ -14,6 +14,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Button } from "@/components/ui/button"; // Added for DropdownMenuTrigger asChild
 
 interface ContentFileItemProps {
   file: CloudFile;
@@ -48,9 +49,9 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
     
     const handleCardClick = () => {
       // Default action on left click can be details, or view if image/video
-      if (file.type === 'image' && onViewImageClick) {
+      if (file.type === 'image' && onViewImageClick && file.url) {
         onViewImageClick(file);
-      } else if (file.type === 'video' && onPlayVideoClick) {
+      } else if (file.type === 'video' && onPlayVideoClick && file.url) {
         onPlayVideoClick(file);
       } else {
         onDetailsClick(file);
@@ -71,7 +72,7 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
             onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && handleCardClick()}
             tabIndex={0}
             aria-label={`File: ${file.name}, Type: ${file.type}`}
-            // onContextMenu={(e) => e.preventDefault()} // Let DropdownMenuTrigger handle it
+            // onContextMenu is handled by DropdownMenuTrigger
           >
             <TooltipProvider delayDuration={300}>
               <Tooltip>
@@ -91,18 +92,18 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
           </Card>
         </DropdownMenuTrigger>
         <DropdownMenuContent className="w-56" align="start">
-          <DropdownMenuItem onClick={() => onDetailsClick(file)}>
+          <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onDetailsClick(file); }}>
             <Info className="mr-2 h-4 w-4" />
             <span>Details</span>
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => onDownloadClick(file)}>
+          <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onDownloadClick(file); }}>
             <Download className="mr-2 h-4 w-4" />
             <span>Download</span>
           </DropdownMenuItem>
           {file.type === 'image' && onViewImageClick && (
             <>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => onViewImageClick(file)}>
+              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onViewImageClick(file); }}>
                 <Eye className="mr-2 h-4 w-4" />
                 <span>View Image</span>
               </DropdownMenuItem>
@@ -111,7 +112,7 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
           {file.type === 'video' && onPlayVideoClick && (
             <>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => onPlayVideoClick(file)}>
+              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onPlayVideoClick(file); }}>
                 <PlayCircle className="mr-2 h-4 w-4" />
                 <span>Play Video</span>
               </DropdownMenuItem>

@@ -10,6 +10,7 @@ import {
   SheetHeader,
   SheetTitle,
   SheetFooter,
+  SheetClose,
 } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Download, X } from "lucide-react";
@@ -26,14 +27,21 @@ interface FileDetailsPanelProps {
 function formatValue(value: any): string {
   if (value === null || value === undefined) return "N/A";
   if (typeof value === 'object') {
-    if (value._ === 'long' && value.value) return value.value.toString();
+    // Handle BigInt-like structures from MTProto
+    if (value._ === 'long' && typeof value.value === 'string') return value.value;
+    if (typeof value.toString === 'function' && value.toString() !== '[object Object]') {
+       // Prefer toString if it's meaningful (like for BigInt or Date)
+       // Avoid for generic objects that just return "[object Object]"
+       if(value instanceof Date) return value.toLocaleString();
+       // Add other specific types if needed, e.g. BigInt, before falling to JSON.stringify
+    }
     try {
-      // Attempt to stringify, handling circular references
-      return JSON.stringify(value, (key, value) => {
-        if (key === 'photoSize' || key === 'videoSize' || key === 'thumbSize') return undefined; // Skip these verbose fields
-        if (key === 'photo' && value && (value as any)._ === 'photoEmpty') return undefined;
-        if (key === 'document' && value && (value as any)._ === 'documentEmpty') return undefined;
-        return value;
+      return JSON.stringify(value, (key, val) => {
+        if (key === 'photoSize' || key === 'videoSize' || key === 'thumbSize') return undefined; 
+        if (key === 'photo' && val && (val as any)._ === 'photoEmpty') return undefined;
+        if (key === 'document' && val && (val as any)._ === 'documentEmpty') return undefined;
+        if (typeof val === 'bigint') return val.toString(); // For native BigInt if they appear
+        return val;
       }, 2);
     } catch (e) {
       return "[Circular Structure or Error]"
@@ -55,13 +63,11 @@ function renderTelegramMessageDetails(details: any, indentLevel = 0) {
         if (key === 'photo' && value && (value as any)._ === 'photoEmpty') return null;
         if (key === 'document' && value && (value as any)._ === 'documentEmpty') return null;
 
-
-        if (typeof value === 'object' && value !== null && !Array.isArray(value) && value._ !== 'long') {
-          // Further check for nested objects that we want to render recursively vs just stringify
+        if (typeof value === 'object' && value !== null && !Array.isArray(value) && !(value._ === 'long' && typeof value.value === 'string')) {
           const subKeys = Object.keys(value);
-          const hasNonPrimitiveSubValues = subKeys.some(subKey => typeof (value as any)[subKey] === 'object' && (value as any)[subKey] !== null && (value as any)[subKey].value === undefined);
+          const hasNonPrimitiveSubValues = subKeys.some(subKey => typeof (value as any)[subKey] === 'object' && (value as any)[subKey] !== null);
 
-          if (hasNonPrimitiveSubValues && subKeys.length < 10 && indentLevel < 3) { // Limit recursion depth and complexity
+          if (hasNonPrimitiveSubValues && subKeys.length < 10 && indentLevel < 3) { 
             return (
               <div key={key} className="mt-2">
                 <p className="text-xs font-semibold text-foreground capitalize">{key.replace(/_/g, ' ')}:</p>
@@ -87,7 +93,11 @@ export function FileDetailsPanel({ file, isOpen, onClose, onDownload }: FileDeta
   if (!file) return null;
 
   const handleDownloadClick = () => {
-    onDownload(file);
+    if (file) {
+      onDownload(file);
+    } else {
+      toast({ title: "Error", description: "No file selected for download.", variant: "destructive"});
+    }
   };
 
   return (
@@ -98,6 +108,10 @@ export function FileDetailsPanel({ file, isOpen, onClose, onDownload }: FileDeta
           <SheetDescription>
             Type: {file.type} {file.size && `(${file.size})`}
           </SheetDescription>
+           <SheetClose className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-secondary">
+            <X className="h-4 w-4" />
+            <span className="sr-only">Close</span>
+          </SheetClose>
         </SheetHeader>
 
         <ScrollArea className="flex-grow overflow-y-auto p-6 space-y-4">
@@ -109,7 +123,7 @@ export function FileDetailsPanel({ file, isOpen, onClose, onDownload }: FileDeta
               {file.size && <p><strong className="text-muted-foreground">Size:</strong> {file.size}</p>}
               {file.lastModified && <p><strong className="text-muted-foreground">Date:</strong> {file.lastModified}</p>}
               {file.dataAiHint && <p><strong className="text-muted-foreground">AI Hint:</strong> {file.dataAiHint}</p>}
-               {file.url && <p><strong className="text-muted-foreground">URL:</strong> <span className="break-all">{file.url}</span></p>}
+              {file.url && <p><strong className="text-muted-foreground">URL:</strong> <span className="break-all">{file.url}</span></p>}
             </div>
           </div>
 
@@ -128,7 +142,7 @@ export function FileDetailsPanel({ file, isOpen, onClose, onDownload }: FileDeta
             <Button variant="outline" onClick={onClose}>
               <X className="mr-2 h-4 w-4" /> Close
             </Button>
-            <Button onClick={handleDownloadClick} >
+            <Button onClick={handleDownloadClick} disabled={!file}>
               <Download className="mr-2 h-4 w-4" /> Download
             </Button>
           </div>
