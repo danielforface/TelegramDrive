@@ -1,6 +1,7 @@
 
 "use client";
 
+import * as React from "react";
 import type { CloudFile } from "@/types";
 import { ContentFileItem } from "./content-file-item";
 import { Button } from "@/components/ui/button";
@@ -61,6 +62,8 @@ export function MainContentView({
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("all");
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
+  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
+
 
   useEffect(() => {
     // Reset filters when folder changes
@@ -118,19 +121,12 @@ export function MainContentView({
         isSameDay(new Date(file.timestamp * 1000), selectedDate)
       );
     }
-    // Future: if search term is re-introduced for this view (not dialog)
-    // const term = debouncedSearchTerm;
-    // if (term) {
-    //   processedFiles = processedFiles.filter(file =>
-    //     file.name.toLowerCase().includes(term) ||
-    //     file.type.toLowerCase().includes(term)
-    //   );
-    // }
-    if (!selectedDate) { // Only sort by timestamp if no specific date is selected
+    
+    if (!selectedDate) { 
         return processedFiles.sort((a, b) => b.timestamp - a.timestamp);
     }
-    return processedFiles; // If date is selected, order within day doesn't matter as much or handled by default
-  }, [filteredByTypeFiles, selectedDate, debouncedSearchTerm]);
+    return processedFiles; 
+  }, [filteredByTypeFiles, selectedDate]);
 
 
   if (!folderName) {
@@ -159,7 +155,7 @@ export function MainContentView({
             <Search className="mr-2 h-4 w-4" /> Search
           </Button>
 
-          <Popover>
+          <Popover open={isCalendarOpen} onOpenChange={setIsCalendarOpen}>
             <PopoverTrigger asChild>
               <Button
                 variant={"outline"}
@@ -175,7 +171,7 @@ export function MainContentView({
                 selected={selectedDate}
                 onSelect={(date) => {
                     setSelectedDate(date || undefined);
-                    // Close popover on select, if needed by adding a state for popover open/close
+                    setIsCalendarOpen(false);
                 }}
                 initialFocus
               />
@@ -227,7 +223,7 @@ export function MainContentView({
                 let dayHeader = null;
                 let monthHeader = null;
 
-                if (!selectedDate) { // Only show date grouping if no specific date is selected
+                if (!selectedDate) { 
                   if (!lastDisplayedMonth || !isSameMonth(fileDate, lastDisplayedMonth)) {
                     monthHeader = (
                       <div key={`month-${file.id}`} className="col-span-full text-lg font-semibold text-primary py-3 mt-4 mb-2 border-b-2 border-primary/30">
@@ -235,7 +231,7 @@ export function MainContentView({
                       </div>
                     );
                     lastDisplayedMonth = fileDate;
-                    lastDisplayedDay = null; // Reset day when month changes
+                    lastDisplayedDay = null; 
                   }
 
                   if (!lastDisplayedDay || !isSameDay(fileDate, lastDisplayedDay)) {
