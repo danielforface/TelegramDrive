@@ -14,15 +14,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Button } from "@/components/ui/button";
+import { Button } from "@/components/ui/button"; // Added for explicit button use if needed, but not currently used in card footer
 
 interface ContentFileItemProps {
   file: CloudFile;
   style?: React.CSSProperties;
   onDetailsClick: (file: CloudFile) => void;
   onQueueDownloadClick: (file: CloudFile) => void;
-  onViewImageClick?: (file: CloudFile) => void;
-  onPlayVideoClick?: (file: CloudFile) => void;
+  onViewImageClick: (file: CloudFile) => void; // Changed prop name for consistency
+  onPlayVideoClick: (file: CloudFile) => void; // Changed prop name for consistency
 }
 
 const FileTypeIcon = ({ type, name, dataAiHint }: { type: CloudFile['type'], name: string, dataAiHint?: string }) => {
@@ -35,9 +35,9 @@ const FileTypeIcon = ({ type, name, dataAiHint }: { type: CloudFile['type'], nam
     case 'audio':
       return <FileAudio {...iconProps} data-ai-hint={dataAiHint || "audio file"}/>;
     case 'document':
-      if (name.endsWith('.pdf')) return <FileText {...iconProps} color="red" data-ai-hint={dataAiHint || "pdf document"}/>;
-      if (name.endsWith('.doc') || name.endsWith('.docx')) return <FileText {...iconProps} color="blue" data-ai-hint={dataAiHint || "word document"}/>;
-      if (name.endsWith('.xls') || name.endsWith('.xlsx')) return <FileText {...iconProps} color="green" data-ai-hint={dataAiHint || "excel spreadsheet"}/>;
+      if (name.toLowerCase().endsWith('.pdf')) return <FileText {...iconProps} className="w-12 h-12 text-red-500 flex-shrink-0" strokeWidth={1.5} data-ai-hint={dataAiHint || "pdf document"}/>;
+      if (name.toLowerCase().endsWith('.doc') || name.toLowerCase().endsWith('.docx')) return <FileText {...iconProps} className="w-12 h-12 text-blue-500 flex-shrink-0" strokeWidth={1.5} data-ai-hint={dataAiHint || "word document"}/>;
+      if (name.toLowerCase().endsWith('.xls') || name.toLowerCase().endsWith('.xlsx')) return <FileText {...iconProps} className="w-12 h-12 text-green-500 flex-shrink-0" strokeWidth={1.5} data-ai-hint={dataAiHint || "excel spreadsheet"}/>;
       return <FileText {...iconProps} data-ai-hint={dataAiHint || "document file"}/>;
     default:
       return <FileQuestion {...iconProps} data-ai-hint={dataAiHint || "unknown file"}/>;
@@ -48,13 +48,18 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
   ({ file, style, onDetailsClick, onQueueDownloadClick, onViewImageClick, onPlayVideoClick }, ref) => {
     
     const handleCardClick = (e: MouseEvent) => {
-      // Prevent DropdownMenu from triggering this if click originated from menu
-      if ((e.target as HTMLElement).closest('[role="menuitem"]')) {
+      // Prevent DropdownMenu from triggering this if click originated from menu item
+      const targetElement = e.target as HTMLElement;
+      if (targetElement.closest('[role="menuitem"], [data-radix-dropdown-menu-trigger]')) {
         return;
       }
       onDetailsClick(file);
     };
 
+    const handleDropdownSelect = (event: Event) => {
+        event.preventDefault(); // Prevents the dropdown from closing if necessary, and stops card click
+    };
+    
     return (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -62,21 +67,29 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
             ref={ref}
             className={cn(
               "flex flex-col h-40 w-full overflow-hidden rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200 animate-item-enter cursor-pointer",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 bg-card" 
             )}
             style={style}
             onClick={handleCardClick}
-            onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && handleCardClick(e as any)}
-            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                // Allow Enter/Space on Card to open details, unless on dropdown trigger
+                if (!(e.target as HTMLElement).closest('[data-radix-dropdown-menu-trigger]')) {
+                  handleCardClick(e as any);
+                }
+              }
+            }}
+            tabIndex={0} // Make card focusable for keyboard navigation
             aria-label={`File: ${file.name}, Type: ${file.type}`}
           >
             <TooltipProvider delayDuration={300}>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <CardContent className="flex flex-col items-center justify-center text-center p-3 flex-grow w-full overflow-hidden">
+                  {/* This div is necessary for TooltipTrigger when Card is asChild */}
+                  <div className="flex flex-col items-center justify-center text-center p-3 flex-grow w-full overflow-hidden">
                     <FileTypeIcon type={file.type} name={file.name} dataAiHint={file.dataAiHint} />
-                    <p className="text-xs font-medium mt-2 truncate w-full" title={file.name}>{file.name}</p>
-                  </CardContent>
+                    <p className="text-xs font-medium mt-2 truncate w-full px-1" title={file.name}>{file.name}</p>
+                  </div>
                 </TooltipTrigger>
                 <TooltipContent side="bottom" align="center">
                   <p className="font-semibold">{file.name}</p>
@@ -87,7 +100,7 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
             </TooltipProvider>
           </Card>
         </DropdownMenuTrigger>
-        <DropdownMenuContent className="w-56" align="start">
+        <DropdownMenuContent className="w-56" align="start" onSelect={handleDropdownSelect}>
           <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onDetailsClick(file); }}>
             <Info className="mr-2 h-4 w-4" />
             <span>Details</span>
@@ -96,7 +109,7 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
             <Download className="mr-2 h-4 w-4" />
             <span>Download</span>
           </DropdownMenuItem>
-          {file.type === 'image' && onViewImageClick && file.url && (
+          {file.type === 'image' && file.url && (
             <>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onViewImageClick(file); }}>
@@ -105,7 +118,7 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
               </DropdownMenuItem>
             </>
           )}
-          {file.type === 'video' && onPlayVideoClick && file.url && (
+          {file.type === 'video' && file.url && (
             <>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onPlayVideoClick(file); }}>
@@ -121,3 +134,4 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
 );
 
 ContentFileItem.displayName = "ContentFileItem";
+
