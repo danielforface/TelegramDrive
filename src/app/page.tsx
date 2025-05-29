@@ -374,8 +374,6 @@ export default function Home() {
                 const offsetWithinCurrentBlock = upToDateItem.currentOffset % ONE_MB;
                 const bytesLeftInCurrentBlock = ONE_MB - offsetWithinCurrentBlock;
     
-                // Determine the maximum number of bytes we can ideally request in this call,
-                // respecting the 1MB block boundary and our preferred DOWNLOAD_CHUNK_SIZE.
                 let idealRequestSize = Math.min(bytesLeftInCurrentBlock, DOWNLOAD_CHUNK_SIZE);
                 
                 if (bytesNeededForFile <= 0) {
@@ -388,8 +386,6 @@ export default function Home() {
                     actualLimitForApi = Math.floor(idealRequestSize / KB_1) * KB_1;
                 }
                 
-                // Final safeguard: if the calculation somehow resulted in 0, but we still need bytes
-                // for the file, and our ideal size was positive, request at least 1KB.
                 if (actualLimitForApi === 0 && bytesNeededForFile > 0 && idealRequestSize > 0) {
                     actualLimitForApi = KB_1;
                 }
@@ -474,12 +470,6 @@ export default function Home() {
 
                     if(q_item.cdnFileToken && q_item.cdnFileHashes) { 
                       nextCdnProcessingIndex = (q_item.cdnCurrentFileHashIndex || 0) + 1;
-                      // For CDN, nextReqOffset for the next actual file part comes from the next cdnFileHash.offset
-                      // but downloadedBytes keeps track of total. The currentOffset for CDN means the offset *within the file*
-                      // from which the *next block* should be fetched based on cdnFileHashes.
-                      // The actual `offset` sent to downloadCdnFileChunk is from cdnFileHashes[nextCdnProcessingIndex].offset.
-                      // For now, let's just use newDownloadedBytes as a placeholder for offset, this needs refinement for CDN.
-                      // A better approach: CDN downloads block by block. The offset is the block's offset.
                       nextReqOffset = newDownloadedBytes; 
                     } else { 
                       nextReqOffset = q_item.currentOffset + chunkSize;
@@ -620,6 +610,7 @@ export default function Home() {
         });
         activeDownloadsRef.current.clear(); 
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); 
 
 
@@ -1074,14 +1065,11 @@ export default function Home() {
     try {
         await fetchVideoAndCreateStreamUrl(file, newController.signal);
     } catch (error) {
-        // Errors from fetchVideoAndCreateStreamUrl are handled within it (toast, state updates)
-        // This catch is primarily for unexpected errors in prepareAndPlayVideoStream itself
         console.error("Error in prepareAndPlayVideoStream directly:", error);
-         if (!newController.signal.aborted) { // Avoid double-toasting if already handled
+         if (!newController.signal.aborted) { 
             toast({ title: "Video Preparation Error", description: `An unexpected error occurred while preparing ${file.name}.`, variant: "destructive" });
         }
     } finally {
-        // Ensure isPreparingVideoStream is reset if this was the controller that finished/aborted
         if (videoStreamAbortControllerRef.current === newController) {
             setIsPreparingVideoStream(false);
             setPreparingVideoStreamForFileId(null);
@@ -1113,11 +1101,9 @@ export default function Home() {
     if (isPreparingVideoStream && videoStreamAbortControllerRef.current && !videoStreamAbortControllerRef.current.signal.aborted) {
         videoStreamAbortControllerRef.current.abort("Video player closed during preparation");
     }
-    // Reset states related to video preparation
     setIsPreparingVideoStream(false); 
     setPreparingVideoStreamForFileId(null);
 
-    // Revoke object URL and clear playingVideoUrl
     if (videoStreamUrl) { 
         URL.revokeObjectURL(videoStreamUrl);
         setVideoStreamUrl(null);
@@ -1125,13 +1111,11 @@ export default function Home() {
     setPlayingVideoUrl(null); 
   }, [isPreparingVideoStream, videoStreamUrl]);
 
-  // Cleanup effect for videoStreamUrl when the component unmounts
   useEffect(() => {
     return () => {
         if (videoStreamUrl) {
             URL.revokeObjectURL(videoStreamUrl);
         }
-        // Also ensure any active preparation is aborted on unmount
         if (videoStreamAbortControllerRef.current && !videoStreamAbortControllerRef.current.signal.aborted) {
             videoStreamAbortControllerRef.current.abort("Component unmounting");
         }
@@ -1281,7 +1265,5 @@ export default function Home() {
     </div>
   );
 }
-
-    
 
     
