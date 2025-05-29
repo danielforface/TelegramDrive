@@ -92,10 +92,19 @@ export default function Home() {
       }
     } catch (error: any) {
       console.warn("Error checking existing connection:", error.message, error.originalErrorObject || error);
+      if (error.message?.includes("Invalid hash in mt_dh_gen_ok")) {
+        toast({
+          title: "Connection Handshake Failed",
+          description: "Could not establish a secure connection. Please verify your API ID/Hash in .env.local. If correct, try clearing localStorage for this site and restarting the server.",
+          variant: "destructive",
+          duration: 10000,
+        });
+        setAuthError("Connection handshake failed. Check API credentials & localStorage.");
+      }
       setIsConnected(false);
       handleReset(false);
     }
-  }, []); 
+  }, [toast]); // Added toast to dependencies
 
   useEffect(() => {
     checkExistingConnection();
@@ -132,12 +141,12 @@ export default function Home() {
             if (item.cdnFileToken && item.cdnDcId && item.cdnFileHashes && item.cdnEncryptionKey && item.cdnEncryptionIv) {
                 const currentHashBlockIndex = item.cdnCurrentFileHashIndex || 0;
                 if (currentHashBlockIndex >= item.cdnFileHashes.length) {
-                    setDownloadQueue(prevQ => prevQ.map(q => q.id === item.id ? { ...q, status: 'completed', progress: 100 } : q));
+                    setDownloadQueue(prevQ => prevQ.map(q => q.id === item.id ? { ...q, status: 'completed', progress: 100, downloadedBytes: item.totalSizeInBytes } : q));
                     activeDownloadsRef.current.delete(item.id);
                     continue;
                 }
                 const cdnBlock = item.cdnFileHashes[currentHashBlockIndex];
-                actualLimit = cdnBlock.limit; // For CDN, limit is determined by the hash block
+                actualLimit = cdnBlock.limit; 
                 
                 console.log(`Processing CDN download for ${item.name}, DC: ${item.cdnDcId}, Block ${currentHashBlockIndex}, Offset: ${cdnBlock.offset}, Limit: ${actualLimit}`);
                 chunkResponse = await telegramService.downloadCdnFileChunk(
@@ -166,29 +175,28 @@ export default function Home() {
             } else {
                 // Direct Download Path
                 const bytesToEndOfCurrent1MBBlock = ONE_MB - (currentOffset % ONE_MB);
-                // Determine the maximum we can actually request in this turn based on file end, 1MB block end, and our preferred chunk size
                 const maxDataToFetchThisTurn = Math.min(remainingBytes, bytesToEndOfCurrent1MBBlock, DOWNLOAD_CHUNK_SIZE);
 
                 if (maxDataToFetchThisTurn <= 0) {
-                    actualLimit = 0; // No data to fetch or an error in logic.
+                    actualLimit = 0; 
                 } else if (maxDataToFetchThisTurn < KB_1) {
-                    // If what's left (or can be fetched in this 1MB block) is less than 1KB,
-                    // we still need to request a 'limit' that is a multiple of 1KB.
-                    // The server will return fewer bytes if that's all that's left.
                     actualLimit = KB_1;
                 } else {
-                    // We can fetch 1KB or more. Round down to the nearest multiple of 1KB.
                     actualLimit = Math.floor(maxDataToFetchThisTurn / KB_1) * KB_1;
-                    // Safety check: if rounding down made it zero (e.g. maxDataToFetchThisTurn was 1000, and KB_1 is 1024), make it KB_1.
-                    if (actualLimit === 0 && maxDataToFetchThisTurn > 0) { // maxDataToFetchThisTurn > 0 ensures we actually want to fetch
+                    if (actualLimit === 0 && maxDataToFetchThisTurn > 0) { 
                         actualLimit = KB_1;
                     }
                 }
                 
-                console.log(`Processing direct download for ${item.name}, offset: ${currentOffset}, calculated limit: ${actualLimit}, maxDataThisTurn: ${maxDataToFetchThisTurn}, remainingInFile: ${remainingBytes}, remainingIn1MBBlock: ${bytesToEndOfCurrent1MBBlock}`);
+                console.log(`Processing direct download for ${item.name}, offset: ${currentOffset}, calculated limit for API: ${actualLimit}, maxDataToFetchThisTurn: ${maxDataToFetchThisTurn}, remainingInFile: ${remainingBytes}, remainingIn1MBBlock: ${bytesToEndOfCurrent1MBBlock}, totalSize: ${item.totalSizeInBytes}`);
                 
                 if (actualLimit <= 0) { 
-                   setDownloadQueue(prevQ => prevQ.map(q => q.id === item.id ? { ...q, status: 'completed', progress: 100, downloadedBytes: item.totalSizeInBytes } : q));
+                   if (item.downloadedBytes >= item.totalSizeInBytes) {
+                       setDownloadQueue(prevQ => prevQ.map(q => q.id === item.id ? { ...q, status: 'completed', progress: 100, downloadedBytes: item.totalSizeInBytes } : q));
+                   } else if (remainingBytes > 0) {
+                        console.error(`Logic error in direct download: Calculated limit is ${actualLimit} for ${item.name} but ${remainingBytes} bytes remaining. MaxDataToFetch: ${maxDataToFetchThisTurn}. Failing download.`);
+                        setDownloadQueue(prevQ => prevQ.map(q => q.id === item.id ? { ...q, status: 'failed', error_message: 'Internal limit calculation error (zero limit)' } : q));
+                   }
                    activeDownloadsRef.current.delete(item.id);
                    continue;
                 }
@@ -223,7 +231,7 @@ export default function Home() {
                         hash: fh.hash,
                     })),
                     cdnCurrentFileHashIndex: 0, 
-                    currentOffset: 0, // Reset offset for CDN download based on hash blocks
+                    currentOffset: 0, 
                     downloadedBytes: 0, 
                     progress: 0, 
                     chunks: [], 
@@ -242,16 +250,9 @@ export default function Home() {
               let nextCdnHashIndex = item.cdnCurrentFileHashIndex;
 
               if(item.cdnFileToken && item.cdnFileHashes) { 
-                // For CDN, the next offset is determined by the next hash block, or completion
-                // currentOffset in item is total downloaded from CDN blocks.
-                // The actual offset for the *next* API call for CDN is from cdnFileHashes[nextCdnHashIndex].offset
-                // We only increment cdnCurrentFileHashIndex here. The offset for API call is derived at start of CDN block processing.
                 nextCdnHashIndex = (item.cdnCurrentFileHashIndex || 0) + 1;
-                // For progress, currentOffset should track total bytes downloaded from CDN.
-                // Let's ensure nextItemOffset is set to the total bytes downloaded for CDN for consistency.
                 nextItemOffset = newDownloadedBytes;
               } else { 
-                // For direct download, advance offset by chunk size
                 nextItemOffset = currentOffset + chunkSize;
               }
 
@@ -271,7 +272,6 @@ export default function Home() {
                       console.log(`File ${item.name} downloaded and saved.`);
                       return { ...q, status: 'completed', progress: 100, downloadedBytes: newDownloadedBytes, chunks: [], cdnCurrentFileHashIndex: undefined, currentOffset: item.totalSizeInBytes };
                     }
-                    // Continue download
                     return {
                       ...q,
                       downloadedBytes: newDownloadedBytes,
@@ -520,7 +520,8 @@ export default function Home() {
       setAuthError(description);
     } else if (error.message === 'AUTH_RESTART') {
         description = "Authentication process needs to be restarted. Please try entering your phone number again.";
-        handleReset(false);
+        setAuthError(description); // Ensure error is displayed for AUTH_RESTART
+        handleReset(false); // Call handleReset for AUTH_RESTART
     } else {
         setAuthError(description); 
     }
@@ -573,7 +574,6 @@ export default function Home() {
         fetchInitialChats();
         toast({ title: "Sign In Successful!", description: "Connected to Telegram." });
       } else {
-        // This case should ideally be handled by throwing an error from signIn
         setAuthError("Sign in failed. Unexpected response from server.");
         toast({ title: "Sign In Failed", description: "Unexpected response from server.", variant: "destructive" });
       }
@@ -690,7 +690,7 @@ export default function Home() {
     toast({ title: "Preparing Download...", description: `Getting details for ${file.name}.` });
     const downloadInfo = await telegramService.prepareFileDownloadInfo(file);
 
-    if (downloadInfo && downloadInfo.location && downloadInfo.totalSize > 0) {
+    if (downloadInfo && downloadInfo.location && downloadInfo.totalSize > 0 && file.totalSizeInBytes) {
       const controller = new AbortController();
       const newItem: DownloadQueueItemType = {
         id: file.id,
@@ -709,7 +709,7 @@ export default function Home() {
         currentOffset: 0,
         chunks: [],
         location: downloadInfo.location,
-        totalSizeInBytes: downloadInfo.totalSize, 
+        totalSizeInBytes: file.totalSizeInBytes, 
         abortController: controller,
       };
       setDownloadQueue(prevQueue => {
@@ -719,7 +719,7 @@ export default function Home() {
       setIsDownloadManagerOpen(true); 
       toast({ title: "Download Started", description: `${file.name} added to queue and started.` });
     } else {
-      toast({ title: "Download Failed", description: `Could not prepare ${file.name} for download. File info missing or invalid.`, variant: "destructive" });
+      toast({ title: "Download Failed", description: `Could not prepare ${file.name} for download. File info missing or invalid. Size: ${file.totalSizeInBytes}`, variant: "destructive" });
     }
   };
 
@@ -941,6 +941,5 @@ export default function Home() {
     </div>
   );
 }
-
 
     
