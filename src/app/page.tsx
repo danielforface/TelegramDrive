@@ -100,7 +100,7 @@ export default function Home() {
     return () => {
       window.removeEventListener('resize', calculateAndSetChatListHeight);
     };
-  }, [calculateAndSetChatListHeight, isConnected]);
+  }, [calculateAndSetChatListHeight, isConnected]); // Re-calculate if isConnected changes (layout might change)
 
   const handleApiError = useCallback((error: any, title: string, defaultMessage: string) => {
     console.error(`${title}:`, error.message, error.originalErrorObject || error);
@@ -160,7 +160,7 @@ export default function Home() {
       setIsProcessingChats(false);
       isLoadingMoreChatsRequestInFlightRef.current = false; 
     }
-  }, [toast, handleApiError, isProcessingChats]); 
+  }, [toast, handleApiError, isProcessingChats]); // Added isProcessingChats
 
   const checkExistingConnection = useCallback(async () => {
     console.log("Checking existing connection...");
@@ -175,14 +175,14 @@ export default function Home() {
         setIsConnected(true);
         setAuthStep('initial');
         setAuthError(null);
-        await fetchInitialChats(); // Ensure fetchInitialChats completes before proceeding
+        await fetchInitialChats(); 
       } else {
         console.log("No existing connection found or session invalid.");
         setIsConnected(false);
         setPhoneNumber('');
         setAuthStep('initial');
         setAuthError(null);
-        setAllChats([]); // Clear chats if not connected
+        setAllChats([]); 
       }
     } catch (error: any) {
       console.warn("Error checking existing connection:", error.message, error.originalErrorObject || error);
@@ -209,9 +209,9 @@ export default function Home() {
   }, [toast, fetchInitialChats, handleApiError]);
 
   useEffect(() => {
-    // This useEffect now runs only once on component mount
     checkExistingConnection();
-  }, []); // Empty dependency array
+  }, []); // Empty dependency array: runs only once on mount
+
 
   const handleReset = useCallback(async (performServerLogout = true) => {
     if (performServerLogout && isConnected) {
@@ -392,7 +392,7 @@ export default function Home() {
                 } else if (idealRequestSize <= 0) {
                      actualLimitForApi = bytesNeededForFile > 0 ? KB_1 : 0;
                 } else if (idealRequestSize < KB_1) {
-                     actualLimitForApi = KB_1;
+                     actualLimitForApi = KB_1; // Must request at least 1KB if precise
                 } else {
                     actualLimitForApi = Math.floor(idealRequestSize / KB_1) * KB_1;
                 }
@@ -603,7 +603,7 @@ export default function Home() {
         });
         activeDownloadsRef.current.clear(); 
     };
-  }, []); 
+  }, []); // Empty dependency array: runs only on mount and unmount.
 
 
   const loadMoreChatsCallback = useCallback(async () => {
@@ -633,7 +633,7 @@ export default function Home() {
       setIsLoadingMoreChats(false);
       isLoadingMoreChatsRequestInFlightRef.current = false; 
     }
-  }, [isConnected, isProcessingChats, hasMoreChats, chatsOffsetDate, chatsOffsetId, chatsOffsetPeer, toast, handleApiError, SUBSEQUENT_CHATS_LOAD_LIMIT]);
+  }, [isConnected, isProcessingChats, hasMoreChats, chatsOffsetDate, chatsOffsetId, chatsOffsetPeer, toast, handleApiError, SUBSEQUENT_CHATS_LOAD_LIMIT, isLoadingMoreChats]); // Added isLoadingMoreChats to dependencies
   
 
   const observerChats = useRef<IntersectionObserver | null>(null);
@@ -775,7 +775,7 @@ export default function Home() {
         setAuthStep('initial');
         setPhoneCode('');
         setPassword('');
-        await fetchInitialChats(); // Ensure fetchInitialChats completes
+        await fetchInitialChats(); 
         toast({ title: "Sign In Successful!", description: "Connected to Telegram." });
       } else {
         setAuthError("Sign in failed. Unexpected response from server.");
@@ -811,7 +811,7 @@ export default function Home() {
         setAuthStep('initial');
         setPhoneCode('');
         setPassword('');
-        await fetchInitialChats(); // Ensure fetchInitialChats completes
+        await fetchInitialChats(); 
         toast({ title: "2FA Successful!", description: "Connected to Telegram." });
       } else {
         setAuthError("2FA failed. Unexpected response from server.");
@@ -890,11 +890,7 @@ export default function Home() {
     if (itemToCancel && itemToCancel.abortController && !itemToCancel.abortController.signal.aborted) {
         itemToCancel.abortController.abort("User cancelled download");
     }
-    setDownloadQueue(prevQueue =>
-      prevQueue.map(item =>
-        item.id === itemId ? { ...item, status: 'cancelled', progress: 0, downloadedBytes: 0, error_message: "User cancelled" } : item
-      )
-    );
+    // State update is handled by the useEffect detecting the aborted signal
     toast({ title: "Download Cancelled", description: `Download for ${itemToCancel?.name || 'item'} has been cancelled.`});
   };
 
@@ -1001,7 +997,11 @@ export default function Home() {
         } else if (chunkResponse?.errorType) {
           throw new Error(`Failed to download video chunk: ${chunkResponse.errorType}`);
         } else if (chunkResponse?.isCdnRedirect){
-            throw new Error("CDN Redirect not handled during video stream preparation.");
+            // Basic CDN redirect handling for video stream - not ideal for true streaming
+            console.warn("CDN Redirect encountered during video stream prep. Attempting to switch to CDN download for the rest.");
+            // For simplicity in this demo, we might try to download the rest via CDN or just fail.
+            // A more robust solution would integrate the full CDN logic from the download manager.
+            throw new Error("CDN Redirect not fully handled during video stream preparation. Try regular download.");
         } else {
           if (downloadedBytes < totalSize) {
             console.warn(`Video chunk download for ${file.name} returned empty/unexpected bytes before completion. Downloaded: ${downloadedBytes}/${totalSize}. Resp:`, chunkResponse);
@@ -1063,6 +1063,7 @@ export default function Home() {
             console.error("Unexpected error during video stream preparation orchestrator:", error);
         }
     } finally {
+        // Ensure this cleanup only happens if this controller is still the active one
         if (videoStreamAbortControllerRef.current === newController) {
             setIsPreparingVideoStream(false);
             setPreparingVideoStreamForFileId(null);
@@ -1073,13 +1074,13 @@ export default function Home() {
 
   const handlePlayVideo = (file: CloudFile) => {
      if (file.type === 'video') {
-        if (file.url) { 
+        if (file.url) { // If a direct URL (e.g., placeholder) is available
             setPlayingVideoUrl(file.url);
             setPlayingVideoName(file.name);
-            setIsPreparingVideoStream(false); 
+            setIsPreparingVideoStream(false); // Not preparing if using direct URL
             setPreparingVideoStreamForFileId(null);
             setIsVideoPlayerOpen(true);
-        } else if (file.totalSizeInBytes && file.totalSizeInBytes > 0) { 
+        } else if (file.totalSizeInBytes && file.totalSizeInBytes > 0) { // Attempt to fetch and stream if size is known
             prepareAndPlayVideoStream(file);
         } else {
             toast({ title: "Playback Not Possible", description: "Video data or size is missing.", variant: "default"});
@@ -1097,18 +1098,21 @@ export default function Home() {
     setIsPreparingVideoStream(false);
     setPreparingVideoStreamForFileId(null);
 
+    // Revoke the Blob URL if it was created for streaming
     if (videoStreamUrl) {
         URL.revokeObjectURL(videoStreamUrl);
         setVideoStreamUrl(null);
     }
-    setPlayingVideoUrl(null); 
+    setPlayingVideoUrl(null); // Also clear the URL being used by the player
   }, [isPreparingVideoStream, videoStreamUrl]);
 
+  // Cleanup effect for the video stream URL when the component unmounts
   useEffect(() => {
     return () => {
         if (videoStreamUrl) {
             URL.revokeObjectURL(videoStreamUrl);
         }
+        // Abort any ongoing video stream preparation if component unmounts
         if (videoStreamAbortControllerRef.current && !videoStreamAbortControllerRef.current.signal.aborted) {
             videoStreamAbortControllerRef.current.abort("Component unmounting");
         }
@@ -1133,7 +1137,7 @@ export default function Home() {
             isLoading={isConnecting}
             error={authError}
             phoneNumber={phoneNumber}
-            setPhoneNumber={setPhoneNumber}
+            setPhoneNumber={setPhoneNumber} // Pass the setter
             phoneCode={phoneCode}
             setPhoneCode={setPhoneCode}
             password={password}
@@ -1158,12 +1162,15 @@ export default function Home() {
         onDisconnect={() => handleReset(true)}
         onOpenDownloadManager={handleOpenDownloadManager}
       />
-      <div className="flex-1 flex overflow-hidden min-h-0">
-        <div ref={chatListContainerRef} className="bg-card border-r overflow-y-auto w-64 md:w-72 lg:w-80 flex-shrink-0">
+      <div className="flex-1 flex overflow-hidden min-h-0"> {/* Ensures this div fills remaining space and allows internal scrolling */}
+        <div 
+          ref={chatListContainerRef} 
+          className="bg-card border-r overflow-y-auto w-64 md:w-72 lg:w-80 flex-shrink-0 rounded-lg shadow-md"
+        >
           <div className="p-4 sticky top-0 bg-card z-10 border-b">
             <h2 className="text-xl font-semibold text-primary">Chats</h2>
           </div>
-          <div className="p-4"> 
+          <div className="p-4"> {/* Inner padding for content, distinct from card styling */}
             {isProcessingChats && allChats.length === 0 ? (
                 <div className="flex flex-col items-center p-4">
                 <Loader2 className="animate-spin h-8 w-8 text-primary mb-2" />
@@ -1200,7 +1207,7 @@ export default function Home() {
           </div>
         </div>
 
-        <main className="flex-1 overflow-y-auto bg-background"> 
+        <main className="flex-1 overflow-y-auto bg-background"> {/* flex-1 to take remaining width, overflow-y-auto for its own scrolling */}
            <div className="container mx-auto h-full px-4 sm:px-6 lg:px-8 py-4 md:py-6 lg:py-8">
             {selectedFolder ? (
                 <MainContentView
@@ -1209,7 +1216,7 @@ export default function Home() {
                 isLoading={isLoadingChatMedia && currentChatMedia.length === 0}
                 hasMore={hasMoreChatMedia}
                 lastItemRef={lastMediaItemRef}
-                onFileDetailsClick={handleOpenFileDetails}
+                onFileClick={handleOpenFileDetails} // Changed from onFileDetailsClick
                 onQueueDownloadClick={handleQueueDownload}
                 onFileViewImageClick={handleViewImage}
                 onFilePlayVideoClick={handlePlayVideo}
