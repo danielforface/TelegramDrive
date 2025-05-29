@@ -36,7 +36,7 @@ export default function Home() {
   const [isProcessingChats, setIsProcessingChats] = useState(false);
   const [allChats, setAllChats] = useState<CloudFolder[]>([]);
   const [isLoadingMoreChats, setIsLoadingMoreChats] = useState(false);
-  const isLoadingMoreChatsRequestInFlightRef = useRef(false);
+  const isLoadingMoreChatsRequestInFlightRef = useRef(false); // Prevents flood requests
   const [hasMoreChats, setHasMoreChats] = useState(true);
   const [chatsOffsetDate, setChatsOffsetDate] = useState(0);
   const [chatsOffsetId, setChatsOffsetId] = useState(0);
@@ -125,9 +125,10 @@ export default function Home() {
   }, [toast]);
 
   const fetchInitialChats = useCallback(async () => {
-    if (isProcessingChats || isLoadingMoreChatsRequestInFlightRef.current) return;
+    if (isProcessingChats || isLoadingMoreChatsRequestInFlightRef.current) return; // Guard
+    
     setIsProcessingChats(true);
-    isLoadingMoreChatsRequestInFlightRef.current = false; // Reset here too for safety on new initial load
+    isLoadingMoreChatsRequestInFlightRef.current = true; // Set guard for this specific operation
     setAllChats([]);
     setSelectedFolder(null);
     setCurrentChatMedia([]);
@@ -136,6 +137,7 @@ export default function Home() {
     setChatsOffsetId(0);
     setChatsOffsetPeer({ _: 'inputPeerEmpty' });
     setHasMoreChats(true);
+    setIsLoadingMoreChats(false); // Ensure this is reset if coming from another state
     
     toast({ title: "Fetching Chats...", description: "Loading your Telegram conversations." });
 
@@ -153,10 +155,12 @@ export default function Home() {
       }
     } catch (error: any) {
       handleApiError(error, "Error Fetching Chats", `Could not load your chats. ${error.message || 'Unknown error'}`);
+      setHasMoreChats(false); // Stop further loading attempts on error
     } finally {
       setIsProcessingChats(false);
+      isLoadingMoreChatsRequestInFlightRef.current = false; // Reset guard
     }
-  }, [toast, handleApiError, isProcessingChats]); // isProcessingChats is for the UI guard
+  }, [toast, handleApiError, isProcessingChats]); // Added isProcessingChats
 
   const checkExistingConnection = useCallback(async () => {
     console.log("Checking existing connection...");
@@ -591,16 +595,15 @@ export default function Home() {
 
     return () => {
         clearInterval(intervalId);
-        // Cleanup any active downloads if component unmounts
         downloadQueueRef.current.forEach(item => {
             if (item.abortController && !item.abortController.signal.aborted &&
                 (item.status === 'downloading' || item.status === 'refreshing_reference' || item.status === 'queued' || item.status === 'paused')) {
                 item.abortController.abort("Component cleanup or effect re-run");
             }
         });
-        activeDownloadsRef.current.clear(); // Clear active downloads on unmount
+        activeDownloadsRef.current.clear(); 
     };
-  }, []); // Empty dependency array: set up interval once on mount
+  }, []); 
 
 
   const loadMoreChatsCallback = useCallback(async () => {
@@ -628,26 +631,22 @@ export default function Home() {
       setHasMoreChats(false); // Stop trying if there's an error
     } finally {
       setIsLoadingMoreChats(false);
-      // isLoadingMoreChatsRequestInFlightRef is reset by a separate useEffect
+      isLoadingMoreChatsRequestInFlightRef.current = false; 
     }
-  }, [isConnected, isProcessingChats, isLoadingMoreChats, hasMoreChats, chatsOffsetDate, chatsOffsetId, chatsOffsetPeer, toast, handleApiError]);
+  }, [isConnected, isProcessingChats, hasMoreChats, chatsOffsetDate, chatsOffsetId, chatsOffsetPeer, toast, handleApiError, SUBSEQUENT_CHATS_LOAD_LIMIT]);
   
-  useEffect(() => {
-    if (!isLoadingMoreChats && isConnected) { 
-      const timer = setTimeout(() => {
-        isLoadingMoreChatsRequestInFlightRef.current = false;
-      }, 100); 
-      return () => clearTimeout(timer);
-    }
-  }, [isLoadingMoreChats, isConnected]);
-
 
   const observerChats = useRef<IntersectionObserver | null>(null);
   const lastChatElementRef = useCallback((node: HTMLLIElement | null) => {
     if (isLoadingMoreChats || isProcessingChats || isLoadingMoreChatsRequestInFlightRef.current) return;
     if (observerChats.current) observerChats.current.disconnect();
     observerChats.current = new IntersectionObserver(entries => {
-      if (entries[0].isIntersecting && hasMoreChats && !isLoadingMoreChats && !isProcessingChats && !isLoadingMoreChatsRequestInFlightRef.current) {
+      if (entries[0].isIntersecting && 
+          hasMoreChats && 
+          !isProcessingChats &&
+          !isLoadingMoreChats && 
+          !isLoadingMoreChatsRequestInFlightRef.current
+        ) {
         loadMoreChatsCallback();
       }
     });
@@ -990,14 +989,13 @@ export default function Home() {
         let limitForApiCall;
 
         if (idealBytesToRequest <= 0 && remainingInFile > 0) {
-            // This case implies we are at the very end of a 1MB block, or remainingInFile is tiny
-            limitForApiCall = KB_1; // Request a small chunk to finish or cross boundary
+            limitForApiCall = KB_1; 
         } else if (idealBytesToRequest < KB_1 && idealBytesToRequest > 0) {
-            limitForApiCall = KB_1; // If less than 1KB is ideal, still request 1KB (server will send less if that's all)
+            limitForApiCall = KB_1; 
         } else if (idealBytesToRequest >= KB_1) {
-            limitForApiCall = Math.floor(idealBytesToRequest / KB_1) * KB_1; // Round down to nearest KB
+            limitForApiCall = Math.floor(idealBytesToRequest / KB_1) * KB_1; 
         } else {
-            break; // No more bytes to request (or idealBytesToRequest is 0)
+            break; 
         }
         if (limitForApiCall === 0 && remainingInFile > 0) limitForApiCall = KB_1; // Final safeguard
 
@@ -1010,14 +1008,10 @@ export default function Home() {
           downloadedBytes += chunkResponse.bytes.length;
           currentOffset += chunkResponse.bytes.length;
         } else if (chunkResponse?.errorType) {
-          // Here, we should handle FILE_REFERENCE_EXPIRED or CDN_REDIRECT if we want robust video streaming prep
-          // For now, we treat them as errors for simplicity in video streaming prep.
           throw new Error(`Failed to download video chunk: ${chunkResponse.errorType}`);
         } else if (chunkResponse?.isCdnRedirect){
-            // For robust video streaming, we'd need to handle CDN here too.
             throw new Error("CDN Redirect not handled during video stream preparation.");
         } else {
-          // Empty response or unexpected, break if not yet complete
           if (downloadedBytes < totalSize) {
             console.warn(`Video chunk download for ${file.name} returned empty/unexpected bytes before completion. Downloaded: ${downloadedBytes}/${totalSize}. Resp:`, chunkResponse);
           }
@@ -1041,34 +1035,32 @@ export default function Home() {
       } else {
         toast({ title: "Video Preparation Failed", description: `Could not prepare ${file.name}: ${error.message}`, variant: "destructive" });
       }
-      setPlayingVideoUrl(null); // Ensure player doesn't try to play a non-existent URL
-      setIsVideoPlayerOpen(false); // Close player if prep failed
+      setPlayingVideoUrl(null); 
+      setIsVideoPlayerOpen(false); 
     }
-  }, [toast]); // Removed ONE_MB, KB_1, DOWNLOAD_CHUNK_SIZE from deps as they are constants
+  }, [toast]);
 
 
   const prepareAndPlayVideoStream = useCallback(async (file: CloudFile) => {
     if (isPreparingVideoStream && preparingVideoStreamForFileId === file.id) {
       toast({ title: "Already Preparing", description: `Still preparing ${file.name}. Please wait.`, variant: "default" });
-      setIsVideoPlayerOpen(true); // Ensure player is open if already preparing
+      setIsVideoPlayerOpen(true); 
       return;
     }
 
-    // Abort previous stream preparation if any
     if (videoStreamAbortControllerRef.current && !videoStreamAbortControllerRef.current.signal.aborted) {
       videoStreamAbortControllerRef.current.abort("New video stream preparation requested");
     }
-    // Revoke previous blob URL if it exists
     if (videoStreamUrl) {
       URL.revokeObjectURL(videoStreamUrl);
       setVideoStreamUrl(null);
     }
     
-    setPlayingVideoUrl(null); // Important: set to null so player shows loading
+    setPlayingVideoUrl(null); 
     setPlayingVideoName(file.name);
     setIsPreparingVideoStream(true);
     setPreparingVideoStreamForFileId(file.id);
-    setIsVideoPlayerOpen(true); // Open player immediately to show loading state
+    setIsVideoPlayerOpen(true); 
 
     const newController = new AbortController();
     videoStreamAbortControllerRef.current = newController;
@@ -1076,14 +1068,10 @@ export default function Home() {
     try {
         await fetchVideoAndCreateStreamUrl(file, newController.signal);
     } catch (error) {
-        // Errors are handled within fetchVideoAndCreateStreamUrl (toast, closing player if needed)
-        // Only log here if necessary, but avoid duplicate toasts.
-         if (!newController.signal.aborted) { // Check if it wasn't aborted by user action
+         if (!newController.signal.aborted) { 
             console.error("Unexpected error during video stream preparation orchestrator:", error);
-            // toast({ title: "Video Preparation Error", description: `An unexpected error occurred while preparing ${file.name}.`, variant: "destructive" });
         }
     } finally {
-        // Only reset if this is the controller for the *current* operation
         if (videoStreamAbortControllerRef.current === newController) {
             setIsPreparingVideoStream(false);
             setPreparingVideoStreamForFileId(null);
@@ -1094,13 +1082,13 @@ export default function Home() {
 
   const handlePlayVideo = (file: CloudFile) => {
      if (file.type === 'video') {
-        if (file.url) { // If a direct URL exists (e.g. from placeholder or future implementation)
+        if (file.url) { 
             setPlayingVideoUrl(file.url);
             setPlayingVideoName(file.name);
-            setIsPreparingVideoStream(false); // Not preparing if direct URL
+            setIsPreparingVideoStream(false); 
             setPreparingVideoStreamForFileId(null);
             setIsVideoPlayerOpen(true);
-        } else if (file.totalSizeInBytes && file.totalSizeInBytes > 0) { // If no direct URL, attempt to download and stream
+        } else if (file.totalSizeInBytes && file.totalSizeInBytes > 0) { 
             prepareAndPlayVideoStream(file);
         } else {
             toast({ title: "Playback Not Possible", description: "Video data or size is missing.", variant: "default"});
@@ -1118,21 +1106,18 @@ export default function Home() {
     setIsPreparingVideoStream(false);
     setPreparingVideoStreamForFileId(null);
 
-    // Revoke the blob URL when the player is closed
     if (videoStreamUrl) {
         URL.revokeObjectURL(videoStreamUrl);
         setVideoStreamUrl(null);
     }
-    setPlayingVideoUrl(null); // Also clear the URL used by the player
+    setPlayingVideoUrl(null); 
   }, [isPreparingVideoStream, videoStreamUrl]);
 
-  // Cleanup for videoStreamUrl on component unmount
   useEffect(() => {
     return () => {
         if (videoStreamUrl) {
             URL.revokeObjectURL(videoStreamUrl);
         }
-        // Abort any ongoing stream preparation on unmount
         if (videoStreamAbortControllerRef.current && !videoStreamAbortControllerRef.current.signal.aborted) {
             videoStreamAbortControllerRef.current.abort("Component unmounting");
         }
@@ -1157,7 +1142,7 @@ export default function Home() {
             isLoading={isConnecting}
             error={authError}
             phoneNumber={phoneNumber}
-            setPhoneNumber={setPhoneNumber} // Pass down for TelegramConnect to manage its internal state
+            setPhoneNumber={setPhoneNumber}
             phoneCode={phoneCode}
             setPhoneCode={setPhoneCode}
             password={password}
@@ -1182,13 +1167,12 @@ export default function Home() {
         onDisconnect={() => handleReset(true)}
         onOpenDownloadManager={handleOpenDownloadManager}
       />
-      <div className="flex-1 flex overflow-hidden min-h-0"> {/* Ensures this div takes remaining height and enables children to scroll */}
-        {/* Chat List Container with fixed height and internal scroll */}
+      <div className="flex-1 flex overflow-hidden min-h-0">
         <div ref={chatListContainerRef} className="bg-card border-r overflow-y-auto w-64 md:w-72 lg:w-80 flex-shrink-0">
           <div className="p-4 sticky top-0 bg-card z-10 border-b">
             <h2 className="text-xl font-semibold text-primary">Chats</h2>
           </div>
-          <div className="p-4"> {/* Content area for scrolling chats */}
+          <div className="p-4"> 
             {isProcessingChats && allChats.length === 0 ? (
                 <div className="flex flex-col items-center p-4">
                 <Loader2 className="animate-spin h-8 w-8 text-primary mb-2" />
@@ -1225,8 +1209,7 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Main Content Area with its own internal scroll */}
-        <main className="flex-1 overflow-y-auto bg-background"> {/* Removed p-0, container will handle padding */}
+        <main className="flex-1 overflow-y-auto bg-background"> 
            <div className="container mx-auto h-full px-4 sm:px-6 lg:px-8 py-4 md:py-6 lg:py-8">
             {selectedFolder ? (
                 <MainContentView
@@ -1287,3 +1270,5 @@ export default function Home() {
     </div>
   );
 }
+
+    
