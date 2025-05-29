@@ -10,10 +10,10 @@ import {
   SheetHeader,
   SheetTitle,
   SheetFooter,
-  SheetClose,
+  // SheetClose, // No longer explicitly needed here if relying on SheetContent's default
 } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { X, DownloadCloud } from "lucide-react";
+import { DownloadCloud } from "lucide-react"; // X icon also comes from lucide-react for the default close
 import { DownloadQueueItem } from "./download-queue-item";
 
 interface DownloadManagerDialogProps {
@@ -36,10 +36,8 @@ export function DownloadManagerDialog({ isOpen, onClose, queue }: DownloadManage
           <SheetDescription>
             {queue.length > 0 ? `${queue.length} item(s) in queue.` : "Your download queue is empty."}
           </SheetDescription>
-           <SheetClose className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-secondary">
-            <X className="h-4 w-4" />
-            <span className="sr-only">Close</span>
-          </SheetClose>
+           {/* The explicit SheetClose that was here has been removed. 
+               SheetContent will render its default close button. */}
         </SheetHeader>
 
         <ScrollArea className="flex-grow overflow-y-auto p-4 space-y-3">
@@ -54,8 +52,6 @@ export function DownloadManagerDialog({ isOpen, onClose, queue }: DownloadManage
         </ScrollArea>
 
         <SheetFooter className="p-6 border-t flex-shrink-0">
-          {/* Removed the redundant Close button from footer */}
-          {/* If other footer actions are needed in the future, they can be added here */}
            <div className="flex justify-end w-full">
              {/* Example: <Button variant="destructive">Clear Queue</Button> */}
            </div>
@@ -64,3 +60,4 @@ export function DownloadManagerDialog({ isOpen, onClose, queue }: DownloadManage
     </Sheet>
   );
 }
+
