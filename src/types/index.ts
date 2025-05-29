@@ -10,6 +10,7 @@ export interface CloudFile {
   messageId: number; // Keep original message ID for offset
   telegramMessage?: any; // To store the original Telegram message object
   totalSizeInBytes?: number; // Raw size in bytes for download progress calculation
+  inputPeer?: any; // The inputPeer of the chat this file belongs to, for refreshing references
 }
 
 export interface CloudFolder { // Represents a Chat
@@ -35,31 +36,37 @@ export interface MediaHistoryResponse {
   hasMore: boolean;
 }
 
-export type DownloadStatus = 
-  | 'queued' 
-  | 'downloading' 
-  | 'paused' 
-  | 'completed' 
-  | 'failed' 
+export type DownloadStatus =
+  | 'queued'
+  | 'downloading'
+  | 'paused'
+  | 'completed'
+  | 'failed'
   | 'cancelled'
-  | 'cdn_redirect'
-  | 'refreshing_reference';
+  | 'cdn_redirect' // Indicates that the item is waiting for CDN download path
+  | 'refreshing_reference'; // Indicates that the item is waiting for file reference refresh
 
 export interface DownloadQueueItemType extends CloudFile {
   status: DownloadStatus;
   progress: number; // 0-100
-  downloadedBytes: number; // Changed from optional
+  downloadedBytes: number;
   location?: any; // To store InputFileLocation
-  chunks?: Uint8Array[]; // To store downloaded chunks
-  currentOffset: number; // Changed from optional
+  chunks?: Uint8Array[];
+  currentOffset: number;
   abortController?: AbortController;
-  totalSizeInBytes: number; // Made non-optional for active downloads
+  totalSizeInBytes: number; // Should be non-optional for active downloads
   // For CDN redirects
+  cdnDcId?: number;
   cdnFileToken?: Uint8Array;
   cdnEncryptionKey?: Uint8Array;
   cdnEncryptionIv?: Uint8Array;
   cdnFileHashes?: any[];
-  cdnDcId?: number;
+}
+
+export interface FileDownloadInfo {
+    location: any;
+    totalSize: number;
+    mimeType: string;
 }
 
 // For upload.getFile and upload.getCdnFile responses
