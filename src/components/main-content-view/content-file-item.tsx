@@ -3,7 +3,7 @@
 
 import React, { forwardRef, type MouseEvent } from "react";
 import type { CloudFile } from "@/types";
-import { FileText, Image as ImageIcon, Video, FileAudio, FileQuestion, Download, Info, Eye, PlayCircle } from "lucide-react";
+import { FileText, Image as ImageIcon, Video, FileAudio, FileQuestion, Download, Info, Eye, PlayCircle, Loader2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -22,6 +22,8 @@ interface ContentFileItemProps {
   onQueueDownloadClick: (file: CloudFile) => void;
   onViewImageClick: (file: CloudFile) => void;
   onPlayVideoClick: (file: CloudFile) => void;
+  isPreparingStream?: boolean;
+  preparingStreamForFileId?: string | null;
 }
 
 const FileTypeIcon = ({ type, name, dataAiHint }: { type: CloudFile['type'], name: string, dataAiHint?: string }) => {
@@ -44,10 +46,9 @@ const FileTypeIcon = ({ type, name, dataAiHint }: { type: CloudFile['type'], nam
 };
 
 export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
-  ({ file, style, onDetailsClick, onQueueDownloadClick, onViewImageClick, onPlayVideoClick }, ref) => {
+  ({ file, style, onDetailsClick, onQueueDownloadClick, onViewImageClick, onPlayVideoClick, isPreparingStream, preparingStreamForFileId }, ref) => {
     
     const handleCardClick = (e: MouseEvent) => {
-      // Prevent DropdownMenu from triggering this if click originated from menu item
       const targetElement = e.target as HTMLElement;
       if (targetElement.closest('[role="menuitem"], [data-radix-dropdown-menu-trigger]')) {
         return;
@@ -58,6 +59,8 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
     const handleDropdownSelect = (event: Event) => {
         event.preventDefault(); 
     };
+
+    const isCurrentlyPreparingThisFile = isPreparingStream && preparingStreamForFileId === file.id;
     
     return (
       <DropdownMenu>
@@ -106,7 +109,7 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
             <Download className="mr-2 h-4 w-4" />
             <span>Download</span>
           </DropdownMenuItem>
-          {file.type === 'image' && (
+          {file.type === 'image' && file.url && ( // Only show if URL exists, or adapt for blob later
             <>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onViewImageClick(file); }}>
@@ -115,12 +118,19 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
               </DropdownMenuItem>
             </>
           )}
-          {file.type === 'video' && (
+          {file.type === 'video' && ( // Keep video play option always, will attempt stream if no direct URL
             <>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onPlayVideoClick(file); }}>
-                <PlayCircle className="mr-2 h-4 w-4" />
-                <span>Play Video</span>
+              <DropdownMenuItem 
+                onClick={(e) => { e.stopPropagation(); onPlayVideoClick(file); }}
+                disabled={isCurrentlyPreparingThisFile}
+              >
+                {isCurrentlyPreparingThisFile ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <PlayCircle className="mr-2 h-4 w-4" />
+                )}
+                <span>{isCurrentlyPreparingThisFile ? "Preparing..." : "Play Video"}</span>
               </DropdownMenuItem>
             </>
           )}
@@ -131,3 +141,5 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
 );
 
 ContentFileItem.displayName = "ContentFileItem";
+
+    

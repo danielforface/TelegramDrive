@@ -10,7 +10,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { useState, useMemo, useEffect } from "react";
-import { format, isToday, isYesterday, startOfDay, isSameDay, isSameMonth, differenceInCalendarMonths } from "date-fns";
+import { format, isToday, isYesterday, startOfDay, isSameDay, isSameMonth } from "date-fns";
 
 interface MainContentViewProps {
   folderName: string | null;
@@ -22,18 +22,8 @@ interface MainContentViewProps {
   onQueueDownloadClick: (file: CloudFile) => void;
   onFileViewImageClick: (file: CloudFile) => void;
   onFilePlayVideoClick: (file: CloudFile) => void;
-}
-
-// Debounce function
-function debounce<F extends (...args: any[]) => any>(func: F, waitFor: number) {
-  let timeout: ReturnType<typeof setTimeout> | null = null;
-  const debounced = (...args: Parameters<F>) => {
-    if (timeout !== null) {
-      clearTimeout(timeout);
-    }
-    timeout = setTimeout(() => func(...args), waitFor);
-  };
-  return debounced as (...args: Parameters<F>) => ReturnType<F>;
+  isPreparingStream?: boolean;
+  preparingStreamForFileId?: string | null;
 }
 
 const TABS_CONFIG = [
@@ -56,26 +46,24 @@ export function MainContentView({
   onFileDetailsClick,
   onQueueDownloadClick,
   onFileViewImageClick,
-  onFilePlayVideoClick
+  onFilePlayVideoClick,
+  isPreparingStream,
+  preparingStreamForFileId
 }: MainContentViewProps) {
-  const [searchTerm, setSearchTerm] = useState(""); // For future dialog-based search
-  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
+  const [searchTerm, setSearchTerm] = useState(""); 
   const [activeTab, setActiveTab] = useState("all");
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
 
 
   useEffect(() => {
-    // Reset filters when folder changes
     setSearchTerm("");
-    setDebouncedSearchTerm("");
     setActiveTab("all");
     setSelectedDate(undefined);
   }, [folderName]);
 
   const handleSearchButtonClick = () => {
     console.log("Search button clicked. Implement dialog for search results.");
-    // Here you would open a dialog and manage search term state for that dialog
   };
 
   const filteredByTypeFiles = useMemo(() => {
@@ -248,6 +236,8 @@ export function MainContentView({
                     onQueueDownloadClick={onQueueDownloadClick}
                     onViewImageClick={onFileViewImageClick}
                     onPlayVideoClick={onFilePlayVideoClick}
+                    isPreparingStream={isPreparingStream && preparingStreamForFileId === file.id}
+                    preparingStreamForFileId={preparingStreamForFileId}
                   />
                 );
 
@@ -289,3 +279,5 @@ export function MainContentView({
     </div>
   );
 }
+
+    

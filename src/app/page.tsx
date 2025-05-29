@@ -57,6 +57,11 @@ export default function Home() {
   const [isVideoPlayerOpen, setIsVideoPlayerOpen] = useState(false);
   const [playingVideoUrl, setPlayingVideoUrl] = useState<string | null>(null);
   const [playingVideoName, setPlayingVideoName] = useState<string | undefined>(undefined);
+  const [isPreparingVideoStream, setIsPreparingVideoStream] = useState(false);
+  const [videoStreamUrl, setVideoStreamUrl] = useState<string | null>(null); // For Blob URL
+  const [preparingVideoStreamForFileId, setPreparingVideoStreamForFileId] = useState<string | null>(null);
+  const videoStreamAbortControllerRef = useRef<AbortController | null>(null);
+
 
   const [isDownloadManagerOpen, setIsDownloadManagerOpen] = useState(false);
   const [downloadQueue, setDownloadQueue] = useState<DownloadQueueItemType[]>([]);
@@ -147,7 +152,7 @@ export default function Home() {
       } else {
         console.log("No existing connection found or session invalid.");
         setIsConnected(false);
-        setPhoneNumber('');
+        setPhoneNumber(''); // Clear phone number if not connected
         setAuthStep('initial');
         setAuthError(null);
       }
@@ -163,7 +168,7 @@ export default function Home() {
         setAuthError("Connection handshake failed. Check API credentials & localStorage.");
       } else if (error.message === 'AUTH_RESTART') {
           toast({ title: "Authentication Expired", description: "Your session needs to be re-initiated. Please enter your phone number again.", variant: "destructive" });
-          handleReset(false); 
+          handleReset(false); // Reset locally without trying server logout
       }
       setIsConnected(false);
     }
@@ -182,6 +187,7 @@ export default function Home() {
             toast({ title: "Disconnected", description: "Successfully signed out." });
         } catch (error: any) {
             console.error("Error during server logout:", error);
+            // Avoid showing toast for AUTH_KEY_UNREGISTERED as it's expected if already disconnected
             if(!(error.message && error.message.includes('AUTH_KEY_UNREGISTERED'))){
                  toast({ title: "Disconnection Error", description: error.message || "Could not sign out properly from server.", variant: "destructive" });
             }
@@ -211,6 +217,7 @@ export default function Home() {
     setHasMoreChatMedia(true);
     setCurrentMediaOffsetId(0);
 
+    // Abort and clear download queue
     downloadQueueRef.current.forEach(item => {
       if (item.abortController && !item.abortController.signal.aborted) {
         console.log(`Reset: Aborting download for ${item.name}`);
@@ -220,7 +227,19 @@ export default function Home() {
     setDownloadQueue([]);
     activeDownloadsRef.current.clear();
     browserDownloadTriggeredRef.current.clear();
-  }, [isConnected, toast]);
+
+    // Abort video stream preparation
+    if (videoStreamAbortControllerRef.current && !videoStreamAbortControllerRef.current.signal.aborted) {
+        videoStreamAbortControllerRef.current.abort("User reset application state");
+    }
+    if (videoStreamUrl) {
+        URL.revokeObjectURL(videoStreamUrl);
+        setVideoStreamUrl(null);
+    }
+    setIsPreparingVideoStream(false);
+    setPreparingVideoStreamForFileId(null);
+
+  }, [isConnected, toast, videoStreamUrl]);
 
   useEffect(() => {
     const processQueue = async () => {
@@ -296,7 +315,7 @@ export default function Home() {
                         file_token: upToDateItem.cdnFileToken,
                         encryption_key: upToDateItem.cdnEncryptionKey,
                         encryption_iv: upToDateItem.cdnEncryptionIv,
-                        file_hashes: upToDateItem.cdnFileHashes, 
+                        file_hashes: upToDateItem.cdnFileHashes, // Pass the original, structured hashes
                     },
                     cdnBlock.offset, 
                     actualLimitForApi,
@@ -485,6 +504,7 @@ export default function Home() {
                 const updatedMediaObject = await telegramService.refreshFileReference(upToDateItem);
                 if (updatedMediaObject && updatedMediaObject.file_reference) {
                     let newLocation;
+                    // Construct new InputFileLocation based on updatedMediaObject type
                     if (updatedMediaObject._ === 'photo' && updatedMediaObject.id && updatedMediaObject.access_hash && updatedMediaObject.file_reference) {
                         const largestSize = updatedMediaObject.sizes?.find((s: any) => s.type === 'y') || updatedMediaObject.sizes?.sort((a: any, b: any) => (b.w * b.h) - (a.w * a.h))[0];
                         newLocation = {
@@ -509,7 +529,7 @@ export default function Home() {
                             ...q_item,
                             status: 'downloading', 
                             location: newLocation,
-                            telegramMessage: { ...(q_item.telegramMessage || {}), ...updatedMediaObject } 
+                            telegramMessage: { ...(q_item.telegramMessage || {}), ...updatedMediaObject } // Update the whole telegramMessage
                         } : q_item));
                         console.log(`File reference for ${upToDateItem.name} refreshed. Resuming download.`);
                     } else {
@@ -527,7 +547,9 @@ export default function Home() {
                 activeDownloadsRef.current.delete(upToDateItem.id);
             }
         } else if (['paused', 'completed', 'failed', 'cancelled'].includes(upToDateItem.status) ) {
+            // If the item is in one of these terminal/paused states, and it's somehow still in activeDownloadsRef, remove it.
             if(activeDownloadsRef.current.has(upToDateItem.id)){
+                console.warn(`Item ${upToDateItem.name} was in activeDownloadsRef but has status ${upToDateItem.status}. Removing from active.`);
                 activeDownloadsRef.current.delete(upToDateItem.id);
             }
         }
@@ -544,12 +566,13 @@ export default function Home() {
                 (item.status === 'downloading' || item.status === 'refreshing_reference' || item.status === 'queued' || item.status === 'paused')) {
                 console.log(`Cleanup: Aborting download for ${item.name} (status: ${item.status})`);
                 item.abortController.abort("Component cleanup or effect re-run");
+                // No need to setDownloadQueue here as the component is unmounting
             }
         });
-        activeDownloadsRef.current.clear(); 
+        activeDownloadsRef.current.clear(); // Clear all active downloads on unmount
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); 
+  }, []); // Empty dependency array: run only on mount and unmount
 
 
   const loadMoreChatsCallback = useCallback(async () => {
@@ -574,7 +597,7 @@ export default function Home() {
       }
     } catch (error: any) {
       handleApiError(error, "Error Loading More Chats", `Could not load more chats. ${error.message}`);
-      setHasMoreChats(false); 
+      setHasMoreChats(false); // Stop trying if there's an error
     } finally {
       setIsLoadingMoreChats(false);
       isLoadingMoreChatsRequestInFlightRef.current = false;
@@ -591,7 +614,7 @@ export default function Home() {
     });
     if (node) observerChats.current.observe(node);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoadingMoreChats, isProcessingChats, hasMoreChats, loadMoreChatsCallback]);
+  }, [isLoadingMoreChats, isProcessingChats, hasMoreChats, loadMoreChatsCallback]); // Added loadMoreChatsCallback to dependencies
   const observerChats = useRef<IntersectionObserver | null>(null);
 
 
@@ -639,7 +662,7 @@ export default function Home() {
       }
     } catch (error: any) {
       handleApiError(error, "Error Loading More Media", `Could not load more media items. ${error.message}`);
-      setHasMoreChatMedia(false); 
+      setHasMoreChatMedia(false); // Stop trying if there's an error
     } finally {
       setIsLoadingChatMedia(false);
     }
@@ -655,7 +678,7 @@ export default function Home() {
     });
     if (node) observerMedia.current.observe(node);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoadingChatMedia, hasMoreChatMedia, loadMoreChatMediaCallback]);
+  }, [isLoadingChatMedia, hasMoreChatMedia, loadMoreChatMediaCallback]); // Added loadMoreChatMediaCallback
   const observerMedia = useRef<IntersectionObserver | null>(null);
 
   const handleSelectFolder = (folderId: string) => {
@@ -678,7 +701,7 @@ export default function Home() {
     }
     setIsConnecting(true);
     setAuthError(null);
-    setPhoneNumber(fullPhoneNumberFromConnect); 
+    setPhoneNumber(fullPhoneNumberFromConnect); // Update page state with full number
     toast({ title: "Sending Code...", description: `Requesting verification code for ${fullPhoneNumberFromConnect}.` });
 
     try {
@@ -706,18 +729,18 @@ export default function Home() {
     }
     setIsConnecting(true);
     setAuthError(null);
-    setPhoneCode(currentPhoneCode); 
+    setPhoneCode(currentPhoneCode); // Update page state
     toast({ title: "Verifying Code...", description: "Checking your verification code with Telegram." });
     try {
-      const result = await telegramService.signIn(phoneNumber, currentPhoneCode); 
+      const result = await telegramService.signIn(phoneNumber, currentPhoneCode); // Use phoneNumber from page state
       if (result.user) {
         setIsConnected(true);
-        setAuthStep('initial'); 
-        setPhoneCode(''); 
-        setPassword(''); 
+        setAuthStep('initial'); // Reset auth flow
+        setPhoneCode(''); // Clear code
+        setPassword(''); // Clear password
         fetchInitialChats();
         toast({ title: "Sign In Successful!", description: "Connected to Telegram." });
-      } else { 
+      } else { // Should not happen if signIn throws for 2FA or other errors
         setAuthError("Sign in failed. Unexpected response from server.");
         toast({ title: "Sign In Failed", description: "Unexpected response from server.", variant: "destructive" });
       }
@@ -725,7 +748,7 @@ export default function Home() {
       if (error.message === '2FA_REQUIRED' && (error as any).srp_id) {
         console.log("2FA required for sign in, srp_id received:", (error as any).srp_id);
         setAuthStep('awaiting_password');
-        setAuthError(null); 
+        setAuthError(null); // Clear previous errors
         toast({ title: "2FA Required", description: "Please enter your two-factor authentication password." });
       } else {
         handleApiError(error, "Sign In Failed", `Could not sign in. ${error.message}`);
@@ -743,7 +766,7 @@ export default function Home() {
     }
     setIsConnecting(true);
     setAuthError(null);
-    setPassword(currentPassword); 
+    setPassword(currentPassword); // Update page state
     toast({ title: "Verifying Password...", description: "Checking your 2FA password." });
     try {
       const user = await telegramService.checkPassword(currentPassword);
@@ -772,6 +795,7 @@ export default function Home() {
 
   const handleCloseFileDetails = () => {
     setIsDetailsPanelOpen(false);
+    // setSelectedFileForDetails(null); // Optional: clear selection on close
   };
 
   const handleQueueDownload = async (file: CloudFile) => {
@@ -787,9 +811,11 @@ export default function Home() {
         return;
     }
 
+    // If retrying a failed/cancelled item, remove the old one first to allow re-queueing
     if (existingItem && ['failed', 'cancelled'].includes(existingItem.status)) {
-        browserDownloadTriggeredRef.current.delete(file.id);
+        browserDownloadTriggeredRef.current.delete(file.id); // Ensure it can trigger download again
         setDownloadQueue(prevQ => prevQ.filter(q => q.id !== file.id));
+        // Allow a brief moment for state to update before re-queueing
         await new Promise(resolve => setTimeout(resolve, 50)); 
     }
 
@@ -799,15 +825,16 @@ export default function Home() {
     if (downloadInfo && downloadInfo.location && downloadInfo.totalSize > 0 && file.totalSizeInBytes) {
       const controller = new AbortController();
       const newItem: DownloadQueueItemType = {
-        ...file, 
-        status: 'downloading', 
+        ...file, // Spread all properties of CloudFile
+        status: 'downloading', // Start as 'downloading' to be picked up by useEffect
         progress: 0,
         downloadedBytes: 0,
         currentOffset: 0,
         chunks: [],
         location: downloadInfo.location,
-        totalSizeInBytes: file.totalSizeInBytes, 
+        totalSizeInBytes: file.totalSizeInBytes, // Ensure this is passed from original file
         abortController: controller,
+        // CDN fields will be populated if a redirect occurs
         cdnDcId: undefined,
         cdnFileToken: undefined,
         cdnEncryptionKey: undefined,
@@ -816,6 +843,7 @@ export default function Home() {
         cdnCurrentFileHashIndex: undefined,
       };
       setDownloadQueue(prevQueue => {
+        // Ensure no duplicate ID if retrying very quickly
         const filteredQueue = prevQueue.filter(item => item.id !== file.id);
         return [...filteredQueue, newItem];
       });
@@ -831,7 +859,10 @@ export default function Home() {
     if (itemToCancel && itemToCancel.abortController && !itemToCancel.abortController.signal.aborted) {
         console.log(`User cancelling download for ${itemToCancel.name}`);
         itemToCancel.abortController.abort("User cancelled download"); 
+        // The useEffect processQueue will see the aborted signal and update status to 'cancelled'
     }
+    // Optionally, update state immediately for responsiveness if needed,
+    // but useEffect should handle the final state based on aborted signal.
     setDownloadQueue(prevQueue =>
       prevQueue.map(item =>
         item.id === itemId ? { ...item, status: 'cancelled', progress: 0, downloadedBytes: 0, error_message: "User cancelled" } : item
@@ -853,34 +884,39 @@ export default function Home() {
   const handleResumeDownload = (itemId: string) => {
     const itemToResume = downloadQueueRef.current.find(item => item.id === itemId);
 
+    // If retrying a failed or cancelled item, re-queue it properly
     if (itemToResume && (itemToResume.status === 'failed' || itemToResume.status === 'cancelled')) {
         console.log(`Retrying download for ${itemToResume.name}`);
-        browserDownloadTriggeredRef.current.delete(itemId);
+        browserDownloadTriggeredRef.current.delete(itemId); // Allow browser download to trigger again
 
+        // Create a clean CloudFile object to re-queue
         const originalFileProps: CloudFile = {
             id: itemToResume.id,
             name: itemToResume.name,
             type: itemToResume.type,
             size: itemToResume.size,
             timestamp: itemToResume.timestamp,
-            url: itemToResume.url, 
+            url: itemToResume.url, // Keep original URL if it existed
             dataAiHint: itemToResume.dataAiHint,
             messageId: itemToResume.messageId,
             telegramMessage: itemToResume.telegramMessage,
             totalSizeInBytes: itemToResume.totalSizeInBytes,
             inputPeer: itemToResume.inputPeer,
         };
+        // Remove the old item and then re-add by calling handleQueueDownload
         setDownloadQueue(prevQ => prevQ.filter(q => q.id !== itemId));
+        // Use a small timeout to ensure state update completes before re-queueing
         setTimeout(() => {
             handleQueueDownload(originalFileProps);
         }, 50);
         return;
     }
 
+    // If resuming a paused item
     setDownloadQueue(prevQueue =>
         prevQueue.map(item =>
             item.id === itemId && item.status === 'paused' ? 
-            {...item, status: 'downloading'} : item
+            {...item, status: 'downloading'} : item // Set to 'downloading' to be picked up by processQueue
         )
     );
     toast({ title: "Download Resumed", description: `Download for item has been resumed.`});
@@ -893,23 +929,146 @@ export default function Home() {
       setViewingImageName(file.name);
       setIsImageViewerOpen(true);
     } else if (file.type === 'image' && !file.url) {
+      // Potentially try to get a temporary URL here if desired for preview
       toast({ title: "Preview Not Available", description: "Image URL not available for preview. Try downloading first.", variant: "default"});
     } else if (file.type !== 'image') {
       toast({ title: "Not an Image", description: "This file is not an image and cannot be viewed here.", variant: "default"});
     }
   };
 
-  const handlePlayVideo = (file: CloudFile) => {
-     if (file.type === 'video' && file.url) {
-      setPlayingVideoUrl(file.url);
+  const fetchVideoAndCreateStreamUrl = useCallback(async (file: CloudFile, signal: AbortSignal) => {
+    setIsPreparingVideoStream(true);
+    setPreparingVideoStreamForFileId(file.id);
+    toast({ title: "Preparing Video...", description: `Fetching ${file.name} for playback.` });
+
+    try {
+      const downloadInfo = await telegramService.prepareFileDownloadInfo(file);
+      if (!downloadInfo || !downloadInfo.location || !downloadInfo.totalSize || downloadInfo.totalSize <= 0) {
+        throw new Error("Could not get valid download information for video.");
+      }
+
+      let downloadedBytes = 0;
+      let currentOffset = 0;
+      const chunks: Uint8Array[] = [];
+      const totalSize = downloadInfo.totalSize;
+
+      while (downloadedBytes < totalSize) {
+        if (signal.aborted) throw new Error("Video preparation aborted by user.");
+
+        const remaining = totalSize - downloadedBytes;
+        const limit = Math.min(DOWNLOAD_CHUNK_SIZE, remaining);
+
+        console.log(`Fetching video chunk for ${file.name}: offset=${currentOffset}, limit=${limit}`);
+        const chunkResponse = await telegramService.downloadFileChunk(downloadInfo.location, currentOffset, limit, signal);
+
+        if (signal.aborted) throw new Error("Video preparation aborted during chunk download.");
+
+        if (chunkResponse?.bytes && chunkResponse.bytes.length > 0) {
+          chunks.push(chunkResponse.bytes);
+          downloadedBytes += chunkResponse.bytes.length;
+          currentOffset += chunkResponse.bytes.length;
+          // Optionally update a progress state here if you want to show fine-grained progress for preparation
+        } else if (chunkResponse?.errorType) {
+          throw new Error(`Failed to download video chunk: ${chunkResponse.errorType}`);
+        } else {
+          // If bytes are empty but no error, it might be end of file or an issue
+          if (downloadedBytes < totalSize) {
+            console.warn(`Video chunk download for ${file.name} returned empty bytes before completion. Downloaded: ${downloadedBytes}/${totalSize}`);
+          }
+          break; // Assume end or issue
+        }
+      }
+
+      if (signal.aborted) throw new Error("Video preparation aborted after download loop.");
+
+      const mimeType = file.telegramMessage?.mime_type || 'video/mp4';
+      const videoBlob = new Blob(chunks, { type: mimeType });
+      const objectURL = URL.createObjectURL(videoBlob);
+      
+      setVideoStreamUrl(objectURL); // Store the Blob URL for cleanup
+      setPlayingVideoUrl(objectURL);
       setPlayingVideoName(file.name);
       setIsVideoPlayerOpen(true);
-    } else if (file.type === 'video' && !file.url) {
-      toast({ title: "Playback Not Available", description: "Video URL not available for playback. Try downloading first.", variant: "default"});
-    } else if (file.type !== 'video') {
+      toast({ title: "Video Ready", description: `${file.name} is ready for playback.` });
+
+    } catch (error: any) {
+      if (error.message?.includes("aborted")) {
+        toast({ title: "Video Preparation Cancelled", description: `Preparation for ${file.name} was cancelled.`, variant: "default" });
+      } else {
+        toast({ title: "Video Preparation Failed", description: `Could not prepare ${file.name}: ${error.message}`, variant: "destructive" });
+      }
+      setPlayingVideoUrl(null); // Ensure player doesn't try to play old/invalid URL
+      setIsVideoPlayerOpen(false);
+    } finally {
+      setIsPreparingVideoStream(false);
+      setPreparingVideoStreamForFileId(null);
+    }
+  }, [toast]);
+
+
+  const prepareAndPlayVideoStream = useCallback(async (file: CloudFile) => {
+    if (isPreparingVideoStream && preparingVideoStreamForFileId === file.id) {
+      toast({ title: "Already Preparing", description: `Still preparing ${file.name}. Please wait.`, variant: "default" });
+      return;
+    }
+
+    // Abort any previous preparation
+    if (videoStreamAbortControllerRef.current && !videoStreamAbortControllerRef.current.signal.aborted) {
+      videoStreamAbortControllerRef.current.abort("New video stream preparation requested");
+    }
+    // Revoke previous blob URL if it exists
+    if (videoStreamUrl) {
+      URL.revokeObjectURL(videoStreamUrl);
+      setVideoStreamUrl(null);
+    }
+    
+    const newController = new AbortController();
+    videoStreamAbortControllerRef.current = newController;
+    fetchVideoAndCreateStreamUrl(file, newController.signal);
+  }, [isPreparingVideoStream, preparingVideoStreamForFileId, videoStreamUrl, fetchVideoAndCreateStreamUrl, toast]);
+
+
+  const handlePlayVideo = (file: CloudFile) => {
+     if (file.type === 'video') {
+        if (file.url) { // If a direct URL exists (e.g., from a previous version or if provided by Telegram)
+            setPlayingVideoUrl(file.url);
+            setPlayingVideoName(file.name);
+            setIsVideoPlayerOpen(true);
+        } else if (file.totalSizeInBytes && file.totalSizeInBytes > 0) { // Prepare for streaming if no direct URL
+            prepareAndPlayVideoStream(file);
+        } else {
+            toast({ title: "Playback Not Possible", description: "Video data or size is missing.", variant: "default"});
+        }
+    } else {
       toast({ title: "Not a Video", description: "This file is not a video and cannot be played here.", variant: "default"});
     }
   };
+  
+  const handleCloseVideoPlayer = useCallback(() => {
+    setIsVideoPlayerOpen(false);
+    // Don't clear playingVideoUrl immediately to avoid flash if re-opening.
+    // Cleanup of blob URL happens when a new video is prepared or component unmounts.
+    if (isPreparingVideoStream && videoStreamAbortControllerRef.current && !videoStreamAbortControllerRef.current.signal.aborted) {
+        videoStreamAbortControllerRef.current.abort("Video player closed during preparation");
+        setIsPreparingVideoStream(false);
+        setPreparingVideoStreamForFileId(null);
+    }
+    // The main Blob URL (videoStreamUrl) is revoked when a new one is created or on reset/unmount
+  }, [isPreparingVideoStream]);
+
+  // Cleanup Blob URL on component unmount
+  useEffect(() => {
+    return () => {
+        if (videoStreamUrl) {
+            URL.revokeObjectURL(videoStreamUrl);
+        }
+        if (videoStreamAbortControllerRef.current && !videoStreamAbortControllerRef.current.signal.aborted) {
+            videoStreamAbortControllerRef.current.abort("Component unmounting");
+        }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoStreamUrl]);
+
 
   const handleOpenDownloadManager = () => setIsDownloadManagerOpen(true);
   const handleCloseDownloadManager = () => setIsDownloadManagerOpen(false);
@@ -928,12 +1087,12 @@ export default function Home() {
             isLoading={isConnecting}
             error={authError}
             phoneNumber={phoneNumber} 
-            setPhoneNumberProp={setPhoneNumber} 
+            setPhoneNumberProp={setPhoneNumber} // Allow TelegramConnect to inform page of user input
             phoneCode={phoneCode}
             setPhoneCode={setPhoneCode}
             password={password}
             setPassword={setPassword}
-            onReset={() => handleReset(authStep !== 'initial')} 
+            onReset={() => handleReset(authStep !== 'initial')} // Pass onReset to TelegramConnect
           />
         </main>
         <footer className="py-4 px-4 sm:px-6 lg:px-8 text-center border-t">
@@ -1004,6 +1163,8 @@ export default function Home() {
               onQueueDownloadClick={handleQueueDownload}
               onFileViewImageClick={handleViewImage}
               onFilePlayVideoClick={handlePlayVideo}
+              isPreparingStream={isPreparingVideoStream}
+              preparingStreamForFileId={preparingVideoStreamForFileId}
             />
           ) : (
             <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground">
@@ -1033,7 +1194,7 @@ export default function Home() {
       />
       <VideoPlayer
         isOpen={isVideoPlayerOpen}
-        onClose={() => setIsVideoPlayerOpen(false)}
+        onClose={handleCloseVideoPlayer}
         videoUrl={playingVideoUrl}
         videoName={playingVideoName}
       />
@@ -1048,3 +1209,5 @@ export default function Home() {
     </div>
   );
 }
+
+    

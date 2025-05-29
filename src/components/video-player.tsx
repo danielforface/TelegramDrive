@@ -25,7 +25,6 @@ export function VideoPlayer({ isOpen, onClose, videoUrl, videoName }: VideoPlaye
   useEffect(() => {
     if (!isOpen && videoRef.current) {
       videoRef.current.pause();
-      // videoRef.current.currentTime = 0; // Optional: reset video to start
     }
   }, [isOpen]);
   
@@ -33,9 +32,8 @@ export function VideoPlayer({ isOpen, onClose, videoUrl, videoName }: VideoPlaye
     return null;
   }
 
-
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-3xl w-full p-0 border-0 shadow-xl flex flex-col items-center justify-center bg-black aspect-video">
          <DialogHeader className="w-full flex flex-row justify-between items-center p-2 bg-black/80 text-primary-foreground rounded-t-lg absolute top-0 left-0 right-0 z-10">
           <DialogTitle className="text-sm truncate">{videoName || "Video Preview"}</DialogTitle>
@@ -54,7 +52,7 @@ export function VideoPlayer({ isOpen, onClose, videoUrl, videoName }: VideoPlaye
             autoPlay
             className="object-contain rounded-b-md w-full h-full"
             data-ai-hint="video playback"
-            onEnded={onClose} // Optional: close dialog when video ends
+            onEnded={onClose} 
           >
             Your browser does not support the video tag.
           </video>
@@ -63,3 +61,5 @@ export function VideoPlayer({ isOpen, onClose, videoUrl, videoName }: VideoPlaye
     </Dialog>
   );
 }
+
+    
