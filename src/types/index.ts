@@ -5,8 +5,8 @@ export interface CloudFile {
   name: string;
   type: 'image' | 'video' | 'audio' | 'document' | 'unknown';
   size?: string; // Formatted size string
-  lastModified?: string; // Will be message date
-  url?: string; // Optional URL for linking or viewing (requires further implementation)
+  timestamp: number; // Unix timestamp (seconds) of the message
+  url?: string; // Optional URL for linking or viewing
   dataAiHint?: string;
   messageId: number; // Keep original message ID for offset
   telegramMessage?: any; // To store the original Telegram message object
@@ -15,16 +15,16 @@ export interface CloudFile {
 }
 
 export interface CloudFolder { // Represents a Chat
-  id: string; // Unique ID for the chat folder (e.g., chat-${peerId}-${topMessage})
+  id: string; // Unique ID for the chat folder
   name: string; // Chat title
-  folders: CloudFolder[]; // Will be empty now, as media is directly under chat
-  files: CloudFile[];    // Will be empty initially, populated by getChatMediaHistory in page.tsx
+  folders: CloudFolder[]; // Will be empty now for chat folders
+  files: CloudFile[];    // Populated by getChatMediaHistory
   isChatFolder?: boolean;
   inputPeer?: any; // MTProto InputPeer object for this chat
 }
 
 export interface GetChatsPaginatedResponse {
-  folders: CloudFolder[]; // These are the main chat folders for the sidebar
+  folders: CloudFolder[];
   nextOffsetDate: number;
   nextOffsetId: number;
   nextOffsetPeer: any;
@@ -33,7 +33,7 @@ export interface GetChatsPaginatedResponse {
 
 export interface MediaHistoryResponse {
   files: CloudFile[];
-  nextOffsetId?: number; // ID of the last message fetched, for next pagination
+  nextOffsetId?: number;
   hasMore: boolean;
 }
 
@@ -44,11 +44,11 @@ export type DownloadStatus =
   | 'completed'
   | 'failed'
   | 'cancelled'
-  | 'cdn_redirect' 
-  | 'refreshing_reference'; 
+  | 'cdn_redirect'
+  | 'refreshing_reference';
 
 export interface FileHash {
-  offset: number; 
+  offset: number;
   limit: number;
   hash: Uint8Array;
 }
@@ -69,6 +69,7 @@ export interface DownloadQueueItemType extends CloudFile {
   cdnEncryptionIv?: Uint8Array;
   cdnFileHashes?: FileHash[];
   cdnCurrentFileHashIndex?: number;
+  error_message?: string; // To store error messages for failed downloads
 }
 
 export interface FileDownloadInfo {
@@ -78,35 +79,34 @@ export interface FileDownloadInfo {
 }
 
 // For upload.getFile and upload.getCdnFile responses
-// Using a discriminated union for better type safety
-type SuccessfulFileChunk_Bytes = { 
-  bytes: Uint8Array; 
+type SuccessfulFileChunk_Bytes = {
+  bytes: Uint8Array;
   type: string; // storage.FileType
-  isCdnRedirect?: never; 
-  cdnRedirectData?: never; 
-  errorType?: never; 
+  isCdnRedirect?: never;
+  cdnRedirectData?: never;
+  errorType?: never;
 };
 
-type SuccessfulFileChunk_CdnRedirect = { 
-  bytes?: never; 
-  type?: never; 
-  isCdnRedirect: true; 
+type SuccessfulFileChunk_CdnRedirect = {
+  bytes?: never;
+  type?: never;
+  isCdnRedirect: true;
   cdnRedirectData: {
     dc_id: number;
     file_token: Uint8Array;
     encryption_key: Uint8Array;
     encryption_iv: Uint8Array;
     file_hashes: any[]; // Raw FileHash objects from MTProto
-  }; 
-  errorType?: never; 
+  };
+  errorType?: never;
 };
 
-type ErrorFileChunk = { 
-  bytes?: never; 
-  type?: never; 
-  isCdnRedirect?: never; 
-  cdnRedirectData?: never; 
-  errorType: 'FILE_REFERENCE_EXPIRED' | 'OTHER'; 
+type ErrorFileChunk = {
+  bytes?: never;
+  type?: never;
+  isCdnRedirect?: never;
+  cdnRedirectData?: never;
+  errorType: 'FILE_REFERENCE_EXPIRED' | 'OTHER';
 };
 
 export type FileChunkResponse = SuccessfulFileChunk_Bytes | SuccessfulFileChunk_CdnRedirect | ErrorFileChunk;
