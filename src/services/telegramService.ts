@@ -12,7 +12,7 @@ export { formatFileSize };
 const API_ID_STRING = process.env.NEXT_PUBLIC_TELEGRAM_API_ID;
 const API_HASH = process.env.NEXT_PUBLIC_TELEGRAM_API_HASH;
 const CRITICAL_ERROR_MESSAGE_PREFIX = "CRITICAL_TELEGRAM_API_ERROR: ";
-const ALL_CHATS_FILTER_ID_FOR_SERVICE = 0; // Consistent with page.tsx
+const ALL_CHATS_FILTER_ID_FOR_SERVICE = 0; 
 
 let API_ID: number | undefined = undefined;
 
@@ -70,7 +70,7 @@ class API {
         updates: { on: () => {} }, 
         setDefaultDc: async () => Promise.reject(new Error(errorMessage)),
         clearStorage: async () => Promise.resolve(),
-        mtproto: { crypto: { getSRPParams: async () => ({ A: new Uint8Array(), M1: new Uint8Array() }) } } // Mock crypto for constructor
+        mtproto: { crypto: { getSRPParams: async () => ({ A: new Uint8Array(), M1: new Uint8Array() }) } } 
       } as any; 
       this.apiId = 0; 
       this.apiHash = '';
@@ -147,7 +147,7 @@ class API {
       const result = await this.mtproto.call(method, params, options);
       return result;
     } catch (error: any) {
-      originalErrorObject = JSON.parse(JSON.stringify(error)); // Deep clone the error object
+      originalErrorObject = JSON.parse(JSON.stringify(error)); 
       console.log(`MTProto call '${method}' raw error object:`, originalErrorObject, error);
 
 
@@ -180,7 +180,7 @@ class API {
                 console.error(`Failed to set default DC to ${dcId}:`, setDefaultDcError.message || setDefaultDcError);
                 options = { ...options, dcId }; 
             }
-        } else { // For FILE_MIGRATE and others, just set dcId in options for this call
+        } else { 
              console.log(`Applying dcId ${dcId} to options for method ${method} due to ${type}_MIGRATE error.`);
             options = { ...options, dcId };
         }
@@ -194,15 +194,13 @@ class API {
         processedError = new Error(error_message);
       } else {
         const authMethodsForClear = ['auth.sendCode', 'auth.signIn', 'auth.checkPassword'];
-        if (authMethodsForClear.includes(method)) {
+        if (authMethodsForClear.includes(method) && userSession) {
             console.warn(`Low-level or empty error during ${method}. Clearing potentially problematic local session parts.`);
-            if(userSession) { 
-                delete userSession.phone_code_hash;
-                delete userSession.srp_id;
-                delete userSession.srp_params;
-            }
+            delete userSession.phone_code_hash;
+            delete userSession.srp_id;
+            delete userSession.srp_params;
         }
-        processedError = new Error(`MTProto call '${method}' failed. Raw error: ${JSON.stringify(error)}`);
+        processedError = new Error(`MTProto call '${method}' failed with an unidentified error. Raw error: ${JSON.stringify(error)}`);
       }
       
       if (originalErrorObject && (processedError as any).originalErrorObject !== originalErrorObject) {
@@ -307,7 +305,7 @@ export async function sendCode(fullPhoneNumber: string): Promise<string> {
     userSession.phone_code_hash = result.phone_code_hash;
     return userSession.phone_code_hash;
   } catch (error: any) {
-    console.error('Error in sendCode function after api.call:', error);
+    console.error('Error in sendCode function after api.call:', error.message, error.originalErrorObject || error);
     const message = error.message || (error.originalErrorObject?.error_message || 'Failed to send code.');
      if (message === 'AUTH_RESTART') { 
          throw new Error('AUTH_RESTART');
@@ -371,11 +369,11 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
         throw twoFactorError;
 
       } catch (getPasswordError: any) {
+        console.log('Error fetching password details for 2FA (signIn):', getPasswordError.message, getPasswordError.originalErrorObject || getPasswordError);
+        delete userSession.phone_code_hash;
         if (getPasswordError.message === '2FA_REQUIRED' && getPasswordError.srp_id) {
           throw getPasswordError; 
         }
-        console.log('Error fetching password details for 2FA (signIn):', getPasswordError.message, getPasswordError.originalErrorObject || getPasswordError);
-        delete userSession.phone_code_hash;
         const messageToThrow = getPasswordError.message || 'Failed to fetch 2FA details.';
         throw new Error(messageToThrow);
       }
@@ -462,12 +460,8 @@ export async function signOut(): Promise<void> {
 }
 
 export async function isUserConnected(): Promise<boolean> {
-  if (API_ID === undefined || !API_HASH) {
+  if (API_ID === undefined || !API_HASH || !api.initialized) {
       if (userSession.user) await signOut(); 
-      return false;
-  }
-  if (!api.initialized && (API_ID && API_HASH) ) {
-      if (userSession.user) await signOut();
       return false;
   }
 
@@ -517,6 +511,7 @@ function getPeerTitle(peer: any, chats: any[], users: any[]): string {
       return channel ? channel.title : `Channel ${peerChannelIdStr}`;
     }
   } catch (e) {
+    console.warn("Error in getPeerTitle:", e, "Peer:", peer);
     if(peer.user_id) return `User ${String(peer.user_id)}`;
     if(peer.chat_id) return `Chat ${String(peer.chat_id)}`;
     if(peer.channel_id) return `Channel ${String(peer.channel_id)}`;
@@ -562,7 +557,17 @@ function transformDialogsToCloudFolders(dialogsResult: any): CloudFolder[] {
     }
 
     if (!inputPeerForApiCalls) {
+      // Try to construct from dialog.peer directly if it already has access_hash (e.g. for users)
+      if (peer._ === 'peerUser' && peer.user_id && peer.access_hash) {
+         inputPeerForApiCalls = { _: 'inputPeerUser', user_id: peer.user_id, access_hash: peer.access_hash };
+      } else if (peer._ === 'peerChannel' && peer.channel_id && peer.access_hash) {
+         inputPeerForApiCalls = { _: 'inputPeerChannel', channel_id: peer.channel_id, access_hash: peer.access_hash };
+      } else if (peer._ === 'peerChat' && peer.chat_id) {
+         inputPeerForApiCalls = { _: 'inputPeerChat', chat_id: peer.chat_id };
+      } else {
+        console.warn("Could not construct valid inputPeer for dialog:", dialog);
         return null; 
+      }
     }
     
     const idSuffix = peerUserIdStr || peerChatIdStr || peerChannelIdStr || String(dialog.top_message) || String(Date.now());
@@ -584,20 +589,20 @@ export async function getDialogFilters(): Promise<DialogFilter[]> {
     return [];
   }
   try {
-    const result = await api.call('messages.getDialogFilters'); // result could be MessagesDialogFilters or directly DialogFilter[]
+    const result = await api.call('messages.getDialogFilters'); 
     console.log("Full result from messages.getDialogFilters:", result); 
 
-    if (Array.isArray(result)) { // If result itself is the array of filters
+    if (Array.isArray(result)) { 
       return result as DialogFilter[];
-    } else if (result && Array.isArray(result.filters)) { // If result is an object containing a filters array (expected)
+    } else if (result && Array.isArray(result.filters)) { 
       return result.filters as DialogFilter[];
     } else {
       console.warn("Unexpected structure for messages.getDialogFilters response:", result);
-      return []; // Return empty if structure is not as expected
+      return []; 
     }
   } catch (error: any) {
     console.error('Error fetching dialog filters:', error.message, error.originalErrorObject || error);
-    return []; // Return empty on error so UI doesn't get stuck loading
+    return []; 
   }
 }
 
@@ -606,13 +611,14 @@ export async function getTelegramChats(
   limit: number,
   offsetDate: number = 0,
   offsetId: number = 0,
-  offsetPeer: any = { _: 'inputPeerEmpty' }, 
-  folderId?: number 
+  offsetPeer: any = { _: 'inputPeerEmpty' }
 ): Promise<GetChatsPaginatedResponse> {
+  // Note: The folderId parameter is removed from this function signature
+  // as per the new strategy to fetch all chats and filter client-side.
   if (!(await isUserConnected())) {
     return { folders: [], nextOffsetDate: 0, nextOffsetId: 0, nextOffsetPeer: { _: 'inputPeerEmpty' }, hasMore: false };
   }
-  console.log(`Requesting chats for folderId: ${folderId === undefined || folderId === ALL_CHATS_FILTER_ID_FOR_SERVICE ? 'All Chats (no folder_id)' : folderId}`);
+  console.log(`Requesting all chats for master list (pagination: date=${offsetDate}, id=${offsetId})`);
 
   const params: any = {
       offset_date: offsetDate,
@@ -621,10 +627,6 @@ export async function getTelegramChats(
       limit: limit,
       hash: 0, 
   };
-
-  if (folderId !== undefined && folderId !== ALL_CHATS_FILTER_ID_FOR_SERVICE) { 
-      params.folder_id = folderId;
-  }
   
   try {
     const dialogsResult = await api.call('messages.getDialogs', params);
@@ -678,7 +680,7 @@ export async function getTelegramChats(
     };
 
   } catch (error:any) {
-    console.error('Error in getTelegramChats:', error.message, error.originalErrorObject || error);
+    console.error('Error in getTelegramChats (master list):', error.message, error.originalErrorObject || error);
     throw error;
   }
 }
@@ -741,14 +743,14 @@ export async function getChatMediaHistory(
             fileName = `photo_${mediaObjectForFile.id?.toString() || msg.id}_${msg.date}.jpg`;
             const largestSize = mediaObjectForFile.sizes?.find((s:any) => s.type === 'y') || 
                                 mediaObjectForFile.sizes?.sort((a:any,b:any) => (b.w*b.h) - (a.w*a.h))[0];
-            if(largestSize?.size) { 
+            if(largestSize?.size !== undefined) { 
               totalSizeInBytes = Number(largestSize.size);
               fileSize = formatFileSize(totalSizeInBytes);
             }
             dataAiHint = "photograph image";
           } else if (msg.media._ === 'messageMediaDocument' && mediaObjectForFile) {
               fileName = mediaObjectForFile.attributes?.find((attr: any) => attr._ === 'documentAttributeFilename')?.file_name || `document_${mediaObjectForFile.id?.toString() || msg.id}`;
-              if(mediaObjectForFile.size) { 
+              if(mediaObjectForFile.size !== undefined) { 
                 totalSizeInBytes = Number(mediaObjectForFile.size); 
                 fileSize = formatFileSize(totalSizeInBytes);
               }
@@ -786,7 +788,7 @@ export async function getChatMediaHistory(
         newOffsetId = messagesArray[messagesArray.length - 1].id;
       }
       if (typeof historyResult.count === 'number') {
-        hasMoreMessages = mediaFiles.length > 0 && messagesArray.length >= limit; // Use >= to be safe
+        hasMoreMessages = mediaFiles.length > 0 && messagesArray.length >= limit;
       } else {
         hasMoreMessages = messagesArray.length >= limit;
       }
@@ -877,6 +879,7 @@ export async function downloadFileChunk(
     console.error("downloadFileChunk called with null location.");
     return { errorType: 'OTHER' as const };
   }
+  console.log("Downloading chunk: offset=" + offset + ", limit=" + limit, location)
   try {
     const result = await api.call('upload.getFile', {
       location: location,
@@ -975,6 +978,7 @@ export async function refreshFileReference(item: DownloadQueueItemType): Promise
   try {
     const messagesResult = await api.call('messages.getMessages', {
        id: [ { _: 'inputMessageID', id: item.messageId } ],
+       peer: item.inputPeer // Added peer to getMessages call as it's often required
     });
 
     let foundMessage = null;
@@ -1045,11 +1049,12 @@ function generateRandomLong(): string {
   const buffer = new Uint8Array(8);
   crypto.getRandomValues(buffer);
   const view = new DataView(buffer.buffer);
-  return view.getBigInt64(0, true).toString();
+  // Use BigInt for true 64-bit representation, then convert to string
+  return view.getBigInt64(0, true).toString(); 
 }
 
 const TEN_MB = 10 * 1024 * 1024;
-const UPLOAD_PART_SIZE = 512 * 1024; // 512KB as per Telegram docs for part_size
+const UPLOAD_PART_SIZE = 512 * 1024; 
 
 export async function uploadFile(
   inputPeer: any,
@@ -1086,7 +1091,7 @@ export async function uploadFile(
       if (isBigFile) {
         console.log(`Uploading big file part ${i}/${totalChunks -1} for ${fileToUpload.name}`);
         partUploadResult = await api.call('upload.saveBigFilePart', {
-          file_id: client_file_id_str, // Changed to string to match MTProto definition
+          file_id: client_file_id_str, 
           file_part: i,
           file_total_parts: totalChunks,
           bytes: chunkBytes,
@@ -1094,13 +1099,13 @@ export async function uploadFile(
       } else {
         console.log(`Uploading small file part ${i}/${totalChunks -1} for ${fileToUpload.name}`);
         partUploadResult = await api.call('upload.saveFilePart', {
-          file_id: client_file_id_str, // Changed to string
+          file_id: client_file_id_str, 
           file_part: i,
           bytes: chunkBytes,
         }, { signal });
       }
 
-      if (partUploadResult?._ !== 'boolTrue') { 
+      if (partUploadResult?._ !== 'boolTrue' && partUploadResult !== true) { 
           console.error(`Failed to save file part ${i} for ${fileToUpload.name}. Server response:`, partUploadResult);
           throw new Error(`Failed to save file part ${i}. Server response: ${JSON.stringify(partUploadResult)}`);
       }
@@ -1237,7 +1242,8 @@ export async function updateDialogFilter(
 
   } else if (filterIdToUpdate !== null) { 
     params.id = filterIdToUpdate;
-    delete params.filter;
+    // To delete a filter, you send messages.updateDialogFilter with the ID and no 'filter' object (flags.0 not set)
+    // The current params.flags is 0, so not setting params.filter should achieve this.
   } else {
     console.error("updateDialogFilter: Invalid call. Must provide filterId for delete, or filterData for create/update.");
     return false;
@@ -1259,3 +1265,5 @@ if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
   (window as any).telegramServiceApi = api;
   (window as any).telegramUserSession = userSession;
 }
+
+    
