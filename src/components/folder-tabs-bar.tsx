@@ -82,14 +82,14 @@ export function FolderTabsBar({
 
   const handleDrop = (e: React.DragEvent<HTMLButtonElement | HTMLDivElement>, dropIndex: number) => {
     e.preventDefault();
-    if (!isReorderingMode || draggedItemIndex === null || filters[dropIndex].id === ALL_CHATS_FILTER_ID) {
+    if (!isReorderingMode || draggedItemIndex === null || (filters[dropIndex] && filters[dropIndex].id === ALL_CHATS_FILTER_ID && dropIndex === 0)) {
       setDraggedItemIndex(null);
       return;
     }
     const dragIndexStr = e.dataTransfer.getData('filterIndex');
     if (dragIndexStr) {
       const dragIndex = parseInt(dragIndexStr, 10);
-      if (dragIndex !== -1 && dragIndex !== dropIndex && filters[dropIndex].id !== ALL_CHATS_FILTER_ID) {
+      if (dragIndex !== -1 && dragIndex !== dropIndex && (!filters[dropIndex] || filters[dropIndex].id !== ALL_CHATS_FILTER_ID)) {
         onMoveFilter(dragIndex, dropIndex);
       }
     }
@@ -146,7 +146,7 @@ export function FolderTabsBar({
                               size="icon"
                               className="h-6 w-6 hover:bg-accent/50 opacity-60 hover:opacity-100"
                               onClick={(e) => {
-                                // e.stopPropagation(); // Already handled by the div
+                                // e.stopPropagation(); // Already handled by the div for click, but useful to keep in mind
                                 onShareFilter(filter.id);
                               }}
                               disabled={filter.isLoading}
