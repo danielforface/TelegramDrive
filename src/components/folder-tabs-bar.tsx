@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Loader2, ListFilter, Edit3, Share2, PlusSquare, Check, GripVertical } from "lucide-react";
 import { cn } from "@/lib/utils";
+import React from "react";
 
 interface FolderTabsBarProps {
   filters: DialogFilter[];
@@ -16,7 +17,7 @@ interface FolderTabsBarProps {
   isLoading: boolean;
   isReorderingMode: boolean;
   onToggleReorderMode: () => void;
-  onMoveFilter: (dragIndex: number, hoverIndex: number) => void; // Placeholder
+  onMoveFilter: (dragIndex: number, hoverIndex: number) => void;
   onShareFilter: (filterId: number) => void;
   onAddFilterPlaceholder: () => void;
 }
@@ -30,12 +31,12 @@ export function FolderTabsBar({
   isLoading,
   isReorderingMode,
   onToggleReorderMode,
-  onMoveFilter, // Not used yet, for future drag-and-drop
+  onMoveFilter,
   onShareFilter,
   onAddFilterPlaceholder,
 }: FolderTabsBarProps) {
 
-  if (isLoading && filters.length <= 1) { // Show loading only if no or just "All Chats" filter exists
+  if (isLoading && filters.length <= 1) { 
     return (
       <div className="flex items-center justify-center h-14 border-b px-4 bg-background sticky top-0 z-10 shadow-sm">
         <Loader2 className="h-5 w-5 animate-spin text-primary" />
@@ -45,38 +46,42 @@ export function FolderTabsBar({
   }
   
   const displayFilters = [...filters];
+  // Ensure "All Chats" is present if no filters or default filter handling is done in page.tsx
   if (!displayFilters.some(f => f.id === ALL_CHATS_FILTER_ID)) {
-      displayFilters.unshift({
+      // This check might be redundant if page.tsx always ensures "All Chats" exists
+      // but kept for safety if FolderTabsBar is used in other contexts.
+      const allChatsDefault: DialogFilter = {
+          _:'dialogFilterDefault',
           id: ALL_CHATS_FILTER_ID,
           title: "All Chats",
-          _: 'dialogFilterDefault',
-          flags: 0,
+          flags:0,
           include_peers: [],
-      });
+          // pinned_peers and exclude_peers are optional and default to empty if not provided
+      };
+      displayFilters.unshift(allChatsDefault);
   }
+
 
   const currentTabValue = (activeFilterId !== null && displayFilters.some(f => f.id === activeFilterId))
                           ? activeFilterId.toString()
                           : ALL_CHATS_FILTER_ID.toString();
 
-  // Placeholder for drag state
   const [draggedItem, setDraggedItem] = React.useState<DialogFilter | null>(null);
 
   const handleDragStart = (e: React.DragEvent<HTMLButtonElement>, filter: DialogFilter, index: number) => {
-    if (!isReorderingMode || filter.id === ALL_CHATS_FILTER_ID) return;
+    if (!isReorderingMode || filter.id === ALL_CHATS_FILTER_ID) {
+        e.preventDefault();
+        return;
+    }
     e.dataTransfer.setData('filterId', filter.id.toString());
     e.dataTransfer.setData('filterIndex', index.toString());
     setDraggedItem(filter);
-    // console.log("Drag start:", filter.title);
   };
 
-  const handleDragOver = (e: React.DragEvent<HTMLButtonElement>, index: number) => {
-    e.preventDefault(); // Necessary to allow dropping
+  const handleDragOver = (e: React.DragEvent<HTMLButtonElement>) => {
+    e.preventDefault(); 
     if (!isReorderingMode || !draggedItem) return;
-    const draggedIndex = filters.findIndex(f => f.id === draggedItem.id);
-    if (draggedIndex !== index && filters[index].id !== ALL_CHATS_FILTER_ID) {
-       // Visual feedback for drag over (e.g., border, background change) can be added here
-    }
+    // Add visual feedback for drop target if desired
   };
   
   const handleDrop = (e: React.DragEvent<HTMLButtonElement>, dropIndex: number) => {
@@ -88,11 +93,10 @@ export function FolderTabsBar({
     const draggedFilterId = parseInt(e.dataTransfer.getData('filterId'), 10);
     const dragIndex = filters.findIndex(f => f.id === draggedFilterId);
     
-    if (dragIndex !== -1 && dragIndex !== dropIndex) {
+    if (dragIndex !== -1 && dragIndex !== dropIndex && filters[dropIndex].id !== ALL_CHATS_FILTER_ID) {
       onMoveFilter(dragIndex, dropIndex);
     }
     setDraggedItem(null);
-    // console.log("Dropped", draggedItem?.title, "at index", dropIndex);
   };
 
 
@@ -103,7 +107,7 @@ export function FolderTabsBar({
           <Tabs
             value={currentTabValue}
             onValueChange={(value) => {
-              if (isReorderingMode) return; // Don't change tab in reordering mode
+              if (isReorderingMode) return; 
               const newFilterId = parseInt(value, 10);
               if (!isNaN(newFilterId)) {
                 onSelectFilter(newFilterId);
@@ -118,18 +122,17 @@ export function FolderTabsBar({
                     <TooltipTrigger asChild>
                       <TabsTrigger
                         value={filter.id.toString()}
+                        disabled={isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && draggedItem?.id === filter.id} // Disable click-selection on dragged item
                         draggable={isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID}
                         onDragStart={(e) => handleDragStart(e, filter, index)}
-                        onDragOver={(e) => handleDragOver(e, index)}
+                        onDragOver={handleDragOver}
                         onDrop={(e) => handleDrop(e, index)}
                         onDragEnd={() => setDraggedItem(null)}
                         className={cn(
                           "h-10 relative rounded-md px-2 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-sm hover:bg-muted/50 flex items-center gap-1.5",
                           isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && "tab-shake cursor-move",
                           isReorderingMode && filter.id === ALL_CHATS_FILTER_ID && "cursor-not-allowed opacity-70",
-                          draggedItem?.id === filter.id && "opacity-50 border-2 border-dashed border-primary",
-                          // Basic visual cue for drop target (can be improved)
-                          // e.target.closest('button')?.getAttribute('data-value') === filter.id.toString() && draggedItem && draggedItem.id !== filter.id && "bg-primary/5" 
+                          draggedItem?.id === filter.id && "opacity-50 border-2 border-dashed border-primary"
                         )}
                       >
                         {isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && <GripVertical className="h-4 w-4 mr-1 text-muted-foreground" />}

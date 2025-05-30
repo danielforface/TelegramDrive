@@ -14,7 +14,7 @@ import { ChatSelectionDialog } from "@/components/chat-selection-dialog";
 import { UploadDialog } from "@/components/upload-dialog";
 import type { CloudFolder, CloudFile, DownloadQueueItemType, ExtendedFile, DialogFilter } from "@/types";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, Loader2, LayoutPanelLeft, MessageSquare, UploadCloud, PlusSquare, ListFilter, Share2 } from "lucide-react";
+import { RefreshCw, Loader2, LayoutPanelLeft, MessageSquare, UploadCloud } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import * as telegramService from "@/services/telegramService";
 import { formatFileSize } from "@/lib/utils";
@@ -89,7 +89,7 @@ export default function Home() {
 
   const headerRef = useRef<HTMLDivElement>(null);
   const footerRef = useRef<HTMLDivElement>(null);
-  const chatListContainerRef = useRef<HTMLDivElement>(null);
+  // const chatListContainerRef = useRef<HTMLDivElement>(null); // No longer used
 
 
   useEffect(() => {
@@ -121,15 +121,13 @@ export default function Home() {
         toast({ title, description, variant: "destructive", duration: 5000 });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toast]);
+  }, [toast]); // Removed handleReset from deps to avoid re-creation loops, handleReset itself is memoized
 
   const fetchDialogFilters = useCallback(async () => {
     if (!isConnected) {
         console.log("fetchDialogFilters: Not connected, skipping.");
-        const allChatsSpecialFilter: DialogFilter = { id: ALL_CHATS_FILTER_ID, title: "All Chats", _: 'dialogFilterDefault', flags:0, include_peers: [] };
-        if (!dialogFilters.some(f => f.id === ALL_CHATS_FILTER_ID)) {
-            setDialogFilters([allChatsSpecialFilter]);
-        }
+        const allChatsSpecialFilter: DialogFilter = { _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, include_peers: [] };
+        setDialogFilters([allChatsSpecialFilter]);
         setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
         setIsLoadingDialogFilters(false);
         return;
@@ -138,28 +136,53 @@ export default function Home() {
     setIsLoadingDialogFilters(true);
     try {
       const filtersFromServer = await telegramService.getDialogFilters();
-      const allChatsSpecialFilter: DialogFilter = { id: ALL_CHATS_FILTER_ID, title: "All Chats", _: 'dialogFilterDefault', flags:0, include_peers: [] };
+      console.log("fetchDialogFilters: Raw filters from server:", filtersFromServer);
+
+      const processedFilters: DialogFilter[] = [];
+      let allChatsFilterExists = false;
+
+      filtersFromServer.forEach(filter => {
+        if (filter._ === 'dialogFilterDefault') {
+          processedFilters.push({ ...filter, id: ALL_CHATS_FILTER_ID, title: "All Chats" });
+          allChatsFilterExists = true;
+        } else if (filter._ === 'dialogFilter' || filter._ === 'dialogFilterChatlist') {
+          // Ensure these filters have all required properties from our DialogFilter type
+          processedFilters.push({
+            ...filter,
+            // Ensure default values for optional fields if not present from server
+            pinned_peers: filter.pinned_peers || [],
+            include_peers: filter.include_peers || [],
+            exclude_peers: filter.exclude_peers || [],
+          });
+        }
+      });
       
-      let newFilters = [allChatsSpecialFilter];
-      if (filtersFromServer && filtersFromServer.length > 0) {
-          newFilters = [allChatsSpecialFilter, ...filtersFromServer.filter(f => f.id !== ALL_CHATS_FILTER_ID)];
+      if (!allChatsFilterExists) {
+         processedFilters.unshift({ _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, include_peers: [] });
       }
-      setDialogFilters(newFilters);
-      setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
+      
+      // Ensure "All Chats" is first if it was processed
+      processedFilters.sort((a, b) => {
+        if (a.id === ALL_CHATS_FILTER_ID) return -1;
+        if (b.id === ALL_CHATS_FILTER_ID) return 1;
+        return 0; // Keep original order for others, or add specific sort logic if needed
+      });
+
+
+      setDialogFilters(processedFilters);
+      setActiveDialogFilterId(ALL_CHATS_FILTER_ID); // Default to "All Chats"
 
     } catch (error: any) {
       handleApiError(error, "Error Fetching Folders", "Could not load your chat folders.");
-      const allChatsSpecialFilter: DialogFilter = { id: ALL_CHATS_FILTER_ID, title: "All Chats", _: 'dialogFilterDefault', flags:0, include_peers: [] };
-      if (!dialogFilters.some(f => f.id === ALL_CHATS_FILTER_ID)) {
-        setDialogFilters([allChatsSpecialFilter]);
-      }
+      const allChatsSpecialFilter: DialogFilter = { _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, include_peers: [] };
+      setDialogFilters([allChatsSpecialFilter]);
       setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
     } finally {
       console.log("fetchDialogFilters: Setting isLoadingDialogFilters to false.");
       setIsLoadingDialogFilters(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected, handleApiError]); // Removed dialogFilters from dependencies
+  }, [isConnected, handleApiError]);
 
   const fetchInitialChats = useCallback(async () => {
     if (isProcessingChatsRef.current || !isConnected) {
@@ -224,7 +247,7 @@ export default function Home() {
         setAuthStep('initial');
         setAuthError(null);
         setAllChats([]);
-        const allChatsSpecialFilter: DialogFilter = { id: ALL_CHATS_FILTER_ID, title: "All Chats", _: 'dialogFilterDefault', flags:0, include_peers: [] };
+        const allChatsSpecialFilter: DialogFilter = { _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, include_peers: [] };
         setDialogFilters([allChatsSpecialFilter]);
         setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
         setIsLoadingDialogFilters(false); 
@@ -246,35 +269,13 @@ export default function Home() {
          handleApiError(error, "Connection Check Error", `Failed to verify existing connection. ${errorMessage}`);
       }
       setIsConnected(false);
-      const allChatsSpecialFilter: DialogFilter = { id: ALL_CHATS_FILTER_ID, title: "All Chats", _: 'dialogFilterDefault', flags:0, include_peers: [] };
+      const allChatsSpecialFilter: DialogFilter = { _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, include_peers: [] };
       setDialogFilters([allChatsSpecialFilter]);
       setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
       setIsLoadingDialogFilters(false); 
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toast, handleApiError]); 
-
-  useEffect(() => {
-    checkExistingConnection();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); 
-
-  useEffect(() => {
-    if (isConnected) {
-      fetchDialogFilters();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected]); // fetchDialogFilters is memoized
-
-  useEffect(() => {
-    if (isConnected && activeDialogFilterId !== undefined && !isProcessingChatsRef.current) {
-      if(selectedFolder) setSelectedFolder(null); 
-      if(currentChatMedia.length > 0) setCurrentChatMedia([]);
-      fetchInitialChats();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected, activeDialogFilterId]); 
-
+  }, [toast, handleApiError]);  // Removed handleReset
 
   const handleReset = useCallback(async (performServerLogout = true) => {
     const currentIsConnected = isConnected; 
@@ -315,7 +316,7 @@ export default function Home() {
     setHasMoreChatMedia(true);
     setCurrentMediaOffsetId(0);
     
-    const allChatsSpecialFilter: DialogFilter = { id: ALL_CHATS_FILTER_ID, title: "All Chats", _: 'dialogFilterDefault', flags:0, include_peers: [] };
+    const allChatsSpecialFilter: DialogFilter = { _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, include_peers: [] };
     setDialogFilters([allChatsSpecialFilter]);
     setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
     setIsLoadingDialogFilters(true); 
@@ -350,6 +351,27 @@ export default function Home() {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConnected, toast, videoStreamUrl]); 
+
+  useEffect(() => {
+    checkExistingConnection();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); 
+
+  useEffect(() => {
+    if (isConnected) {
+      fetchDialogFilters();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected]); 
+
+  useEffect(() => {
+    if (isConnected && activeDialogFilterId !== undefined && !isProcessingChatsRef.current) {
+      if(selectedFolder) setSelectedFolder(null); 
+      if(currentChatMedia.length > 0) setCurrentChatMedia([]);
+      fetchInitialChats();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected, activeDialogFilterId]); 
 
 
   useEffect(() => {
@@ -579,6 +601,7 @@ export default function Home() {
               );
             } else {
               const errorMessage = chunkResponse?.errorType || (chunkResponse && Object.keys(chunkResponse).length === 0 ? 'Empty response object' : 'Unknown error or no data returned');
+              console.error(`Failed to download chunk for ${upToDateItem.name} or no data returned. Response:`, chunkResponse);
               setDownloadQueue(prevQ => prevQ.map(q_item => q_item.id === upToDateItem.id ? { ...q_item, status: 'failed', error_message: `Download error: ${errorMessage}` } : q_item));
             }
           } catch (error: any) {
@@ -587,6 +610,7 @@ export default function Home() {
                     setDownloadQueue(prevQ => prevQ.map(q_item => q_item.id === upToDateItem.id ? { ...q_item, status: 'cancelled', error_message: "Aborted by user or system." } : q_item));
                 }
              } else {
+                console.error(`Error processing download for ${upToDateItem.name}:`, error);
                 setDownloadQueue(prevQ => prevQ.map(q_item => q_item.id === upToDateItem.id ? { ...q_item, status: 'failed', error_message: error.message || 'Processing error' } : q_item));
              }
           } finally {
@@ -637,6 +661,7 @@ export default function Home() {
                     setDownloadQueue(prevQ => prevQ.map(q_item => q_item.id === upToDateItem.id ? { ...q_item, status: 'failed', error_message: 'Refresh failed (no reference)' } : q_item));
                 }
             } catch (refreshError: any) {
+                 console.error(`Error refreshing file reference for ${upToDateItem.name}:`, refreshError);
                 setDownloadQueue(prevQ => prevQ.map(q_item => q_item.id === upToDateItem.id ? { ...q_item, status: 'failed', error_message: refreshError.message || 'Refresh error' } : q_item));
             } finally {
                 activeDownloadsRef.current.delete(upToDateItem.id);
@@ -716,7 +741,7 @@ export default function Home() {
       // isLoadingMoreChatsRequestInFlightRef.current is reset by the useEffect watching isLoadingMoreChats
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected, hasMoreChats, chatsOffsetDate, chatsOffsetId, chatsOffsetPeer, activeDialogFilterId, toast, handleApiError, isProcessingChatsRef.current]); // Added isProcessingChatsRef to dependencies to ensure it uses latest value
+  }, [isConnected, hasMoreChats, chatsOffsetDate, chatsOffsetId, chatsOffsetPeer, activeDialogFilterId, toast, handleApiError]);
 
 
   const observerChats = useRef<IntersectionObserver | null>(null);
@@ -738,7 +763,7 @@ export default function Home() {
     });
     if (node) observerChats.current.observe(node);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasMoreChats, loadMoreChatsCallback, isLoadingMoreChats, isProcessingChatsRef.current]);
+  }, [hasMoreChats, loadMoreChatsCallback, isLoadingMoreChats]);
 
 
   const fetchInitialChatMedia = useCallback(async (folder: CloudFolder) => {
@@ -1008,7 +1033,7 @@ export default function Home() {
     const itemToResume = downloadQueueRef.current.find(item => item.id === itemId);
 
     if (itemToResume && (itemToResume.status === 'failed' || itemToResume.status === 'cancelled')) {
-        browserDownloadTriggeredRef.current.delete(itemId); // Ensure it can be triggered again
+        browserDownloadTriggeredRef.current.delete(itemId); 
         const originalFileProps: CloudFile = {
             id: itemToResume.id,
             name: itemToResume.name,
@@ -1032,7 +1057,7 @@ export default function Home() {
     setDownloadQueue(prevQueue =>
         prevQueue.map(item =>
             item.id === itemId && item.status === 'paused' ?
-            {...item, status: 'downloading', error_message: undefined } : item // Clear previous error on resume
+            {...item, status: 'downloading', error_message: undefined } : item 
         )
     );
     toast({ title: "Download Resumed", description: `Download for item has been resumed.`});
@@ -1440,7 +1465,7 @@ const handleStartUpload = async () => {
         isLoading={isLoadingDialogFilters}
         isReorderingMode={isReorderingFolders}
         onToggleReorderMode={handleToggleReorderFolders}
-        onMoveFilter={handleMoveFilter} // Placeholder for actual drag-and-drop
+        onMoveFilter={handleMoveFilter} 
         onShareFilter={handleShareFilter}
         onAddFilterPlaceholder={handleAddFilterPlaceholder}
       />
@@ -1545,5 +1570,3 @@ const handleStartUpload = async () => {
     </div>
   );
 }
-
-    
