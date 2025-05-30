@@ -12,6 +12,7 @@ export { formatFileSize };
 const API_ID_STRING = process.env.NEXT_PUBLIC_TELEGRAM_API_ID;
 const API_HASH = process.env.NEXT_PUBLIC_TELEGRAM_API_HASH;
 const CRITICAL_ERROR_MESSAGE_PREFIX = "CRITICAL_TELEGRAM_API_ERROR: ";
+const ALL_CHATS_FILTER_ID_FOR_SERVICE = 0; // Consistent with page.tsx
 
 let API_ID: number | undefined = undefined;
 
@@ -142,10 +143,11 @@ class API {
     let originalErrorObject: any = null;
 
     try {
+      console.log(`API Call: ${method}`, params, options);
       const result = await this.mtproto.call(method, params, options);
       return result;
     } catch (error: any) {
-      originalErrorObject = JSON.parse(JSON.stringify(error)); 
+      originalErrorObject = JSON.parse(JSON.stringify(error)); // Deep clone the error object
       console.log(`MTProto call '${method}' raw error object:`, originalErrorObject, error);
 
 
@@ -170,7 +172,6 @@ class API {
         const dcId = Number(migrateErrorMatch[2]);
         
         const criticalMethodsForDcChange = ['auth.sendCode', 'auth.signIn', 'auth.checkPassword', 'account.getPassword', 'users.getUsers'];
-        // For FILE_MIGRATE, only change dcId in options, not default DC.
         if (type === 'PHONE' || type === 'NETWORK' || type === 'USER' || (criticalMethodsForDcChange.some(m => method.startsWith(m)) && type !== 'FILE') ) {
             try {
                 console.log(`Attempting to set default DC to ${dcId} due to ${type}_MIGRATE error.`);
@@ -179,7 +180,7 @@ class API {
                 console.error(`Failed to set default DC to ${dcId}:`, setDefaultDcError.message || setDefaultDcError);
                 options = { ...options, dcId }; 
             }
-        } else {
+        } else { // For FILE_MIGRATE and others, just set dcId in options for this call
              console.log(`Applying dcId ${dcId} to options for method ${method} due to ${type}_MIGRATE error.`);
             options = { ...options, dcId };
         }
@@ -306,7 +307,7 @@ export async function sendCode(fullPhoneNumber: string): Promise<string> {
     userSession.phone_code_hash = result.phone_code_hash;
     return userSession.phone_code_hash;
   } catch (error: any) {
-    console.error('Error in sendCode function after api.call:', error.message, error.originalErrorObject || error);
+    console.error('Error in sendCode function after api.call:', error);
     const message = error.message || (error.originalErrorObject?.error_message || 'Failed to send code.');
      if (message === 'AUTH_RESTART') { 
          throw new Error('AUTH_RESTART');
@@ -342,7 +343,7 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
     return { user: result.user };
 
   } catch (error: any) {
-    const errorMessage = error.message; 
+    const errorMessage = error.message || (error.originalErrorObject?.error_message); 
     
     if (errorMessage === 'SESSION_PASSWORD_NEEDED') {
       try {
@@ -370,11 +371,11 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
         throw twoFactorError;
 
       } catch (getPasswordError: any) {
-        delete userSession.phone_code_hash;
         if (getPasswordError.message === '2FA_REQUIRED' && getPasswordError.srp_id) {
           throw getPasswordError; 
         }
         console.log('Error fetching password details for 2FA (signIn):', getPasswordError.message, getPasswordError.originalErrorObject || getPasswordError);
+        delete userSession.phone_code_hash;
         const messageToThrow = getPasswordError.message || 'Failed to fetch 2FA details.';
         throw new Error(messageToThrow);
       }
@@ -578,14 +579,13 @@ function transformDialogsToCloudFolders(dialogsResult: any): CloudFolder[] {
   }).filter(folder => folder !== null) as CloudFolder[]; 
 }
 
-
 export async function getDialogFilters(): Promise<DialogFilter[]> {
   if (!(await isUserConnected())) {
     return [];
   }
   try {
     const result = await api.call('messages.getDialogFilters'); // result could be MessagesDialogFilters or directly DialogFilter[]
-    console.log("Full result from messages.getDialogFilters:", result); // DIAGNOSTIC LOG
+    console.log("Full result from messages.getDialogFilters:", result); 
 
     if (Array.isArray(result)) { // If result itself is the array of filters
       return result as DialogFilter[];
@@ -612,6 +612,7 @@ export async function getTelegramChats(
   if (!(await isUserConnected())) {
     return { folders: [], nextOffsetDate: 0, nextOffsetId: 0, nextOffsetPeer: { _: 'inputPeerEmpty' }, hasMore: false };
   }
+  console.log(`Requesting chats for folderId: ${folderId === undefined || folderId === ALL_CHATS_FILTER_ID_FOR_SERVICE ? 'All Chats (no folder_id)' : folderId}`);
 
   const params: any = {
       offset_date: offsetDate,
@@ -621,7 +622,7 @@ export async function getTelegramChats(
       hash: 0, 
   };
 
-  if (folderId !== undefined && folderId !== 0) { // 0 is usually "All Chats" and shouldn't be sent as folder_id
+  if (folderId !== undefined && folderId !== ALL_CHATS_FILTER_ID_FOR_SERVICE) { 
       params.folder_id = folderId;
   }
   
@@ -654,7 +655,6 @@ export async function getTelegramChats(
                  if (lastMessageOverall.peer_id._ && (lastMessageOverall.peer_id._ === 'inputPeerUser' || lastMessageOverall.peer_id._ === 'inputPeerChat' || lastMessageOverall.peer_id._ === 'inputPeerChannel')) {
                     newOffsetPeerInput = lastMessageOverall.peer_id;
                  } else {
-                    // This case needs careful construction of InputPeer from peer_id which might only have user_id/chat_id/channel_id
                     const correspondingDialog = dialogsResult.dialogs.find((d:any) => String(d.top_message) === String(lastMessageOverall.id));
                     newOffsetPeerInput = correspondingDialog ? correspondingDialog.peer : { _: 'inputPeerEmpty' };
                  }
@@ -733,7 +733,7 @@ export async function getChatMediaHistory(
           } else if (msg.media.document) { 
              mediaObjectForFile = msg.media.document;
           } else {
-             return; // Skip if no identifiable media object
+             return; 
           }
 
           if (msg.media._ === 'messageMediaPhoto' && mediaObjectForFile) {
@@ -749,7 +749,7 @@ export async function getChatMediaHistory(
           } else if (msg.media._ === 'messageMediaDocument' && mediaObjectForFile) {
               fileName = mediaObjectForFile.attributes?.find((attr: any) => attr._ === 'documentAttributeFilename')?.file_name || `document_${mediaObjectForFile.id?.toString() || msg.id}`;
               if(mediaObjectForFile.size) { 
-                totalSizeInBytes = Number(mediaObjectForFile.size); // Ensure this is a number
+                totalSizeInBytes = Number(mediaObjectForFile.size); 
                 fileSize = formatFileSize(totalSizeInBytes);
               }
 
@@ -786,10 +786,9 @@ export async function getChatMediaHistory(
         newOffsetId = messagesArray[messagesArray.length - 1].id;
       }
       if (typeof historyResult.count === 'number') {
-        hasMoreMessages = mediaFiles.length > 0 && messagesArray.length === limit; 
+        hasMoreMessages = mediaFiles.length > 0 && messagesArray.length >= limit; // Use >= to be safe
       } else {
-        // If historyResult.count is not available, assume more if we received the limit
-        hasMoreMessages = messagesArray.length === limit;
+        hasMoreMessages = messagesArray.length >= limit;
       }
     } else {
         hasMoreMessages = false; 
@@ -964,7 +963,7 @@ export async function downloadCdnFileChunk(
 }
 
 export async function refreshFileReference(item: DownloadQueueItemType): Promise<any | null> {
-  if (!item.inputPeer || !item.telegramMessage) { // Check telegramMessage for original context
+  if (!item.inputPeer || !item.telegramMessage) { 
       console.warn("refreshFileReference: Missing inputPeer or original telegramMessage for item:", item.name);
       return null;
   }
@@ -981,11 +980,7 @@ export async function refreshFileReference(item: DownloadQueueItemType): Promise
     let foundMessage = null;
     if (messagesResult.messages && Array.isArray(messagesResult.messages)) {
         foundMessage = messagesResult.messages.find((m: any) => String(m.id) === String(item.messageId));
-    } else if (messagesResult.chats && messagesResult.users ) { // Sometimes full message isn't in 'messages' but media in 'chats' or 'users'
-        // This part is complex as the full message might not be directly in messagesResult.messages
-        // For now, we assume the message is in messagesResult.messages.
-        // A more robust solution might need to search through linked chats/users if a full message constructor is returned.
-    }
+    } 
     
     const updatedMessage = foundMessage; 
     
@@ -999,10 +994,10 @@ export async function refreshFileReference(item: DownloadQueueItemType): Promise
       } else if (updatedMessage.media.document && updatedMessage.media.document.id) {
         updatedMediaObject = messagesResult.documents?.find((d:any) => String(d.id) === String(updatedMessage.media.document.id)) || updatedMessage.media.document;
         newFileReference = updatedMediaObject?.file_reference;
-      } else if (updatedMessage.media.photo) { // Fallback if full photo object not in separate list
+      } else if (updatedMessage.media.photo) { 
          updatedMediaObject = updatedMessage.media.photo;
          newFileReference = updatedMediaObject?.file_reference;
-      } else if (updatedMessage.media.document) { // Fallback for document
+      } else if (updatedMessage.media.document) { 
          updatedMediaObject = updatedMessage.media.document;
          newFileReference = updatedMediaObject?.file_reference;
       }
@@ -1047,10 +1042,8 @@ export function areUint8ArraysEqual(arr1?: Uint8Array, arr2?: Uint8Array): boole
 }
 
 function generateRandomLong(): string {
-  // Generates a 64-bit signed random long as a string
   const buffer = new Uint8Array(8);
   crypto.getRandomValues(buffer);
-  // Interpret as little-endian signed 64-bit
   const view = new DataView(buffer.buffer);
   return view.getBigInt64(0, true).toString();
 }
@@ -1064,11 +1057,11 @@ export async function uploadFile(
   onProgress: (percent: number) => void,
   signal?: AbortSignal
 ): Promise<any> {
-  const client_file_id = generateRandomLong(); 
-  const totalChunks = Math.ceil(fileToUpload.size / UPLOAD_PART_SIZE);
+  const client_file_id_str = generateRandomLong(); 
   const isBigFile = fileToUpload.size > TEN_MB;
+  const totalChunks = Math.ceil(fileToUpload.size / UPLOAD_PART_SIZE);
 
-  console.log(`Starting upload for ${fileToUpload.name}. Size: ${fileToUpload.size}, BigFile: ${isBigFile}, Total Chunks: ${totalChunks}, Client File ID: ${client_file_id}`);
+  console.log(`Starting upload for ${fileToUpload.name}. Size: ${fileToUpload.size}, BigFile: ${isBigFile}, Total Chunks: ${totalChunks}, Client File ID: ${client_file_id_str}`);
   onProgress(0);
 
   for (let i = 0; i < totalChunks; i++) {
@@ -1093,7 +1086,7 @@ export async function uploadFile(
       if (isBigFile) {
         console.log(`Uploading big file part ${i}/${totalChunks -1} for ${fileToUpload.name}`);
         partUploadResult = await api.call('upload.saveBigFilePart', {
-          file_id: client_file_id,
+          file_id: client_file_id_str, // Changed to string to match MTProto definition
           file_part: i,
           file_total_parts: totalChunks,
           bytes: chunkBytes,
@@ -1101,7 +1094,7 @@ export async function uploadFile(
       } else {
         console.log(`Uploading small file part ${i}/${totalChunks -1} for ${fileToUpload.name}`);
         partUploadResult = await api.call('upload.saveFilePart', {
-          file_id: client_file_id,
+          file_id: client_file_id_str, // Changed to string
           file_part: i,
           bytes: chunkBytes,
         }, { signal });
@@ -1112,7 +1105,6 @@ export async function uploadFile(
           throw new Error(`Failed to save file part ${i}. Server response: ${JSON.stringify(partUploadResult)}`);
       }
 
-      // Calculate progress based on chunks uploaded for the file itself (0-90% for chunks)
       const progressPercent = Math.round(((i + 1) / totalChunks) * 90); 
       onProgress(progressPercent);
 
@@ -1122,13 +1114,12 @@ export async function uploadFile(
     }
   }
 
-  // Progress to 95% after all chunks are uploaded, before sending media
   onProgress(95); 
   console.log(`All parts uploaded for ${fileToUpload.name}. Sending media...`);
 
   const inputFilePayload = isBigFile
-    ? { _: 'inputFileBig', id: client_file_id, parts: totalChunks, name: fileToUpload.name }
-    : { _: 'inputFile', id: client_file_id, parts: totalChunks, name: fileToUpload.name, md5_checksum: '' }; // MD5 checksum ideally calculated from fileToUpload.originalFile
+    ? { _: 'inputFileBig', id: client_file_id_str, parts: totalChunks, name: fileToUpload.name }
+    : { _: 'inputFile', id: client_file_id_str, parts: totalChunks, name: fileToUpload.name, md5_checksum: '' };
 
   try {
     const result = await api.call('messages.sendMedia', {
@@ -1142,12 +1133,10 @@ export async function uploadFile(
         mime_type: fileToUpload.type || 'application/octet-stream', 
         attributes: [
           { _: 'documentAttributeFilename', file_name: fileToUpload.name },
-          // Potentially add other attributes like duration for video/audio if available
         ],
       },
-      message: '', // Optional caption
+      message: '', 
       random_id: generateRandomLong(), 
-      // schedule_date, send_as, etc. are optional
     }, { signal }); 
     
     console.log(`Media sent successfully for ${fileToUpload.name}:`, result);
@@ -1177,7 +1166,7 @@ export async function exportChatlistInvite(filterId: number): Promise<{ link: st
     console.log("Attempting to export chatlist invite for filter ID:", filterId);
     const result = await api.call('chatlists.exportChatlistInvite', { 
         filter_id: filterId,
-        peers: [] // Send empty peers for now, can be populated if specific peers are needed for the invite
+        peers: [] 
     });
     console.log("Export chatlist invite result:", result);
     if (result && result.url) {
@@ -1191,8 +1180,8 @@ export async function exportChatlistInvite(filterId: number): Promise<{ link: st
 }
 
 export async function updateDialogFilter(
-  filterIdToUpdate: number | null, // null for creating a new filter
-  filterData?: DialogFilter     // undefined for deleting
+  filterIdToUpdate: number | null, 
+  filterData?: DialogFilter     
 ): Promise<boolean> {
   const params: any = {
     flags: 0, 
@@ -1203,14 +1192,12 @@ export async function updateDialogFilter(
   }
 
   if (filterData) { 
-    params.flags |= (1 << 0); // Set the 'filter' flag
+    params.flags |= (1 << 0); 
     
-    // Construct the Telegram DialogFilter object based on our client-side DialogFilter type
-    // This needs careful mapping based on the filterData's '_' type
     const telegramFilter: any = {
-      _: filterData._ === 'dialogFilterDefault' ? 'dialogFilterDefault' : // Should not happen for update
+      _: filterData._ === 'dialogFilterDefault' ? 'dialogFilterDefault' :
          (filterData._ === 'dialogFilterChatlist' ? 'dialogFilterChatlist' : 'dialogFilter'),
-      id: filterData.id, // Server ID for existing, or 0 for new? API might assign ID.
+      id: filterData.id, 
       title: filterData.title,
       pinned_peers: filterData.pinned_peers || [],
       include_peers: filterData.include_peers || [],
@@ -1219,7 +1206,6 @@ export async function updateDialogFilter(
     if (telegramFilter._ === 'dialogFilter') {
         telegramFilter.exclude_peers = filterData.exclude_peers || [];
         let internalFlags = 0;
-        // Map client-side boolean flags to Telegram's bitmask flags
         if (filterData.contacts) internalFlags |= (1 << 0);
         if (filterData.non_contacts) internalFlags |= (1 << 1);
         if (filterData.groups) internalFlags |= (1 << 2);
@@ -1233,9 +1219,8 @@ export async function updateDialogFilter(
             internalFlags |= (1 << 25);
             telegramFilter.emoticon = filterData.emoticon;
         }
-        // 'color' flag (1 << 27) and field also need to be handled if we support it
         telegramFilter.flags = internalFlags;
-    } else if (telegramFilter._ === 'dialogFilterChatlist') { // For imported chatlists
+    } else if (telegramFilter._ === 'dialogFilterChatlist') { 
         let internalFlags = 0;
          if (filterData.has_my_invites) internalFlags |= (1 << 26);
          if (filterData.emoticon) {
@@ -1246,15 +1231,12 @@ export async function updateDialogFilter(
     }
 
     params.filter = telegramFilter;
-    if (filterIdToUpdate === null) { // Creating new filter, ID should not be in top-level params
+    if (filterIdToUpdate === null) { 
         delete params.id;
     }
 
   } else if (filterIdToUpdate !== null) { 
-    // No filterData provided, but filterIdToUpdate is, so it's a delete operation
-    // The 'filter' flag (params.flags |= (1 << 0)) should NOT be set for delete
     params.id = filterIdToUpdate;
-    // Ensure params.filter is not set
     delete params.filter;
   } else {
     console.error("updateDialogFilter: Invalid call. Must provide filterId for delete, or filterData for create/update.");
@@ -1277,6 +1259,3 @@ if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
   (window as any).telegramServiceApi = api;
   (window as any).telegramUserSession = userSession;
 }
-
-    
-    
