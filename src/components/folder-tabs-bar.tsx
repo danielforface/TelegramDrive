@@ -20,10 +20,10 @@ interface FolderTabsBarProps {
   onMoveFilter: (dragIndex: number, hoverIndex: number) => void;
   onShareFilter: (filterId: number) => void;
   onAddFilterPlaceholder: () => void;
-  className?: string; // Added className prop
+  className?: string;
 }
 
-const ALL_CHATS_FILTER_ID = 0; 
+const ALL_CHATS_FILTER_ID = 0;
 
 export function FolderTabsBar({
   filters,
@@ -35,19 +35,20 @@ export function FolderTabsBar({
   onMoveFilter,
   onShareFilter,
   onAddFilterPlaceholder,
-  className, // Consume className prop
+  className,
 }: FolderTabsBarProps) {
 
-  if (isLoading && filters.length <= 1) { 
+  if (isLoading && filters.length <= 1) {
     return (
-      <div className={cn("flex items-center justify-center h-14 border-b px-4 bg-background shadow-sm", className)}> {/* Applied className */}
+      <div className={cn("flex items-center justify-center h-14 border-b px-4 bg-background shadow-sm", className)}>
         <Loader2 className="h-5 w-5 animate-spin text-primary" />
         <span className="ml-2 text-sm text-muted-foreground">Loading folders...</span>
       </div>
     );
   }
-  
+
   const displayFilters = [...filters];
+  // This check might be redundant if page.tsx always ensures "All Chats" is present
   if (!displayFilters.some(f => f.id === ALL_CHATS_FILTER_ID)) {
       const allChatsDefault: DialogFilter = {
           _:'dialogFilterDefault',
@@ -65,7 +66,7 @@ export function FolderTabsBar({
 
   const [draggedItemIndex, setDraggedItemIndex] = React.useState<number | null>(null);
 
-  const handleDragStart = (e: React.DragEvent<HTMLButtonElement>, index: number) => {
+  const handleDragStart = (e: React.DragEvent<HTMLButtonElement | HTMLDivElement>, index: number) => {
     if (!isReorderingMode || filters[index].id === ALL_CHATS_FILTER_ID) {
         e.preventDefault();
         return;
@@ -74,33 +75,35 @@ export function FolderTabsBar({
     setDraggedItemIndex(index);
   };
 
-  const handleDragOver = (e: React.DragEvent<HTMLButtonElement>) => {
-    e.preventDefault(); 
+  const handleDragOver = (e: React.DragEvent<HTMLButtonElement | HTMLDivElement>) => {
+    e.preventDefault();
     if (!isReorderingMode || draggedItemIndex === null) return;
   };
-  
-  const handleDrop = (e: React.DragEvent<HTMLButtonElement>, dropIndex: number) => {
+
+  const handleDrop = (e: React.DragEvent<HTMLButtonElement | HTMLDivElement>, dropIndex: number) => {
     e.preventDefault();
     if (!isReorderingMode || draggedItemIndex === null || filters[dropIndex].id === ALL_CHATS_FILTER_ID) {
       setDraggedItemIndex(null);
       return;
     }
-    const dragIndex = parseInt(e.dataTransfer.getData('filterIndex'), 10);
-    
-    if (dragIndex !== -1 && dragIndex !== dropIndex && filters[dropIndex].id !== ALL_CHATS_FILTER_ID) {
-      onMoveFilter(dragIndex, dropIndex);
+    const dragIndexStr = e.dataTransfer.getData('filterIndex');
+    if (dragIndexStr) {
+      const dragIndex = parseInt(dragIndexStr, 10);
+      if (dragIndex !== -1 && dragIndex !== dropIndex && filters[dropIndex].id !== ALL_CHATS_FILTER_ID) {
+        onMoveFilter(dragIndex, dropIndex);
+      }
     }
     setDraggedItemIndex(null);
   };
 
   return (
-    <div className={cn("border-b bg-background shadow-sm", className)}> {/* Applied className */}
+    <div className={cn("border-b bg-background shadow-sm", className)}>
       <div className="flex items-center px-2 sm:px-3 h-14">
         <ScrollArea className="flex-grow whitespace-nowrap">
           <Tabs
             value={currentTabValue}
             onValueChange={(value) => {
-              if (isReorderingMode) return; 
+              if (isReorderingMode) return;
               const newFilterId = parseInt(value, 10);
               if (!isNaN(newFilterId)) {
                 onSelectFilter(newFilterId);
@@ -115,7 +118,7 @@ export function FolderTabsBar({
                     <TooltipTrigger asChild>
                       <TabsTrigger
                         value={filter.id.toString()}
-                        disabled={isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && draggedItemIndex === index} 
+                        disabled={isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && draggedItemIndex === index}
                         draggable={isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID}
                         onDragStart={(e) => handleDragStart(e, index)}
                         onDragOver={handleDragOver}
@@ -133,18 +136,25 @@ export function FolderTabsBar({
                         {filter.emoticon && <span className="text-lg">{filter.emoticon}</span>}
                         <span className="truncate max-w-[120px] sm:max-w-xs">{filter.title}</span>
                         {!isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6 ml-1 p-0 hover:bg-accent/50 opacity-60 hover:opacity-100"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onShareFilter(filter.id);
-                            }}
-                            disabled={filter.isLoading}
-                          >
-                            {filter.isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Share2 className="h-3 w-3" />}
-                          </Button>
+                           <div 
+                             className="ml-1 p-0" 
+                             onClick={(e) => {e.stopPropagation(); e.preventDefault();}} // Prevent TabsTrigger click and default behavior
+                             onKeyDown={(e) => {if (e.key === 'Enter' || e.key === ' ') e.stopPropagation();}} // Prevent TabsTrigger keyboard activation
+                           >
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6 hover:bg-accent/50 opacity-60 hover:opacity-100"
+                              onClick={(e) => {
+                                // e.stopPropagation(); // Already handled by the div
+                                onShareFilter(filter.id);
+                              }}
+                              disabled={filter.isLoading}
+                              aria-label={`Share folder ${filter.title}`}
+                            >
+                              {filter.isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Share2 className="h-3 w-3" />}
+                            </Button>
+                          </div>
                         )}
                       </TabsTrigger>
                     </TooltipTrigger>
@@ -160,7 +170,7 @@ export function FolderTabsBar({
           <ScrollBar orientation="horizontal" className="h-2"/>
         </ScrollArea>
         <div className="flex items-center pl-2 space-x-1 flex-shrink-0">
-          <Button variant="ghost" size="icon" className="h-9 w-9" onClick={onAddFilterPlaceholder}>
+          <Button variant="ghost" size="icon" className="h-9 w-9" onClick={onAddFilterPlaceholder} title="Add Folder">
             <PlusSquare className="h-5 w-5" />
              <span className="sr-only">Add Folder</span>
           </Button>
