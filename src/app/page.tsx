@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Header } from "@/components/layout/header";
 import { FolderTabsBar } from "@/components/folder-tabs-bar";
 import { TelegramConnect } from "@/components/telegram-connect";
@@ -14,7 +14,7 @@ import { ChatSelectionDialog } from "@/components/chat-selection-dialog";
 import { UploadDialog } from "@/components/upload-dialog";
 import type { CloudFolder, CloudFile, DownloadQueueItemType, ExtendedFile, DialogFilter } from "@/types";
 import { Button } from "@/components/ui/button";
-import { Loader2, LayoutPanelLeft, MessageSquare, UploadCloud } from "lucide-react";
+import { RefreshCw, Loader2, LayoutPanelLeft, MessageSquare, UploadCloud, PlusSquare, ListFilter, Share2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import * as telegramService from "@/services/telegramService";
 import { formatFileSize } from "@/lib/utils";
@@ -27,7 +27,7 @@ const SUBSEQUENT_MEDIA_LOAD_LIMIT = 20;
 const DOWNLOAD_CHUNK_SIZE = 512 * 1024; // 512KB per chunk
 const KB_1 = 1024;
 const ONE_MB = 1024 * 1024;
-const ALL_CHATS_FILTER_ID = 0; // Special ID for "All Chats" tab
+const ALL_CHATS_FILTER_ID = 0; 
 
 
 type AuthStep = 'initial' | 'awaiting_code' | 'awaiting_password';
@@ -36,14 +36,14 @@ export default function Home() {
   const [isConnecting, setIsConnecting] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
 
-  // Dialog Filters (Folders) State
   const [dialogFilters, setDialogFilters] = useState<DialogFilter[]>([]);
   const [activeDialogFilterId, setActiveDialogFilterId] = useState<number>(ALL_CHATS_FILTER_ID);
   const [isLoadingDialogFilters, setIsLoadingDialogFilters] = useState(true);
+  const [isReorderingFolders, setIsReorderingFolders] = useState(false);
 
 
-  const [isProcessingChats, setIsProcessingChats] = useState(false);
   const isProcessingChatsRef = useRef(false);
+  const [isProcessingChats, setIsProcessingChats] = useState(false);
 
   const [allChats, setAllChats] = useState<CloudFolder[]>([]);
   const [isLoadingMoreChats, setIsLoadingMoreChats] = useState(false);
@@ -53,7 +53,7 @@ export default function Home() {
   const [chatsOffsetId, setChatsOffsetId] = useState(0);
   const [chatsOffsetPeer, setChatsOffsetPeer] = useState<any>({ _: 'inputPeerEmpty' });
 
-  const [selectedFolder, setSelectedFolder] = useState<CloudFolder | null>(null); // This is the selected chat
+  const [selectedFolder, setSelectedFolder] = useState<CloudFolder | null>(null); 
   const [currentChatMedia, setCurrentChatMedia] = useState<CloudFile[]>([]);
   const [isLoadingChatMedia, setIsLoadingChatMedia] = useState(false);
   const [hasMoreChatMedia, setHasMoreChatMedia] = useState(true);
@@ -89,6 +89,7 @@ export default function Home() {
 
   const headerRef = useRef<HTMLDivElement>(null);
   const footerRef = useRef<HTMLDivElement>(null);
+  const chatListContainerRef = useRef<HTMLDivElement>(null);
 
 
   useEffect(() => {
@@ -114,7 +115,7 @@ export default function Home() {
         description = "Authentication process needs to be restarted. Please try entering your phone number again.";
         setAuthError(description);
         toast({ title: "Authentication Restart Needed", description, variant: "destructive" });
-        handleReset(false); // Reset state without server logout for AUTH_RESTART
+        handleReset(false); 
     } else {
         setAuthError(description);
         toast({ title, description, variant: "destructive", duration: 5000 });
@@ -124,15 +125,16 @@ export default function Home() {
 
   const fetchDialogFilters = useCallback(async () => {
     if (!isConnected) {
-        // console.log("fetchDialogFilters: Not connected, skipping.");
+        console.log("fetchDialogFilters: Not connected, skipping.");
+        const allChatsSpecialFilter: DialogFilter = { id: ALL_CHATS_FILTER_ID, title: "All Chats", _: 'dialogFilterDefault', flags:0, include_peers: [] };
         if (!dialogFilters.some(f => f.id === ALL_CHATS_FILTER_ID)) {
-            setDialogFilters([{ id: ALL_CHATS_FILTER_ID, title: "All Chats", _: 'dialogFilterDefault', flags:0, include_peers: [] }]);
+            setDialogFilters([allChatsSpecialFilter]);
         }
         setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
         setIsLoadingDialogFilters(false);
         return;
     }
-    // console.log("fetchDialogFilters: Fetching dialog filters...");
+    console.log("fetchDialogFilters: Fetching dialog filters...");
     setIsLoadingDialogFilters(true);
     try {
       const filtersFromServer = await telegramService.getDialogFilters();
@@ -143,22 +145,21 @@ export default function Home() {
           newFilters = [allChatsSpecialFilter, ...filtersFromServer.filter(f => f.id !== ALL_CHATS_FILTER_ID)];
       }
       setDialogFilters(newFilters);
-      
-      // Set active filter to "All Chats" by default after filters are loaded or if it's the only one.
       setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
 
     } catch (error: any) {
       handleApiError(error, "Error Fetching Folders", "Could not load your chat folders.");
+      const allChatsSpecialFilter: DialogFilter = { id: ALL_CHATS_FILTER_ID, title: "All Chats", _: 'dialogFilterDefault', flags:0, include_peers: [] };
       if (!dialogFilters.some(f => f.id === ALL_CHATS_FILTER_ID)) {
-        setDialogFilters([{ id: ALL_CHATS_FILTER_ID, title: "All Chats", _: 'dialogFilterDefault', flags:0, include_peers: [] }]);
+        setDialogFilters([allChatsSpecialFilter]);
       }
       setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
     } finally {
-      // console.log("fetchDialogFilters: Setting isLoadingDialogFilters to false.");
+      console.log("fetchDialogFilters: Setting isLoadingDialogFilters to false.");
       setIsLoadingDialogFilters(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected, handleApiError]);
+  }, [isConnected, handleApiError]); // Removed dialogFilters from dependencies
 
   const fetchInitialChats = useCallback(async () => {
     if (isProcessingChatsRef.current || !isConnected) {
@@ -216,14 +217,15 @@ export default function Home() {
         setIsConnected(true);
         setAuthStep('initial');
         setAuthError(null);
-        await fetchDialogFilters(); // await this before potentially fetching chats
+        // fetchDialogFilters will be called by the useEffect watching isConnected
       } else {
         setIsConnected(false);
         setPhoneNumber('');
         setAuthStep('initial');
         setAuthError(null);
         setAllChats([]);
-        setDialogFilters([{ id: ALL_CHATS_FILTER_ID, title: "All Chats", _: 'dialogFilterDefault', flags:0, include_peers: [] }]);
+        const allChatsSpecialFilter: DialogFilter = { id: ALL_CHATS_FILTER_ID, title: "All Chats", _: 'dialogFilterDefault', flags:0, include_peers: [] };
+        setDialogFilters([allChatsSpecialFilter]);
         setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
         setIsLoadingDialogFilters(false); 
       }
@@ -244,12 +246,13 @@ export default function Home() {
          handleApiError(error, "Connection Check Error", `Failed to verify existing connection. ${errorMessage}`);
       }
       setIsConnected(false);
-      setDialogFilters([{ id: ALL_CHATS_FILTER_ID, title: "All Chats", _: 'dialogFilterDefault', flags:0, include_peers: [] }]);
+      const allChatsSpecialFilter: DialogFilter = { id: ALL_CHATS_FILTER_ID, title: "All Chats", _: 'dialogFilterDefault', flags:0, include_peers: [] };
+      setDialogFilters([allChatsSpecialFilter]);
       setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
       setIsLoadingDialogFilters(false); 
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toast, handleApiError, fetchDialogFilters]);
+  }, [toast, handleApiError]); 
 
   useEffect(() => {
     checkExistingConnection();
@@ -257,15 +260,20 @@ export default function Home() {
   }, []); 
 
   useEffect(() => {
-    // This effect triggers fetching chats when isConnected or activeDialogFilterId changes.
-    // Ensures that if a filter is selected, and we are connected, chats for that filter are fetched.
+    if (isConnected) {
+      fetchDialogFilters();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected]); // fetchDialogFilters is memoized
+
+  useEffect(() => {
     if (isConnected && activeDialogFilterId !== undefined && !isProcessingChatsRef.current) {
       if(selectedFolder) setSelectedFolder(null); 
       if(currentChatMedia.length > 0) setCurrentChatMedia([]);
       fetchInitialChats();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected, activeDialogFilterId]); // fetchInitialChats is memoized and uses activeDialogFilterId from state
+  }, [isConnected, activeDialogFilterId]); 
 
 
   const handleReset = useCallback(async (performServerLogout = true) => {
@@ -285,6 +293,7 @@ export default function Home() {
 
     setIsConnected(false);
     isProcessingChatsRef.current = false;
+    setIsProcessingChats(false);
     setAllChats([]);
     setSelectedFolder(null);
     setCurrentChatMedia([]);
@@ -296,6 +305,7 @@ export default function Home() {
     setAuthError(null);
 
     isLoadingMoreChatsRequestInFlightRef.current = false;
+    setIsLoadingMoreChats(false);
     setHasMoreChats(true);
     setChatsOffsetDate(0);
     setChatsOffsetId(0);
@@ -304,8 +314,9 @@ export default function Home() {
     setIsLoadingChatMedia(false);
     setHasMoreChatMedia(true);
     setCurrentMediaOffsetId(0);
-
-    setDialogFilters([{ id: ALL_CHATS_FILTER_ID, title: "All Chats", _: 'dialogFilterDefault', flags:0, include_peers: [] }]);
+    
+    const allChatsSpecialFilter: DialogFilter = { id: ALL_CHATS_FILTER_ID, title: "All Chats", _: 'dialogFilterDefault', flags:0, include_peers: [] };
+    setDialogFilters([allChatsSpecialFilter]);
     setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
     setIsLoadingDialogFilters(true); 
 
@@ -436,6 +447,7 @@ export default function Home() {
                 const bytesNeededForFileDirect = upToDateItem.totalSizeInBytes - upToDateItem.downloadedBytes;
                 const offsetWithinCurrentBlockDirect = upToDateItem.currentOffset % ONE_MB;
                 const bytesLeftInCurrentBlockDirect = ONE_MB - offsetWithinCurrentBlockDirect;
+                
                 let idealRequestSizeDirect = Math.min(bytesLeftInCurrentBlockDirect, DOWNLOAD_CHUNK_SIZE, bytesNeededForFileDirect);
 
                 if (bytesNeededForFileDirect <= 0) {
@@ -701,10 +713,10 @@ export default function Home() {
       setHasMoreChats(false); 
     } finally {
       setIsLoadingMoreChats(false); 
-      isLoadingMoreChatsRequestInFlightRef.current = false; // Reset guard here
+      // isLoadingMoreChatsRequestInFlightRef.current is reset by the useEffect watching isLoadingMoreChats
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected, hasMoreChats, chatsOffsetDate, chatsOffsetId, chatsOffsetPeer, activeDialogFilterId, toast, handleApiError]); 
+  }, [isConnected, hasMoreChats, chatsOffsetDate, chatsOffsetId, chatsOffsetPeer, activeDialogFilterId, toast, handleApiError, isProcessingChatsRef.current]); // Added isProcessingChatsRef to dependencies to ensure it uses latest value
 
 
   const observerChats = useRef<IntersectionObserver | null>(null);
@@ -726,7 +738,7 @@ export default function Home() {
     });
     if (node) observerChats.current.observe(node);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasMoreChats, loadMoreChatsCallback]); 
+  }, [hasMoreChats, loadMoreChatsCallback, isLoadingMoreChats, isProcessingChatsRef.current]);
 
 
   const fetchInitialChatMedia = useCallback(async (folder: CloudFolder) => {
@@ -792,7 +804,7 @@ export default function Home() {
     });
     if (node) observerMedia.current.observe(node);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasMoreChatMedia, loadMoreChatMediaCallback]);
+  }, [hasMoreChatMedia, loadMoreChatMediaCallback, isLoadingChatMedia]);
 
   const handleSelectFolder = (folderId: string) => { 
     const folder = allChats.find(f => f.id === folderId);
@@ -855,7 +867,7 @@ export default function Home() {
         setPhoneCode(''); 
         setPassword('');   
         toast({ title: "Sign In Successful!", description: "Connected to Telegram." });
-        fetchDialogFilters(); 
+        // fetchDialogFilters will be called by useEffect watching isConnected
       } else {
         setAuthError("Sign in failed. Unexpected response from server.");
         toast({ title: "Sign In Failed", description: "Unexpected response from server.", variant: "destructive" });
@@ -891,7 +903,7 @@ export default function Home() {
         setPhoneCode('');   
         setPassword('');   
         toast({ title: "2FA Successful!", description: "Connected to Telegram." });
-        fetchDialogFilters(); 
+         // fetchDialogFilters will be called by useEffect watching isConnected
       } else {
         setAuthError("2FA failed. Unexpected response from server.");
         toast({ title: "2FA Failed", description: "Unexpected response from server.", variant: "destructive" });
@@ -996,6 +1008,7 @@ export default function Home() {
     const itemToResume = downloadQueueRef.current.find(item => item.id === itemId);
 
     if (itemToResume && (itemToResume.status === 'failed' || itemToResume.status === 'cancelled')) {
+        browserDownloadTriggeredRef.current.delete(itemId); // Ensure it can be triggered again
         const originalFileProps: CloudFile = {
             id: itemToResume.id,
             name: itemToResume.name,
@@ -1013,12 +1026,13 @@ export default function Home() {
         setTimeout(() => {
             handleQueueDownload(originalFileProps); 
         }, 50);
+        toast({ title: "Retrying Download", description: `Retrying download for ${itemToResume.name}.`});
         return;
     }
     setDownloadQueue(prevQueue =>
         prevQueue.map(item =>
             item.id === itemId && item.status === 'paused' ?
-            {...item, status: 'downloading'} : item
+            {...item, status: 'downloading', error_message: undefined } : item // Clear previous error on resume
         )
     );
     toast({ title: "Download Resumed", description: `Download for item has been resumed.`});
@@ -1319,8 +1333,65 @@ const handleStartUpload = async () => {
 
   const handleSelectDialogFilter = (filterId: number) => {
     setActiveDialogFilterId(filterId);
-    // Chat fetching will be triggered by the useEffect watching activeDialogFilterId
   };
+
+  const handleToggleReorderFolders = async () => {
+    if (isReorderingFolders) {
+      // Logic to save the new order
+      const newOrder = dialogFilters.map(f => f.id).filter(id => id !== ALL_CHATS_FILTER_ID); // Exclude "All Chats" from reordering via API
+      try {
+        await telegramService.updateDialogFiltersOrder(newOrder);
+        toast({ title: "Folder Order Saved", description: "The new folder order has been saved to Telegram." });
+      } catch (error: any) {
+        handleApiError(error, "Error Saving Order", "Could not save the folder order.");
+      }
+    }
+    setIsReorderingFolders(prev => !prev);
+  };
+
+  const handleMoveFilter = (dragIndex: number, hoverIndex: number) => {
+    const draggedFilter = dialogFilters[dragIndex];
+    if (draggedFilter.id === ALL_CHATS_FILTER_ID) return; // "All Chats" cannot be moved
+
+    setDialogFilters(prevFilters => {
+      const updatedFilters = [...prevFilters];
+      const [movedItem] = updatedFilters.splice(dragIndex, 1);
+      updatedFilters.splice(hoverIndex, 0, movedItem);
+      return updatedFilters;
+    });
+  };
+  
+  const handleShareFilter = async (filterId: number) => {
+    if (filterId === ALL_CHATS_FILTER_ID) {
+      toast({ title: "Cannot Share", description: "The 'All Chats' view cannot be shared." });
+      return;
+    }
+    
+    setDialogFilters(prev => prev.map(f => f.id === filterId ? { ...f, isLoading: true, inviteLink: undefined } : f));
+    try {
+      const result = await telegramService.exportChatlistInvite(filterId);
+      if (result && result.link) {
+        setDialogFilters(prev => prev.map(f => f.id === filterId ? { ...f, isLoading: false, inviteLink: result.link } : f));
+        toast({
+          title: "Folder Invite Link Created",
+          description: `Link: ${result.link} (Copied to console)`,
+        });
+        console.log(`Invite link for folder ID ${filterId}: ${result.link}`);
+        // navigator.clipboard.writeText(result.link) // Consider clipboard API for actual copy
+      } else {
+        throw new Error("No link returned from server.");
+      }
+    } catch (error: any) {
+      handleApiError(error, "Error Sharing Folder", "Could not create an invite link for this folder.");
+      setDialogFilters(prev => prev.map(f => f.id === filterId ? { ...f, isLoading: false } : f));
+    }
+  };
+
+  const handleAddFilterPlaceholder = () => {
+    toast({ title: "Add New Folder", description: "This feature (adding a new folder) is not yet implemented." });
+    // Future: Open a dialog to configure and call telegramService.updateDialogFilter(null, newFilterData)
+  };
+
 
 
   if (!isConnected) {
@@ -1367,6 +1438,11 @@ const handleStartUpload = async () => {
         activeFilterId={activeDialogFilterId}
         onSelectFilter={handleSelectDialogFilter}
         isLoading={isLoadingDialogFilters}
+        isReorderingMode={isReorderingFolders}
+        onToggleReorderMode={handleToggleReorderFolders}
+        onMoveFilter={handleMoveFilter} // Placeholder for actual drag-and-drop
+        onShareFilter={handleShareFilter}
+        onAddFilterPlaceholder={handleAddFilterPlaceholder}
       />
       <div className="flex-1 flex overflow-hidden min-h-0">
         <main className="flex-1 overflow-y-auto bg-background">

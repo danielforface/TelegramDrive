@@ -16,8 +16,8 @@ export interface CloudFile {
 export interface CloudFolder { // Represents a chat
   id: string; // Usually derived from peer ID
   name: string;
-  folders: CloudFolder[]; // Kept for potential future use, but typically empty for chat folders now
-  files: CloudFile[];   // Media files directly within this chat if loaded
+  folders: CloudFolder[];
+  files: CloudFile[];
   isChatFolder?: boolean;
   inputPeer?: any; // Actual InputPeer object for API calls
 }
@@ -58,14 +58,13 @@ export interface DownloadQueueItemType extends CloudFile {
   downloadedBytes: number;
   location?: any; // InputFileLocation
   chunks?: Uint8Array[];
-  currentOffset: number; // Current download offset for chunking
+  currentOffset: number;
   abortController?: AbortController;
-  // totalSizeInBytes is already in CloudFile, ensuring it's correctly populated
   cdnDcId?: number;
   cdnFileToken?: Uint8Array;
   cdnEncryptionKey?: Uint8Array;
   cdnEncryptionIv?: Uint8Array;
-  cdnFileHashes?: AppFileHash[]; // Assuming AppFileHash is your FileHash type
+  cdnFileHashes?: FileHash[];
   cdnCurrentFileHashIndex?: number;
   error_message?: string;
 }
@@ -108,6 +107,11 @@ export interface DialogFilter {
 
     // Specific to dialogFilterChatlist
     has_my_invites?: boolean;   // flags.26
+
+    // Client-side UI state additions
+    isReordering?: boolean; // For drag-and-drop UI
+    isLoading?: boolean; // e.g. for when fetching share link
+    inviteLink?: string; // Store fetched invite link
 }
 
 export interface MessagesDialogFilters {
@@ -140,17 +144,19 @@ type SuccessfulFileChunk_Bytes = {
   errorType?: never;
 };
 
-type SuccessfulFileChunk_CdnRedirect = {
-  bytes?: never;
-  type?: never;
-  isCdnRedirect: true;
-  cdnRedirectData: {
+type CdnRedirectDataType = {
     dc_id: number;
     file_token: Uint8Array;
     encryption_key: Uint8Array;
     encryption_iv: Uint8Array;
-    file_hashes: AppFileHash[]; // Use your existing AppFileHash type
-  };
+    file_hashes: AppFileHash[];
+};
+
+type SuccessfulFileChunk_CdnRedirect = {
+  bytes?: never;
+  type?: never;
+  isCdnRedirect: true;
+  cdnRedirectData: CdnRedirectDataType;
   errorType?: never;
 };
 
@@ -164,4 +170,3 @@ type ErrorFileChunk = {
 
 export type FileChunkResponse = SuccessfulFileChunk_Bytes | SuccessfulFileChunk_CdnRedirect | ErrorFileChunk;
 export type { FileHash as AppFileHash }; // Re-export if AppFileHash is same as FileHash
-
