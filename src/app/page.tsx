@@ -3,7 +3,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Header } from "@/components/layout/header";
-import { FolderTabsBar } from "@/components/folder-tabs-bar";
+// import { FolderTabsBar } from "@/components/folder-tabs-bar"; // No longer directly used here
 import { TelegramConnect } from "@/components/telegram-connect";
 import { MainContentView } from "@/components/main-content-view/main-content-view";
 import { FileDetailsPanel } from "@/components/file-details-panel";
@@ -18,7 +18,6 @@ import { RefreshCw, Loader2, LayoutPanelLeft, MessageSquare, UploadCloud } from 
 import { useToast } from "@/hooks/use-toast";
 import * as telegramService from "@/services/telegramService";
 
-
 const INITIAL_CHATS_LOAD_LIMIT = 20;
 const SUBSEQUENT_CHATS_LOAD_LIMIT = 10;
 const INITIAL_MEDIA_LOAD_LIMIT = 20;
@@ -27,7 +26,6 @@ const DOWNLOAD_CHUNK_SIZE = 512 * 1024;
 const KB_1 = 1024;
 const ONE_MB = 1024 * 1024;
 const ALL_CHATS_FILTER_ID = 0; 
-
 
 type AuthStep = 'initial' | 'awaiting_code' | 'awaiting_password';
 
@@ -85,7 +83,6 @@ export default function Home() {
   const [isUploadingFiles, setIsUploadingFiles] = useState(false);
   const uploadAbortControllersRef = useRef<Map<string, AbortController>>(new Map());
 
-
   const headerRef = useRef<HTMLDivElement>(null);
   const footerRef = useRef<HTMLDivElement>(null);
 
@@ -123,13 +120,6 @@ export default function Home() {
 
 
   const fetchDialogFilters = useCallback(async () => {
-    if (!isConnected) {
-        const allChatsSpecialFilter: DialogFilter = { _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, include_peers: [] };
-        setDialogFilters([allChatsSpecialFilter]);
-        setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
-        setIsLoadingDialogFilters(false);
-        return;
-    }
     setIsLoadingDialogFilters(true);
     try {
       const filtersFromServer = await telegramService.getDialogFilters();
@@ -168,7 +158,6 @@ export default function Home() {
         return 0; 
       });
 
-
       setDialogFilters(processedFilters);
       if (activeDialogFilterId === null || !processedFilters.some(f => f.id === activeDialogFilterId)) {
          setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
@@ -176,15 +165,15 @@ export default function Home() {
 
     } catch (error: any) {
       handleApiError(error, "Error Fetching Folders", "Could not load your chat folders.");
-      const allChatsSpecialFilter: DialogFilter = { _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, include_peers: [] };
-      setDialogFilters([allChatsSpecialFilter]);
+      const defaultFilters: DialogFilter[] = [{ _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, include_peers: [] }];
+      setDialogFilters(defaultFilters);
       setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
     } finally {
       console.log("fetchDialogFilters: Setting isLoadingDialogFilters to false.");
       setIsLoadingDialogFilters(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected, handleApiError]); 
+  }, [handleApiError]); 
 
   const fetchInitialChats = useCallback(async () => {
     if (isProcessingChatsRef.current || !isConnected) {
@@ -230,7 +219,6 @@ export default function Home() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConnected, activeDialogFilterId, handleApiError, toast]); 
 
-
   const checkExistingConnection = useCallback(async () => {
     try {
       const previouslyConnected = await telegramService.isUserConnected();
@@ -249,8 +237,8 @@ export default function Home() {
         setAuthStep('initial');
         setAuthError(null);
         setAllChats([]); 
-        const allChatsSpecialFilter: DialogFilter = { _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, include_peers: [] };
-        setDialogFilters([allChatsSpecialFilter]);
+        const defaultFilters: DialogFilter[] = [{ _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, include_peers: [] }];
+        setDialogFilters(defaultFilters);
         setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
         setIsLoadingDialogFilters(false); 
       }
@@ -270,8 +258,8 @@ export default function Home() {
          handleApiError(error, "Connection Check Error", `Failed to verify existing connection. ${errorMessage}`);
       }
       setIsConnected(false); 
-      const allChatsSpecialFilter: DialogFilter = { _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, include_peers: [] };
-      setDialogFilters([allChatsSpecialFilter]);
+      const defaultFilters: DialogFilter[] = [{ _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, include_peers: [] }];
+      setDialogFilters(defaultFilters);
       setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
       setIsLoadingDialogFilters(false); 
     }
@@ -317,8 +305,8 @@ export default function Home() {
     setHasMoreChatMedia(true);
     setCurrentMediaOffsetId(0);
     
-    const allChatsSpecialFilter: DialogFilter = { _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, include_peers: [] };
-    setDialogFilters([allChatsSpecialFilter]);
+    const defaultFilters: DialogFilter[] = [{ _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, include_peers: [] }];
+    setDialogFilters(defaultFilters);
     setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
     setIsLoadingDialogFilters(true); 
 
@@ -366,7 +354,7 @@ export default function Home() {
       fetchInitialChats();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected, activeDialogFilterId]);
+  }, [isConnected, activeDialogFilterId, fetchInitialChats]);
 
 
   useEffect(() => {
@@ -459,7 +447,6 @@ export default function Home() {
                         activeDownloadsRef.current.delete(upToDateItem.id);
                         continue;
                     }
-                    // console.log(`CDN Hash Verified for ${upToDateItem.name}, block index ${currentHashBlockIndex}`);
                 }
 
             } else {
@@ -504,7 +491,6 @@ export default function Home() {
                    activeDownloadsRef.current.delete(upToDateItem.id);
                    continue;
                 }
-                // console.log(`Processing direct download for ${upToDateItem.name}, offset: ${upToDateItem.currentOffset}, API limit: ${actualLimitForApi}, dataToRequest: ${idealRequestSizeDirect}, neededForFile: ${bytesNeededForFileDirect}, leftInBlock: ${bytesLeftInCurrentBlockDirect}, totalSize: ${upToDateItem.totalSizeInBytes}`);
 
                 chunkResponse = await telegramService.downloadFileChunk(
                     upToDateItem.location!, 
@@ -513,7 +499,6 @@ export default function Home() {
                     upToDateItem.abortController?.signal
                 );
             }
-
 
             if (upToDateItem.abortController?.signal.aborted) {
               activeDownloadsRef.current.delete(upToDateItem.id);
@@ -738,6 +723,7 @@ export default function Home() {
       setHasMoreChats(false); 
     } finally {
       setIsLoadingMoreChats(false); 
+      // isLoadingMoreChatsRequestInFlightRef is reset by the useEffect listening to isLoadingMoreChats
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConnected, hasMoreChats, chatsOffsetDate, chatsOffsetId, chatsOffsetPeer, activeDialogFilterId, toast, handleApiError, SUBSEQUENT_CHATS_LOAD_LIMIT]);
@@ -842,7 +828,6 @@ export default function Home() {
       setCurrentChatMedia([]);
     }
   };
-
 
   const handleSendCode = async (fullPhoneNumberFromConnect: string) => {
     if (!fullPhoneNumberFromConnect || !fullPhoneNumberFromConnect.startsWith('+') || fullPhoneNumberFromConnect.length < 5) { 
@@ -1113,7 +1098,6 @@ export default function Home() {
 
         if (limitForApiCallVideo <= 0) break; 
 
-        // console.log(`fetchVideoAndCreateStreamUrl: Downloading video chunk for ${file.name}. Offset: ${currentOffset}, Limit: ${limitForApiCallVideo}`);
         const chunkResponse = await telegramService.downloadFileChunk(downloadInfo.location, currentOffset, limitForApiCallVideo, signal);
 
         if (signal.aborted) throw new Error("Video preparation aborted during chunk download.");
@@ -1130,7 +1114,7 @@ export default function Home() {
             throw new Error("CDN Redirect not fully handled during video stream preparation. Try regular download.");
         } else {
           if (downloadedBytes < totalSize) { 
-            // console.warn(`Video chunk download for ${file.name} returned empty/unexpected bytes before completion. Downloaded: ${downloadedBytes}/${totalSize}. Resp:`, chunkResponse);
+            console.warn(`Video chunk download for ${file.name} returned empty/unexpected bytes before completion. Downloaded: ${downloadedBytes}/${totalSize}. Resp:`, chunkResponse);
           }
           break; 
         }
@@ -1186,7 +1170,7 @@ export default function Home() {
         await fetchVideoAndCreateStreamUrl(file, newController.signal);
     } catch (error) { 
          if (!newController.signal.aborted) { 
-            // console.error("Unexpected error during video stream preparation orchestrator:", error);
+            console.error("Unexpected error during video stream preparation orchestrator:", error);
         }
     } finally {
         if (videoStreamAbortControllerRef.current === newController) {
@@ -1243,7 +1227,7 @@ export default function Home() {
         }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [videoStreamUrl]); 
+  }, []); 
 
 
   const handleOpenDownloadManager = () => setIsDownloadManagerOpen(true);
@@ -1266,7 +1250,7 @@ export default function Home() {
     setFilesToUpload([]); 
     uploadAbortControllersRef.current.forEach((controller, id) => {
       if (!controller.signal.aborted) {
-        // console.log(`Upload dialog closed, aborting upload for file ID: ${id}`);
+        console.log(`Upload dialog closed, aborting upload for file ID: ${id}`);
         controller.abort("Upload dialog closed by user");
       }
     });
@@ -1308,7 +1292,7 @@ const handleStartUpload = async () => {
 
   for (const fileToUpload of filesToAttemptUpload) {
     if (fileToUpload.uploadStatus === 'completed' || fileToUpload.uploadStatus === 'uploading' || fileToUpload.uploadStatus === 'processing') {
-        // console.log(`Skipping upload for ${fileToUpload.name}, status: ${fileToUpload.uploadStatus}`);
+        console.log(`Skipping upload for ${fileToUpload.name}, status: ${fileToUpload.uploadStatus}`);
         continue;
     }
 
@@ -1426,7 +1410,6 @@ const handleStartUpload = async () => {
     toast({ title: "Add New Folder", description: "This feature (adding a new folder) is not yet implemented." });
   };
 
-
   if (!isConnected) {
     return (
       <>
@@ -1466,17 +1449,7 @@ const handleStartUpload = async () => {
         onOpenDownloadManager={handleOpenDownloadManager}
         onOpenChatSelectionDialog={handleOpenChatSelectionDialog}
       />
-      <FolderTabsBar
-        filters={dialogFilters}
-        activeFilterId={activeDialogFilterId}
-        onSelectFilter={handleSelectDialogFilter}
-        isLoading={isLoadingDialogFilters}
-        isReorderingMode={isReorderingFolders}
-        onToggleReorderMode={handleToggleReorderFolders}
-        onMoveFilter={handleMoveFilter} 
-        onShareFilter={handleShareFilter}
-        onAddFilterPlaceholder={handleAddFilterPlaceholder}
-      />
+      {/* FolderTabsBar is now inside ChatSelectionDialog */}
       <div className="flex-1 flex overflow-hidden min-h-0"> 
         <main className="flex-1 overflow-y-auto bg-background"> 
            <div className="container mx-auto h-full px-4 sm:px-6 lg:px-8 py-4 md:py-6 lg:py-8">
@@ -1499,9 +1472,9 @@ const handleStartUpload = async () => {
                 <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground">
                   <LayoutPanelLeft className="w-16 h-16 mb-4 opacity-50" />
                   <p className="text-lg mb-2">No chat selected.</p>
-                  <p className="text-sm mb-4">Select a folder tab above, then choose a chat from the dialog.</p>
+                  <p className="text-sm mb-4">Select a folder tab in the chat selection dialog, then choose a chat.</p>
                   <Button onClick={handleOpenChatSelectionDialog}>
-                    <MessageSquare className="mr-2 h-5 w-5" /> Select a Chat from Current Folder
+                    <MessageSquare className="mr-2 h-5 w-5" /> Select a Chat
                   </Button>
                   {isProcessingChats && allChats.length === 0 && ( 
                     <div className="mt-4 flex items-center">
@@ -1529,6 +1502,17 @@ const handleStartUpload = async () => {
       <ChatSelectionDialog
         isOpen={isChatSelectionDialogOpen}
         onOpenChange={setIsChatSelectionDialogOpen}
+        // Folder management props
+        dialogFilters={dialogFilters}
+        activeDialogFilterId={activeDialogFilterId}
+        onSelectDialogFilter={handleSelectDialogFilter}
+        isLoadingDialogFilters={isLoadingDialogFilters}
+        isReorderingFolders={isReorderingFolders}
+        onToggleReorderFolders={handleToggleReorderFolders}
+        onMoveFilter={handleMoveFilter}
+        onShareFilter={handleShareFilter}
+        onAddFilterPlaceholder={handleAddFilterPlaceholder}
+        // Chat list props
         folders={allChats} 
         selectedFolderId={selectedFolder?.id || null}
         onSelectFolder={handleSelectFolder} 
@@ -1578,6 +1562,3 @@ const handleStartUpload = async () => {
     </div>
   );
 }
-
-
-    

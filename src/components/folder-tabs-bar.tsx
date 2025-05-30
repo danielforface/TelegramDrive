@@ -20,6 +20,7 @@ interface FolderTabsBarProps {
   onMoveFilter: (dragIndex: number, hoverIndex: number) => void;
   onShareFilter: (filterId: number) => void;
   onAddFilterPlaceholder: () => void;
+  className?: string; // Added className prop
 }
 
 const ALL_CHATS_FILTER_ID = 0; 
@@ -34,11 +35,12 @@ export function FolderTabsBar({
   onMoveFilter,
   onShareFilter,
   onAddFilterPlaceholder,
+  className, // Consume className prop
 }: FolderTabsBarProps) {
 
   if (isLoading && filters.length <= 1) { 
     return (
-      <div className="flex items-center justify-center h-14 border-b px-4 bg-background sticky top-0 z-10 shadow-sm">
+      <div className={cn("flex items-center justify-center h-14 border-b px-4 bg-background shadow-sm", className)}> {/* Applied className */}
         <Loader2 className="h-5 w-5 animate-spin text-primary" />
         <span className="ml-2 text-sm text-muted-foreground">Loading folders...</span>
       </div>
@@ -46,62 +48,53 @@ export function FolderTabsBar({
   }
   
   const displayFilters = [...filters];
-  // Ensure "All Chats" is present if no filters or default filter handling is done in page.tsx
   if (!displayFilters.some(f => f.id === ALL_CHATS_FILTER_ID)) {
-      // This check might be redundant if page.tsx always ensures "All Chats" exists
-      // but kept for safety if FolderTabsBar is used in other contexts.
       const allChatsDefault: DialogFilter = {
           _:'dialogFilterDefault',
           id: ALL_CHATS_FILTER_ID,
           title: "All Chats",
           flags:0,
           include_peers: [],
-          // pinned_peers and exclude_peers are optional and default to empty if not provided
       };
       displayFilters.unshift(allChatsDefault);
   }
-
 
   const currentTabValue = (activeFilterId !== null && displayFilters.some(f => f.id === activeFilterId))
                           ? activeFilterId.toString()
                           : ALL_CHATS_FILTER_ID.toString();
 
-  const [draggedItem, setDraggedItem] = React.useState<DialogFilter | null>(null);
+  const [draggedItemIndex, setDraggedItemIndex] = React.useState<number | null>(null);
 
-  const handleDragStart = (e: React.DragEvent<HTMLButtonElement>, filter: DialogFilter, index: number) => {
-    if (!isReorderingMode || filter.id === ALL_CHATS_FILTER_ID) {
+  const handleDragStart = (e: React.DragEvent<HTMLButtonElement>, index: number) => {
+    if (!isReorderingMode || filters[index].id === ALL_CHATS_FILTER_ID) {
         e.preventDefault();
         return;
     }
-    e.dataTransfer.setData('filterId', filter.id.toString());
     e.dataTransfer.setData('filterIndex', index.toString());
-    setDraggedItem(filter);
+    setDraggedItemIndex(index);
   };
 
   const handleDragOver = (e: React.DragEvent<HTMLButtonElement>) => {
     e.preventDefault(); 
-    if (!isReorderingMode || !draggedItem) return;
-    // Add visual feedback for drop target if desired
+    if (!isReorderingMode || draggedItemIndex === null) return;
   };
   
   const handleDrop = (e: React.DragEvent<HTMLButtonElement>, dropIndex: number) => {
     e.preventDefault();
-    if (!isReorderingMode || !draggedItem || filters[dropIndex].id === ALL_CHATS_FILTER_ID) {
-      setDraggedItem(null);
+    if (!isReorderingMode || draggedItemIndex === null || filters[dropIndex].id === ALL_CHATS_FILTER_ID) {
+      setDraggedItemIndex(null);
       return;
     }
-    const draggedFilterId = parseInt(e.dataTransfer.getData('filterId'), 10);
-    const dragIndex = filters.findIndex(f => f.id === draggedFilterId);
+    const dragIndex = parseInt(e.dataTransfer.getData('filterIndex'), 10);
     
     if (dragIndex !== -1 && dragIndex !== dropIndex && filters[dropIndex].id !== ALL_CHATS_FILTER_ID) {
       onMoveFilter(dragIndex, dropIndex);
     }
-    setDraggedItem(null);
+    setDraggedItemIndex(null);
   };
 
-
   return (
-    <div className="border-b sticky top-0 bg-background z-10 shadow-sm">
+    <div className={cn("border-b bg-background shadow-sm", className)}> {/* Applied className */}
       <div className="flex items-center px-2 sm:px-3 h-14">
         <ScrollArea className="flex-grow whitespace-nowrap">
           <Tabs
@@ -122,17 +115,17 @@ export function FolderTabsBar({
                     <TooltipTrigger asChild>
                       <TabsTrigger
                         value={filter.id.toString()}
-                        disabled={isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && draggedItem?.id === filter.id} // Disable click-selection on dragged item
+                        disabled={isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && draggedItemIndex === index} 
                         draggable={isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID}
-                        onDragStart={(e) => handleDragStart(e, filter, index)}
+                        onDragStart={(e) => handleDragStart(e, index)}
                         onDragOver={handleDragOver}
                         onDrop={(e) => handleDrop(e, index)}
-                        onDragEnd={() => setDraggedItem(null)}
+                        onDragEnd={() => setDraggedItemIndex(null)}
                         className={cn(
                           "h-10 relative rounded-md px-2 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-sm hover:bg-muted/50 flex items-center gap-1.5",
                           isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && "tab-shake cursor-move",
                           isReorderingMode && filter.id === ALL_CHATS_FILTER_ID && "cursor-not-allowed opacity-70",
-                          draggedItem?.id === filter.id && "opacity-50 border-2 border-dashed border-primary"
+                          draggedItemIndex === index && "opacity-50 border-2 border-dashed border-primary"
                         )}
                       >
                         {isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && <GripVertical className="h-4 w-4 mr-1 text-muted-foreground" />}
