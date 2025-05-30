@@ -69,6 +69,7 @@ class API {
         updates: { on: () => {} }, 
         setDefaultDc: async () => Promise.reject(new Error(errorMessage)),
         clearStorage: async () => Promise.resolve(),
+        mtproto: { crypto: { getSRPParams: async () => ({ A: new Uint8Array(), M1: new Uint8Array() }) } } // Mock crypto for constructor
       } as any; 
       this.apiId = 0; 
       this.apiHash = '';
@@ -123,6 +124,7 @@ class API {
             updates: { on: () => {} },
             setDefaultDc: async () => Promise.reject(new Error(errorMessage)),
             clearStorage: async () => Promise.resolve(),
+            mtproto: { crypto: { getSRPParams: async () => ({ A: new Uint8Array(), M1: new Uint8Array() }) } }
         } as any;
         this.initialized = false;
     }
@@ -144,6 +146,8 @@ class API {
       return result;
     } catch (error: any) {
       originalErrorObject = JSON.parse(JSON.stringify(error)); 
+      console.log(`MTProto call '${method}' raw error object:`, originalErrorObject, error);
+
 
       const { error_code, error_message } = originalErrorObject || {};
 
@@ -166,14 +170,17 @@ class API {
         const dcId = Number(migrateErrorMatch[2]);
         
         const criticalMethodsForDcChange = ['auth.sendCode', 'auth.signIn', 'auth.checkPassword', 'account.getPassword', 'users.getUsers'];
-        if (type === 'PHONE' || type === 'NETWORK' || type === 'USER' || criticalMethodsForDcChange.some(m => method.startsWith(m)) || (method.startsWith('upload.getFile') && type !== 'FILE') ) {
+        // For FILE_MIGRATE, only change dcId in options, not default DC.
+        if (type === 'PHONE' || type === 'NETWORK' || type === 'USER' || (criticalMethodsForDcChange.some(m => method.startsWith(m)) && type !== 'FILE') ) {
             try {
+                console.log(`Attempting to set default DC to ${dcId} due to ${type}_MIGRATE error.`);
                 await this.mtproto.setDefaultDc(dcId);
             } catch (setDefaultDcError: any) {
                 console.error(`Failed to set default DC to ${dcId}:`, setDefaultDcError.message || setDefaultDcError);
                 options = { ...options, dcId }; 
             }
         } else {
+             console.log(`Applying dcId ${dcId} to options for method ${method} due to ${type}_MIGRATE error.`);
             options = { ...options, dcId };
         }
         return this.call(method, params, options); 
@@ -281,6 +288,7 @@ export function getUserSessionDetails(): { phone?: string; user?: any } {
 export async function sendCode(fullPhoneNumber: string): Promise<string> {
   userSession = { phone: fullPhoneNumber }; 
   saveUserDataToLocalStorage(); 
+  console.log(`Attempting to send code to ${fullPhoneNumber} via API class`);
 
   const sendCodePayload = {
     phone_number: fullPhoneNumber,
@@ -292,21 +300,24 @@ export async function sendCode(fullPhoneNumber: string): Promise<string> {
   try {
     const result = await api.call('auth.sendCode', sendCodePayload);
     if (!result || !result.phone_code_hash) {
+        console.error("Failed to send code: phone_code_hash not received or result is invalid.", result);
         throw new Error("Failed to send code: phone_code_hash not received from Telegram.");
     }
     userSession.phone_code_hash = result.phone_code_hash;
     return userSession.phone_code_hash;
   } catch (error: any) {
-    const message = error.message || 'Failed to send code.';
+    console.error('Error in sendCode function after api.call:', error.message, error.originalErrorObject || error);
+    const message = error.message || (error.originalErrorObject?.error_message || 'Failed to send code.');
      if (message === 'AUTH_RESTART') { 
          throw new Error('AUTH_RESTART');
     }
-    throw error; 
+    throw new Error(message); 
   }
 }
 
 export async function signIn(fullPhoneNumber: string, code: string): Promise<{ user?: any; error?: string; srp_id?: string }> {
   if (!userSession.phone_code_hash) {
+    console.warn("signIn called without phone_code_hash in session. Potentially an AUTH_RESTART scenario.");
     throw new Error('AUTH_RESTART');
   }
   if (!userSession.phone) userSession.phone = fullPhoneNumber;
@@ -338,6 +349,7 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
         const passwordData = await api.call('account.getPassword');
 
         if (!passwordData || !passwordData.srp_id || !passwordData.current_algo || !passwordData.srp_B) {
+             console.error("Failed to initialize 2FA: Missing critical SRP parameters from account.getPassword.", passwordData);
              delete userSession.phone_code_hash;
              throw new Error('Failed to initialize 2FA: Missing critical SRP parameters.');
         }
@@ -362,6 +374,7 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
         if (getPasswordError.message === '2FA_REQUIRED' && getPasswordError.srp_id) {
           throw getPasswordError; 
         }
+        console.log('Error fetching password details for 2FA (signIn):', getPasswordError.message, getPasswordError.originalErrorObject || getPasswordError);
         const messageToThrow = getPasswordError.message || 'Failed to fetch 2FA details.';
         throw new Error(messageToThrow);
       }
@@ -373,7 +386,7 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
 
 
 export async function checkPassword(password: string): Promise<any> {
-  if (!userSession.srp_id || !userSession.srp_params || !api.mtproto.crypto || typeof api.mtproto.crypto.getSRPParams !== 'function') {
+  if (!userSession.srp_id || !userSession.srp_params || !api.mtproto.mtproto?.crypto?.getSRPParams) {
     delete userSession.srp_params;
     delete userSession.srp_id;
     throw new Error('AUTH_RESTART'); 
@@ -382,7 +395,10 @@ export async function checkPassword(password: string): Promise<any> {
   try {
     const { g, p, salt1, salt2, srp_B } = userSession.srp_params;
     
-    const { A, M1 } = await api.mtproto.crypto.getSRPParams({
+    if (!api.mtproto.mtproto?.crypto?.getSRPParams){
+        throw new Error("SRP crypto methods not available on mtproto instance.");
+    }
+    const { A, M1 } = await api.mtproto.mtproto.crypto.getSRPParams({
         g, p, salt1, salt2, gB: srp_B, password,
     });
     
@@ -406,7 +422,7 @@ export async function checkPassword(password: string): Promise<any> {
     return checkResult.user;
 
   } catch (error: any) {
-    const message = error.message; 
+    const message = error.message || error.originalErrorObject?.error_message; 
     
     delete userSession.srp_params;
     delete userSession.srp_id;
@@ -427,7 +443,7 @@ export async function signOut(): Promise<void> {
         await api.call('auth.logOut');
     } 
   } catch (error: any) {
-    // console.error('Error signing out from Telegram server:', error.message, error.originalErrorObject || error);
+     console.warn('Error signing out from Telegram server (this is often expected if session was already invalid):', error.message);
   } finally {
     userSession = {}; 
     if (typeof window !== 'undefined') {
@@ -438,7 +454,7 @@ export async function signOut(): Promise<void> {
           await api.mtproto.clearStorage();
         }
       } catch (e) {
-        // console.error('Error trying to clear mtproto-core storage:', e);
+         console.warn('Error trying to clear mtproto-core storage:', e);
       }
     }
   }
@@ -459,7 +475,7 @@ export async function isUserConnected(): Promise<boolean> {
         await api.call('users.getUsers', {id: [{_: 'inputUserSelf'}]});
         return true;
     } catch (error: any) {
-        const errorMessage = error.message; 
+        const errorMessage = error.message || error.originalErrorObject?.error_message;
         const authErrorMessages = [
             'AUTH_KEY_UNREGISTERED', 'USER_DEACTIVATED', 'SESSION_REVOKED',
             'SESSION_EXPIRED', 'API_ID_INVALID', 'AUTH_RESTART', 'PHONE_CODE_INVALID', 
@@ -467,9 +483,11 @@ export async function isUserConnected(): Promise<boolean> {
         ];
 
         if (errorMessage && authErrorMessages.some(authMsg => errorMessage.includes(authMsg))) {
+            console.warn(`User session invalid (${errorMessage}), signing out.`);
             await signOut(); 
             return false;
         }
+         console.warn(`isUserConnected check failed with non-critical auth error, but user object exists. Error: ${errorMessage}. Treating as connected for now.`);
         return true; 
     }
   }
@@ -539,7 +557,7 @@ function transformDialogsToCloudFolders(dialogsResult: any): CloudFolder[] {
             }
         }
     } catch (e) {
-        // console.error("Error constructing inputPeer for dialog:", dialog, e);
+         console.error("Error constructing inputPeer for dialog:", dialog, e);
     }
 
     if (!inputPeerForApiCalls) {
@@ -566,12 +584,20 @@ export async function getDialogFilters(): Promise<DialogFilter[]> {
     return [];
   }
   try {
-    const result: MessagesDialogFilters = await api.call('messages.getDialogFilters');
+    const result = await api.call('messages.getDialogFilters'); // result could be MessagesDialogFilters or directly DialogFilter[]
     console.log("Full result from messages.getDialogFilters:", result); // DIAGNOSTIC LOG
-    return result?.filters || [];
+
+    if (Array.isArray(result)) { // If result itself is the array of filters
+      return result as DialogFilter[];
+    } else if (result && Array.isArray(result.filters)) { // If result is an object containing a filters array (expected)
+      return result.filters as DialogFilter[];
+    } else {
+      console.warn("Unexpected structure for messages.getDialogFilters response:", result);
+      return []; // Return empty if structure is not as expected
+    }
   } catch (error: any) {
     console.error('Error fetching dialog filters:', error.message, error.originalErrorObject || error);
-    throw error; 
+    return []; // Return empty on error so UI doesn't get stuck loading
   }
 }
 
@@ -595,7 +621,7 @@ export async function getTelegramChats(
       hash: 0, 
   };
 
-  if (folderId !== undefined && folderId > 0) { 
+  if (folderId !== undefined && folderId !== 0) { // 0 is usually "All Chats" and shouldn't be sent as folder_id
       params.folder_id = folderId;
   }
   
@@ -628,6 +654,7 @@ export async function getTelegramChats(
                  if (lastMessageOverall.peer_id._ && (lastMessageOverall.peer_id._ === 'inputPeerUser' || lastMessageOverall.peer_id._ === 'inputPeerChat' || lastMessageOverall.peer_id._ === 'inputPeerChannel')) {
                     newOffsetPeerInput = lastMessageOverall.peer_id;
                  } else {
+                    // This case needs careful construction of InputPeer from peer_id which might only have user_id/chat_id/channel_id
                     const correspondingDialog = dialogsResult.dialogs.find((d:any) => String(d.top_message) === String(lastMessageOverall.id));
                     newOffsetPeerInput = correspondingDialog ? correspondingDialog.peer : { _: 'inputPeerEmpty' };
                  }
@@ -651,6 +678,7 @@ export async function getTelegramChats(
     };
 
   } catch (error:any) {
+    console.error('Error in getTelegramChats:', error.message, error.originalErrorObject || error);
     throw error;
   }
 }
@@ -664,6 +692,7 @@ export async function getChatMediaHistory(
     return { files: [], hasMore: false, nextOffsetId: offsetId };
   }
   if (!inputPeer) {
+    console.warn("getChatMediaHistory called without inputPeer");
     return { files: [], hasMore: false, nextOffsetId: offsetId };
   }
 
@@ -703,6 +732,8 @@ export async function getChatMediaHistory(
              mediaObjectForFile = msg.media.photo;
           } else if (msg.media.document) { 
              mediaObjectForFile = msg.media.document;
+          } else {
+             return; // Skip if no identifiable media object
           }
 
           if (msg.media._ === 'messageMediaPhoto' && mediaObjectForFile) {
@@ -718,7 +749,7 @@ export async function getChatMediaHistory(
           } else if (msg.media._ === 'messageMediaDocument' && mediaObjectForFile) {
               fileName = mediaObjectForFile.attributes?.find((attr: any) => attr._ === 'documentAttributeFilename')?.file_name || `document_${mediaObjectForFile.id?.toString() || msg.id}`;
               if(mediaObjectForFile.size) { 
-                totalSizeInBytes = Number(mediaObjectForFile.size);
+                totalSizeInBytes = Number(mediaObjectForFile.size); // Ensure this is a number
                 fileSize = formatFileSize(totalSizeInBytes);
               }
 
@@ -757,6 +788,7 @@ export async function getChatMediaHistory(
       if (typeof historyResult.count === 'number') {
         hasMoreMessages = mediaFiles.length > 0 && messagesArray.length === limit; 
       } else {
+        // If historyResult.count is not available, assume more if we received the limit
         hasMoreMessages = messagesArray.length === limit;
       }
     } else {
@@ -770,6 +802,7 @@ export async function getChatMediaHistory(
     };
 
   } catch (error:any) {
+    console.error('Error in getChatMediaHistory:', error.message, error.originalErrorObject || error);
     throw error;
   }
 }
@@ -777,6 +810,7 @@ export async function getChatMediaHistory(
 
 export async function prepareFileDownloadInfo(file: CloudFile): Promise<FileDownloadInfo | null> {
   if (!file.telegramMessage) {
+    console.warn("prepareFileDownloadInfo: file.telegramMessage is missing for file:", file.name);
     return null;
   }
 
@@ -799,7 +833,11 @@ export async function prepareFileDownloadInfo(file: CloudFile): Promise<FileDown
         };
         totalSize = Number(largestSize.size) || file.totalSizeInBytes || 0; 
         mimeType = 'image/jpeg'; 
+      } else {
+         console.warn("prepareFileDownloadInfo: No suitable size found for photo:", mediaObject.id);
       }
+    } else {
+        console.warn("prepareFileDownloadInfo: Missing id, access_hash, or file_reference for photo:", mediaObject);
     }
   } 
   else if (mediaObject && mediaObject._ === 'document') { 
@@ -813,13 +851,18 @@ export async function prepareFileDownloadInfo(file: CloudFile): Promise<FileDown
       };
       totalSize = Number(mediaObject.size) || file.totalSizeInBytes || 0; 
       mimeType = mediaObject.mime_type || 'application/octet-stream';
+    } else {
+       console.warn("prepareFileDownloadInfo: Missing id, access_hash, or file_reference for document:", mediaObject);
     }
+  } else {
+     console.warn("prepareFileDownloadInfo: Unsupported mediaObject type:", mediaObject?._);
   }
 
 
   if (location && totalSize > 0) {
     return { location, totalSize, mimeType };
   } else {
+    console.warn("prepareFileDownloadInfo: Could not create valid download info. Location:", location, "TotalSize:", totalSize);
     return null;
   }
 }
@@ -832,6 +875,7 @@ export async function downloadFileChunk(
     signal?: AbortSignal
 ): Promise<FileChunkResponse> {
   if (!location) {
+    console.error("downloadFileChunk called with null location.");
     return { errorType: 'OTHER' as const };
   }
   try {
@@ -844,6 +888,7 @@ export async function downloadFileChunk(
     }, { signal }); 
 
     if (!result || typeof result !== 'object' || (Object.keys(result).length === 0 && result.constructor === Object)) {
+        console.warn("downloadFileChunk: Empty or invalid response from upload.getFile for location:", location, "offset:", offset, "limit:", limit, "Response:", result);
         return { errorType: 'OTHER' as const };
     }
 
@@ -868,17 +913,18 @@ export async function downloadFileChunk(
     if (result._ === 'upload.file' && result.bytes) {
       return { bytes: result.bytes, type: result.type?._ || 'storage.fileUnknown' };
     }
+    console.warn("downloadFileChunk: Unexpected response structure from upload.getFile:", result);
     return { errorType: 'OTHER' as const };
   } catch (error: any) {
     if (error.name === 'AbortError' || (error.message && error.message.toLowerCase().includes('aborted'))) {
+      console.log("downloadFileChunk: Aborted by user/system.");
       return { errorType: 'OTHER' as const }; 
     }
+    console.error('Error downloading file chunk:', error.message, error.originalErrorObject || error);
     const errorMessage = error.message || error.originalErrorObject?.error_message;
     if (errorMessage?.includes('FILE_REFERENCE_EXPIRED')) {
       return { errorType: 'FILE_REFERENCE_EXPIRED' as const };
     }
-    // Log other errors for better debugging
-    console.error('Error downloading file chunk:', error.message, error.originalErrorObject || error);
     return { errorType: 'OTHER' as const }; 
   }
 }
@@ -897,16 +943,19 @@ export async function downloadCdnFileChunk(
     }, { dcId: cdnRedirectData.dc_id, signal }); 
 
     if (!result || typeof result !== 'object' || (Object.keys(result).length === 0 && result.constructor === Object) ) {
+        console.warn("downloadCdnFileChunk: Empty or invalid response from upload.getCdnFile for token:", cdnRedirectData.file_token, "offset:", offset, "limit:", limit, "Response:", result);
         return { errorType: 'OTHER' as const };
     }
 
     if (result._ === 'upload.cdnFile' && result.bytes) {
       return { bytes: result.bytes, type: 'application/octet-stream' }; 
     }
+     console.warn("downloadCdnFileChunk: Unexpected response structure from upload.getCdnFile:", result);
     return { errorType: 'OTHER' as const };
   } catch (error: any)
    {
     if (error.name === 'AbortError' || (error.message && error.message.toLowerCase().includes('aborted'))) {
+      console.log("downloadCdnFileChunk: Aborted by user/system.");
       return { errorType: 'OTHER' as const };
     }
     console.error('Error downloading CDN file chunk:', error.message, error.originalErrorObject || error);
@@ -915,10 +964,12 @@ export async function downloadCdnFileChunk(
 }
 
 export async function refreshFileReference(item: DownloadQueueItemType): Promise<any | null> {
-  if (!item.inputPeer) {
+  if (!item.inputPeer || !item.telegramMessage) { // Check telegramMessage for original context
+      console.warn("refreshFileReference: Missing inputPeer or original telegramMessage for item:", item.name);
       return null;
   }
   if (!item.messageId) {
+      console.warn("refreshFileReference: Missing messageId for item:", item.name);
       return null;
   }
 
@@ -930,6 +981,10 @@ export async function refreshFileReference(item: DownloadQueueItemType): Promise
     let foundMessage = null;
     if (messagesResult.messages && Array.isArray(messagesResult.messages)) {
         foundMessage = messagesResult.messages.find((m: any) => String(m.id) === String(item.messageId));
+    } else if (messagesResult.chats && messagesResult.users ) { // Sometimes full message isn't in 'messages' but media in 'chats' or 'users'
+        // This part is complex as the full message might not be directly in messagesResult.messages
+        // For now, we assume the message is in messagesResult.messages.
+        // A more robust solution might need to search through linked chats/users if a full message constructor is returned.
     }
     
     const updatedMessage = foundMessage; 
@@ -944,12 +999,23 @@ export async function refreshFileReference(item: DownloadQueueItemType): Promise
       } else if (updatedMessage.media.document && updatedMessage.media.document.id) {
         updatedMediaObject = messagesResult.documents?.find((d:any) => String(d.id) === String(updatedMessage.media.document.id)) || updatedMessage.media.document;
         newFileReference = updatedMediaObject?.file_reference;
+      } else if (updatedMessage.media.photo) { // Fallback if full photo object not in separate list
+         updatedMediaObject = updatedMessage.media.photo;
+         newFileReference = updatedMediaObject?.file_reference;
+      } else if (updatedMessage.media.document) { // Fallback for document
+         updatedMediaObject = updatedMessage.media.document;
+         newFileReference = updatedMediaObject?.file_reference;
       }
 
 
       if (newFileReference && updatedMediaObject) {
+        console.log("File reference refreshed for:", item.name, "New reference:", newFileReference);
         return updatedMediaObject; 
+      } else {
+        console.warn("Could not obtain new file_reference for item:", item.name, "Updated Message:", updatedMessage);
       }
+    } else {
+       console.warn("No media found in updated message for item:", item.name, "Updated Message:", updatedMessage);
     }
   } catch (error: any) {
     console.error("Error during refreshFileReference (messages.getMessages):", error.message, error.originalErrorObject || error);
@@ -981,13 +1047,16 @@ export function areUint8ArraysEqual(arr1?: Uint8Array, arr2?: Uint8Array): boole
 }
 
 function generateRandomLong(): string {
-  const high = Math.floor(Math.random() * 0xFFFFFFFF);
-  const low = Math.floor(Math.random() * 0xFFFFFFFF);
-  return String((BigInt(high) << BigInt(32)) | BigInt(low));
+  // Generates a 64-bit signed random long as a string
+  const buffer = new Uint8Array(8);
+  crypto.getRandomValues(buffer);
+  // Interpret as little-endian signed 64-bit
+  const view = new DataView(buffer.buffer);
+  return view.getBigInt64(0, true).toString();
 }
 
 const TEN_MB = 10 * 1024 * 1024;
-const UPLOAD_PART_SIZE = 512 * 1024; 
+const UPLOAD_PART_SIZE = 512 * 1024; // 512KB as per Telegram docs for part_size
 
 export async function uploadFile(
   inputPeer: any,
@@ -999,10 +1068,12 @@ export async function uploadFile(
   const totalChunks = Math.ceil(fileToUpload.size / UPLOAD_PART_SIZE);
   const isBigFile = fileToUpload.size > TEN_MB;
 
+  console.log(`Starting upload for ${fileToUpload.name}. Size: ${fileToUpload.size}, BigFile: ${isBigFile}, Total Chunks: ${totalChunks}, Client File ID: ${client_file_id}`);
   onProgress(0);
 
   for (let i = 0; i < totalChunks; i++) {
     if (signal?.aborted) {
+      console.log(`Upload aborted by user for ${fileToUpload.name} at chunk ${i}`);
       throw new Error('Upload aborted by user.');
     }
 
@@ -1020,6 +1091,7 @@ export async function uploadFile(
     try {
       let partUploadResult;
       if (isBigFile) {
+        console.log(`Uploading big file part ${i}/${totalChunks -1} for ${fileToUpload.name}`);
         partUploadResult = await api.call('upload.saveBigFilePart', {
           file_id: client_file_id,
           file_part: i,
@@ -1027,6 +1099,7 @@ export async function uploadFile(
           bytes: chunkBytes,
         }, { signal });
       } else {
+        console.log(`Uploading small file part ${i}/${totalChunks -1} for ${fileToUpload.name}`);
         partUploadResult = await api.call('upload.saveFilePart', {
           file_id: client_file_id,
           file_part: i,
@@ -1035,22 +1108,27 @@ export async function uploadFile(
       }
 
       if (partUploadResult?._ !== 'boolTrue') { 
+          console.error(`Failed to save file part ${i} for ${fileToUpload.name}. Server response:`, partUploadResult);
           throw new Error(`Failed to save file part ${i}. Server response: ${JSON.stringify(partUploadResult)}`);
       }
 
+      // Calculate progress based on chunks uploaded for the file itself (0-90% for chunks)
       const progressPercent = Math.round(((i + 1) / totalChunks) * 90); 
       onProgress(progressPercent);
 
     } catch (error: any) {
+      console.error(`Error uploading part ${i} for ${fileToUpload.name}:`, error.message, error.originalErrorObject || error);
       throw error; 
     }
   }
 
+  // Progress to 95% after all chunks are uploaded, before sending media
   onProgress(95); 
+  console.log(`All parts uploaded for ${fileToUpload.name}. Sending media...`);
 
   const inputFilePayload = isBigFile
     ? { _: 'inputFileBig', id: client_file_id, parts: totalChunks, name: fileToUpload.name }
-    : { _: 'inputFile', id: client_file_id, parts: totalChunks, name: fileToUpload.name, md5_checksum: '' }; 
+    : { _: 'inputFile', id: client_file_id, parts: totalChunks, name: fileToUpload.name, md5_checksum: '' }; // MD5 checksum ideally calculated from fileToUpload.originalFile
 
   try {
     const result = await api.call('messages.sendMedia', {
@@ -1064,15 +1142,19 @@ export async function uploadFile(
         mime_type: fileToUpload.type || 'application/octet-stream', 
         attributes: [
           { _: 'documentAttributeFilename', file_name: fileToUpload.name },
+          // Potentially add other attributes like duration for video/audio if available
         ],
       },
-      message: '', 
+      message: '', // Optional caption
       random_id: generateRandomLong(), 
+      // schedule_date, send_as, etc. are optional
     }, { signal }); 
     
+    console.log(`Media sent successfully for ${fileToUpload.name}:`, result);
     onProgress(100); 
     return result;
   } catch (error: any) {
+    console.error(`Error sending media for ${fileToUpload.name}:`, error.message, error.originalErrorObject || error);
     throw error;
   }
 }
@@ -1080,44 +1162,55 @@ export async function uploadFile(
 
 export async function updateDialogFiltersOrder(order: number[]): Promise<boolean> {
   try {
-    await api.call('messages.updateDialogFiltersOrder', { order });
-    return true;
+    console.log("Attempting to update dialog filters order with:", order);
+    const result = await api.call('messages.updateDialogFiltersOrder', { order });
+    console.log("Update dialog filters order result:", result);
+    return result === true || (typeof result === 'object' && result._ === 'boolTrue');
   } catch (error: any) {
+    console.error('Error updating dialog filters order:', error.message, error.originalErrorObject || error);
     throw error;
   }
 }
 
 export async function exportChatlistInvite(filterId: number): Promise<{ link: string } | null> {
   try {
+    console.log("Attempting to export chatlist invite for filter ID:", filterId);
     const result = await api.call('chatlists.exportChatlistInvite', { 
         filter_id: filterId,
-        peers: [] 
+        peers: [] // Send empty peers for now, can be populated if specific peers are needed for the invite
     });
+    console.log("Export chatlist invite result:", result);
     if (result && result.url) {
         return { link: result.url };
     }
     return null;
   } catch (error: any) {
+    console.error('Error exporting chatlist invite:', error.message, error.originalErrorObject || error);
     throw error;
   }
 }
 
 export async function updateDialogFilter(
-  filterIdToUpdate: number | null, 
-  filterData?: DialogFilter     
+  filterIdToUpdate: number | null, // null for creating a new filter
+  filterData?: DialogFilter     // undefined for deleting
 ): Promise<boolean> {
   const params: any = {
     flags: 0, 
-    id: filterIdToUpdate || 0, 
   };
 
+  if (filterIdToUpdate !== null) {
+    params.id = filterIdToUpdate;
+  }
+
   if (filterData) { 
-    params.flags |= (1 << 0); 
+    params.flags |= (1 << 0); // Set the 'filter' flag
     
+    // Construct the Telegram DialogFilter object based on our client-side DialogFilter type
+    // This needs careful mapping based on the filterData's '_' type
     const telegramFilter: any = {
-      _: filterData._ === 'dialogFilterDefault' ? 'dialogFilterDefault' : 
+      _: filterData._ === 'dialogFilterDefault' ? 'dialogFilterDefault' : // Should not happen for update
          (filterData._ === 'dialogFilterChatlist' ? 'dialogFilterChatlist' : 'dialogFilter'),
-      id: filterData.id, 
+      id: filterData.id, // Server ID for existing, or 0 for new? API might assign ID.
       title: filterData.title,
       pinned_peers: filterData.pinned_peers || [],
       include_peers: filterData.include_peers || [],
@@ -1126,6 +1219,7 @@ export async function updateDialogFilter(
     if (telegramFilter._ === 'dialogFilter') {
         telegramFilter.exclude_peers = filterData.exclude_peers || [];
         let internalFlags = 0;
+        // Map client-side boolean flags to Telegram's bitmask flags
         if (filterData.contacts) internalFlags |= (1 << 0);
         if (filterData.non_contacts) internalFlags |= (1 << 1);
         if (filterData.groups) internalFlags |= (1 << 2);
@@ -1134,12 +1228,14 @@ export async function updateDialogFilter(
         if (filterData.exclude_muted) internalFlags |= (1 << 11);
         if (filterData.exclude_read) internalFlags |= (1 << 12);
         if (filterData.exclude_archived) internalFlags |= (1 << 13);
+        
         if (filterData.emoticon) {
             internalFlags |= (1 << 25);
             telegramFilter.emoticon = filterData.emoticon;
         }
+        // 'color' flag (1 << 27) and field also need to be handled if we support it
         telegramFilter.flags = internalFlags;
-    } else if (telegramFilter._ === 'dialogFilterChatlist') {
+    } else if (telegramFilter._ === 'dialogFilterChatlist') { // For imported chatlists
         let internalFlags = 0;
          if (filterData.has_my_invites) internalFlags |= (1 << 26);
          if (filterData.emoticon) {
@@ -1150,17 +1246,28 @@ export async function updateDialogFilter(
     }
 
     params.filter = telegramFilter;
+    if (filterIdToUpdate === null) { // Creating new filter, ID should not be in top-level params
+        delete params.id;
+    }
 
-  } else if (filterIdToUpdate !== null && filterIdToUpdate !== 0) { 
-    params.id = filterIdToUpdate; 
+  } else if (filterIdToUpdate !== null) { 
+    // No filterData provided, but filterIdToUpdate is, so it's a delete operation
+    // The 'filter' flag (params.flags |= (1 << 0)) should NOT be set for delete
+    params.id = filterIdToUpdate;
+    // Ensure params.filter is not set
+    delete params.filter;
   } else {
+    console.error("updateDialogFilter: Invalid call. Must provide filterId for delete, or filterData for create/update.");
     return false;
   }
 
   try {
+    console.log("Attempting to update/create/delete dialog filter with params:", JSON.stringify(params, null, 2));
     const result = await api.call('messages.updateDialogFilter', params);
-    return result?._ === 'boolTrue';
+    console.log("Update/create/delete dialog filter result:", result);
+    return result === true || (typeof result === 'object' && result._ === 'boolTrue');
   } catch (error: any) {
+    console.error('Error updating/creating/deleting dialog filter:', error.message, error.originalErrorObject || error);
     throw error;
   }
 }
@@ -1171,4 +1278,5 @@ if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
   (window as any).telegramUserSession = userSession;
 }
 
+    
     
