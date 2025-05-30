@@ -48,14 +48,15 @@ export function FolderTabsBar({
   }
 
   const displayFilters = [...filters];
-  // This check might be redundant if page.tsx always ensures "All Chats" is present
   if (!displayFilters.some(f => f.id === ALL_CHATS_FILTER_ID)) {
       const allChatsDefault: DialogFilter = {
           _:'dialogFilterDefault',
           id: ALL_CHATS_FILTER_ID,
           title: "All Chats",
           flags:0,
+          pinned_peers: [],
           include_peers: [],
+          exclude_peers: []
       };
       displayFilters.unshift(allChatsDefault);
   }
@@ -66,7 +67,7 @@ export function FolderTabsBar({
 
   const [draggedItemIndex, setDraggedItemIndex] = React.useState<number | null>(null);
 
-  const handleDragStart = (e: React.DragEvent<HTMLButtonElement | HTMLDivElement>, index: number) => {
+  const handleDragStart = (e: React.DragEvent<HTMLButtonElement>, index: number) => {
     if (!isReorderingMode || filters[index].id === ALL_CHATS_FILTER_ID) {
         e.preventDefault();
         return;
@@ -75,12 +76,12 @@ export function FolderTabsBar({
     setDraggedItemIndex(index);
   };
 
-  const handleDragOver = (e: React.DragEvent<HTMLButtonElement | HTMLDivElement>) => {
+  const handleDragOver = (e: React.DragEvent<HTMLButtonElement>) => {
     e.preventDefault();
     if (!isReorderingMode || draggedItemIndex === null) return;
   };
 
-  const handleDrop = (e: React.DragEvent<HTMLButtonElement | HTMLDivElement>, dropIndex: number) => {
+  const handleDrop = (e: React.DragEvent<HTMLButtonElement>, dropIndex: number) => {
     e.preventDefault();
     if (!isReorderingMode || draggedItemIndex === null || (filters[dropIndex] && filters[dropIndex].id === ALL_CHATS_FILTER_ID && dropIndex === 0)) {
       setDraggedItemIndex(null);
@@ -89,7 +90,7 @@ export function FolderTabsBar({
     const dragIndexStr = e.dataTransfer.getData('filterIndex');
     if (dragIndexStr) {
       const dragIndex = parseInt(dragIndexStr, 10);
-      if (dragIndex !== -1 && dragIndex !== dropIndex && (!filters[dropIndex] || filters[dropIndex].id !== ALL_CHATS_FILTER_ID)) {
+      if (!isNaN(dragIndex) && dragIndex !== dropIndex && (!filters[dropIndex] || filters[dropIndex].id !== ALL_CHATS_FILTER_ID)) {
         onMoveFilter(dragIndex, dropIndex);
       }
     }
@@ -136,17 +137,25 @@ export function FolderTabsBar({
                         {filter.emoticon && <span className="text-lg">{filter.emoticon}</span>}
                         <span className="truncate max-w-[120px] sm:max-w-xs">{filter.title}</span>
                         {!isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && (
-                           <div 
-                             className="ml-1 p-0" 
-                             onClick={(e) => {e.stopPropagation(); e.preventDefault();}} // Prevent TabsTrigger click and default behavior
-                             onKeyDown={(e) => {if (e.key === 'Enter' || e.key === ' ') e.stopPropagation();}} // Prevent TabsTrigger keyboard activation
+                           <div
+                             className="ml-1 p-0"
+                             onClick={(e: React.MouseEvent) => {
+                                e.stopPropagation();
+                                e.preventDefault(); // Crucial to prevent TabsTrigger's default action
+                             }}
+                             onKeyDown={(e: React.KeyboardEvent) => { // Stop keyboard activation too
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                   e.stopPropagation();
+                                   e.preventDefault();
+                                }
+                             }}
                            >
                             <Button
                               variant="ghost"
                               size="icon"
                               className="h-6 w-6 hover:bg-accent/50 opacity-60 hover:opacity-100"
-                              onClick={(e) => {
-                                // e.stopPropagation(); // Already handled by the div for click, but useful to keep in mind
+                              onClick={(e: React.MouseEvent) => { // This is the button's own click
+                                // e.stopPropagation(); // Already handled by the div
                                 onShareFilter(filter.id);
                               }}
                               disabled={filter.isLoading}
