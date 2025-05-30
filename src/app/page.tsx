@@ -38,7 +38,12 @@ export default function Home() {
   const [isReorderingFolders, setIsReorderingFolders] = useState(false);
 
   const isProcessingChatsRef = useRef(false); 
-  const [isProcessingChats, setIsProcessingChats] = useState(false); 
+  const [isProcessingChats, setIsProcessingChatsState] = useState(false); 
+  const setIsProcessingChats = (val: boolean) => { // Helper to also update ref
+    isProcessingChatsRef.current = val;
+    setIsProcessingChatsState(val);
+  };
+
 
   const [allChats, setAllChats] = useState<CloudFolder[]>([]); 
   const [isLoadingMoreChats, setIsLoadingMoreChats] = useState(false);
@@ -115,8 +120,7 @@ export default function Home() {
         toast({ title, description, variant: "destructive", duration: 5000 });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toast]); 
-
+  }, [toast]); // handleReset is not included to prevent potential loops if handleReset itself causes an API error
 
   const fetchDialogFilters = useCallback(async () => {
     setIsLoadingDialogFilters(true);
@@ -165,7 +169,7 @@ export default function Home() {
       });
 
       setDialogFilters(processedFilters);
-      if (activeDialogFilterId === null || !processedFilters.some(f => f.id === activeDialogFilterId)) {
+      if (!processedFilters.some(f => f.id === activeDialogFilterId)) { // check if current active is still valid
          setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
       }
 
@@ -179,14 +183,24 @@ export default function Home() {
       setIsLoadingDialogFilters(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [handleApiError, activeDialogFilterId]); // Added activeDialogFilterId as it's used in condition for setting it
+  }, [handleApiError]); // Removed activeDialogFilterId from dependencies, as it should only be read, not trigger re-fetch of filters
+
 
   const fetchInitialChats = useCallback(async () => {
     if (isProcessingChatsRef.current || !isConnected) {
+        console.log("fetchInitialChats: Skipped due to processing, not connected, or invalid activeDialogFilterId.", {
+          isProcessing: isProcessingChatsRef.current,
+          connected: isConnected,
+          activeFilter: activeDialogFilterId,
+        });
+        return;
+    }
+    if (activeDialogFilterId === undefined || activeDialogFilterId === null) {
+        console.warn("fetchInitialChats: activeDialogFilterId is undefined or null, cannot fetch chats.");
+        setIsProcessingChats(false);
         return;
     }
 
-    isProcessingChatsRef.current = true;
     setIsProcessingChats(true); 
 
     setAllChats([]);
@@ -219,11 +233,10 @@ export default function Home() {
       handleApiError(error, "Error Fetching Chats", `Could not load your chats. ${error.message || 'Unknown error'}`);
       setHasMoreChats(false); 
     } finally {
-      isProcessingChatsRef.current = false;
       setIsProcessingChats(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected, activeDialogFilterId, handleApiError, toast]); 
+  }, [isConnected, activeDialogFilterId, handleApiError, toast]); // isProcessingChats and other flags are managed by refs or internal logic
 
   const checkExistingConnection = useCallback(async () => {
     try {
@@ -288,7 +301,6 @@ export default function Home() {
     }
 
     setIsConnected(false);
-    isProcessingChatsRef.current = false;
     setIsProcessingChats(false);
     setAllChats([]);
     setSelectedFolder(null);
@@ -314,7 +326,7 @@ export default function Home() {
     const defaultFilters: DialogFilter[] = [{ _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, pinned_peers: [], include_peers: [], exclude_peers: [] }];
     setDialogFilters(defaultFilters);
     setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
-    setIsLoadingDialogFilters(true); // Will trigger fetchDialogFilters if it depends on isConnected changing
+    setIsLoadingDialogFilters(true); 
 
     downloadQueueRef.current.forEach(item => {
       if (item.abortController && !item.abortController.signal.aborted) {
@@ -351,7 +363,7 @@ export default function Home() {
   useEffect(() => {
     checkExistingConnection();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); 
+  }, []); // Runs once on mount
 
   useEffect(() => {
     if (isConnected && (activeDialogFilterId !== undefined && activeDialogFilterId !== null)) {
@@ -360,7 +372,7 @@ export default function Home() {
       fetchInitialChats();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected, activeDialogFilterId]); // fetchInitialChats is memoized with its own deps
+  }, [isConnected, activeDialogFilterId, fetchInitialChats]); // fetchInitialChats is memoized with its own deps
 
 
   useEffect(() => {
@@ -455,11 +467,12 @@ export default function Home() {
                     }
                 }
 
-            } else {
+            } else { // Direct download path
                 const bytesNeededForFileDirect = upToDateItem.totalSizeInBytes - upToDateItem.downloadedBytes;
-                const offsetWithinCurrentBlockDirect = upToDateItem.currentOffset % ONE_MB; 
-                const bytesLeftInCurrentBlockDirect = ONE_MB - offsetWithinCurrentBlockDirect; 
+                const offsetWithinCurrentBlockDirect = upToDateItem.currentOffset % ONE_MB;
+                const bytesLeftInCurrentBlockDirect = ONE_MB - offsetWithinCurrentBlockDirect;
                 
+                // Determine the maximum number of bytes we can ideally request in this call
                 let idealRequestSizeDirect = Math.min(bytesLeftInCurrentBlockDirect, DOWNLOAD_CHUNK_SIZE, bytesNeededForFileDirect);
 
                 if (bytesNeededForFileDirect <= 0) {
@@ -467,11 +480,12 @@ export default function Home() {
                 } else if (idealRequestSizeDirect <= 0) {
                     actualLimitForApi = bytesNeededForFileDirect > 0 ? KB_1 : 0;
                 } else if (idealRequestSizeDirect < KB_1) {
-                    actualLimitForApi = KB_1;
+                    actualLimitForApi = KB_1; 
                 } else {
-                    actualLimitForApi = Math.floor(idealRequestSizeDirect / KB_1) * KB_1;
+                    actualLimitForApi = Math.floor(idealRequestSizeDirect / KB_1) * KB_1; 
                 }
-                if (actualLimitForApi === 0 && bytesNeededForFileDirect > 0 && idealRequestSizeDirect > 0) {
+                
+                if (actualLimitForApi === 0 && bytesNeededForFileDirect > 0 && idealRequestSizeDirect > 0) { 
                     actualLimitForApi = KB_1;
                 }
                 
@@ -680,7 +694,7 @@ export default function Home() {
         activeDownloadsRef.current.clear(); 
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); 
+  }, []); // Main download processing effect, runs once
 
   useEffect(() => {
     if (!isLoadingMoreChats && isConnected) {
@@ -755,7 +769,7 @@ export default function Home() {
     });
     if (node) observerChats.current.observe(node); 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasMoreChats, loadMoreChatsCallback, isProcessingChats, isLoadingMoreChats]); 
+  }, [hasMoreChats, loadMoreChatsCallback, isLoadingMoreChats]); 
 
 
   const fetchInitialChatMedia = useCallback(async (folder: CloudFolder) => {
@@ -1457,7 +1471,6 @@ const handleStartUpload = async () => {
         onOpenDownloadManager={handleOpenDownloadManager}
         onOpenChatSelectionDialog={handleOpenChatSelectionDialog}
       />
-      {/* FolderTabsBar is now inside ChatSelectionDialog */}
       <div className="flex-1 flex overflow-hidden min-h-0"> 
         <main className="flex-1 overflow-y-auto bg-background"> 
            <div className="container mx-auto h-full px-4 sm:px-6 lg:px-8 py-4 md:py-6 lg:py-8">
@@ -1484,13 +1497,13 @@ const handleStartUpload = async () => {
                   <Button onClick={handleOpenChatSelectionDialog}>
                     <MessageSquare className="mr-2 h-5 w-5" /> Select a Chat
                   </Button>
-                  {isProcessingChats && allChats.length === 0 && ( 
+                  {isProcessingChatsState && allChats.length === 0 && ( 
                     <div className="mt-4 flex items-center">
                       <Loader2 className="animate-spin h-5 w-5 text-primary mr-2" />
                       <span>Loading initial chat list for current folder...</span>
                     </div>
                   )}
-                   { !isProcessingChats && allChats.length === 0 && !authError && isConnected && ( 
+                   { !isProcessingChatsState && allChats.length === 0 && !authError && isConnected && ( 
                      <div className="mt-4 flex items-center text-sm">
                         <MessageSquare className="mr-2 h-5 w-5 text-muted-foreground" />
                         <span>Your chat list for the current folder appears to be empty or still loading. Click "Select a Chat".</span>
@@ -1525,7 +1538,7 @@ const handleStartUpload = async () => {
         selectedFolderId={selectedFolder?.id || null}
         onSelectFolder={handleSelectFolder} 
         lastItemRef={lastChatElementRef} 
-        isLoading={isProcessingChats && allChats.length === 0} 
+        isLoading={isProcessingChatsState && allChats.length === 0} 
         isLoadingMore={isLoadingMoreChats} 
         hasMore={hasMoreChats}
         onLoadMore={loadMoreChatsCallback} 
@@ -1570,3 +1583,5 @@ const handleStartUpload = async () => {
     </div>
   );
 }
+
+    
