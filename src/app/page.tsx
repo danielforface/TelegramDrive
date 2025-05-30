@@ -182,8 +182,7 @@ export default function Home() {
       console.log("fetchDialogFilters: Setting isLoadingDialogFilters to false.");
       setIsLoadingDialogFilters(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [handleApiError]); // Removed activeDialogFilterId from dependencies, as it should only be read, not trigger re-fetch of filters
+  }, [handleApiError, activeDialogFilterId]); 
 
 
   const fetchInitialChats = useCallback(async () => {
@@ -235,8 +234,7 @@ export default function Home() {
     } finally {
       setIsProcessingChats(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected, activeDialogFilterId, handleApiError, toast]); // isProcessingChats and other flags are managed by refs or internal logic
+  }, [isConnected, activeDialogFilterId, handleApiError, toast]); 
 
   const checkExistingConnection = useCallback(async () => {
     try {
@@ -287,6 +285,7 @@ export default function Home() {
 
   const handleReset = useCallback(async (performServerLogout = true) => {
     const currentIsConnected = isConnected; 
+    setIsProcessingChats(false); // Reset processing state on full reset
 
     if (performServerLogout && currentIsConnected) {
         toast({ title: "Disconnecting...", description: "Logging out from Telegram." });
@@ -301,7 +300,6 @@ export default function Home() {
     }
 
     setIsConnected(false);
-    setIsProcessingChats(false);
     setAllChats([]);
     setSelectedFolder(null);
     setCurrentChatMedia([]);
@@ -326,7 +324,7 @@ export default function Home() {
     const defaultFilters: DialogFilter[] = [{ _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, pinned_peers: [], include_peers: [], exclude_peers: [] }];
     setDialogFilters(defaultFilters);
     setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
-    setIsLoadingDialogFilters(true); 
+    setIsLoadingDialogFilters(true); // Will be set to false after fetch or if connection fails
 
     downloadQueueRef.current.forEach(item => {
       if (item.abortController && !item.abortController.signal.aborted) {
@@ -372,7 +370,7 @@ export default function Home() {
       fetchInitialChats();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected, activeDialogFilterId, fetchInitialChats]); // fetchInitialChats is memoized with its own deps
+  }, [isConnected, activeDialogFilterId]); // fetchInitialChats is memoized with its own deps
 
 
   useEffect(() => {
@@ -472,7 +470,6 @@ export default function Home() {
                 const offsetWithinCurrentBlockDirect = upToDateItem.currentOffset % ONE_MB;
                 const bytesLeftInCurrentBlockDirect = ONE_MB - offsetWithinCurrentBlockDirect;
                 
-                // Determine the maximum number of bytes we can ideally request in this call
                 let idealRequestSizeDirect = Math.min(bytesLeftInCurrentBlockDirect, DOWNLOAD_CHUNK_SIZE, bytesNeededForFileDirect);
 
                 if (bytesNeededForFileDirect <= 0) {
@@ -769,7 +766,7 @@ export default function Home() {
     });
     if (node) observerChats.current.observe(node); 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasMoreChats, loadMoreChatsCallback, isLoadingMoreChats]); 
+  }, [hasMoreChats, loadMoreChatsCallback]); 
 
 
   const fetchInitialChatMedia = useCallback(async (folder: CloudFolder) => {
@@ -836,7 +833,7 @@ export default function Home() {
     });
     if (node) observerMedia.current.observe(node);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasMoreChatMedia, loadMoreChatMediaCallback, isLoadingChatMedia]); 
+  }, [hasMoreChatMedia, loadMoreChatMediaCallback]); 
 
   const handleSelectFolder = (folderId: string) => { 
     const folder = allChats.find(f => f.id === folderId);
@@ -1067,7 +1064,7 @@ export default function Home() {
     );
     toast({ title: "Download Resumed", description: `Download for item has been resumed.`});
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [handleQueueDownload, toast]); 
+  }, [toast]); 
 
 
   const handleViewImage = useCallback((file: CloudFile) => {
@@ -1497,13 +1494,13 @@ const handleStartUpload = async () => {
                   <Button onClick={handleOpenChatSelectionDialog}>
                     <MessageSquare className="mr-2 h-5 w-5" /> Select a Chat
                   </Button>
-                  {isProcessingChatsState && allChats.length === 0 && ( 
+                  {isProcessingChats && allChats.length === 0 && ( 
                     <div className="mt-4 flex items-center">
                       <Loader2 className="animate-spin h-5 w-5 text-primary mr-2" />
                       <span>Loading initial chat list for current folder...</span>
                     </div>
                   )}
-                   { !isProcessingChatsState && allChats.length === 0 && !authError && isConnected && ( 
+                   { !isProcessingChats && allChats.length === 0 && !authError && isConnected && ( 
                      <div className="mt-4 flex items-center text-sm">
                         <MessageSquare className="mr-2 h-5 w-5 text-muted-foreground" />
                         <span>Your chat list for the current folder appears to be empty or still loading. Click "Select a Chat".</span>
@@ -1538,7 +1535,7 @@ const handleStartUpload = async () => {
         selectedFolderId={selectedFolder?.id || null}
         onSelectFolder={handleSelectFolder} 
         lastItemRef={lastChatElementRef} 
-        isLoading={isProcessingChatsState && allChats.length === 0} 
+        isLoading={isProcessingChats && allChats.length === 0} 
         isLoadingMore={isLoadingMoreChats} 
         hasMore={hasMoreChats}
         onLoadMore={loadMoreChatsCallback} 
@@ -1583,5 +1580,7 @@ const handleStartUpload = async () => {
     </div>
   );
 }
+
+    
 
     
