@@ -1,4 +1,5 @@
 
+
 export interface CloudFile {
   id: string;
   name: string;
@@ -7,23 +8,23 @@ export interface CloudFile {
   timestamp: number; // Unix timestamp (seconds)
   url?: string;
   dataAiHint?: string;
-  messageId: number; // Original message ID from Telegram
-  telegramMessage?: any; // The raw Telegram message object or media object
+  messageId: number; 
+  telegramMessage?: any; 
   totalSizeInBytes?: number;
-  inputPeer?: any; // InputPeer for the chat this file belongs to
+  inputPeer?: any; 
 }
 
-export interface CloudFolder { // Represents a chat
-  id: string; // Usually derived from peer ID
+export interface CloudFolder { 
+  id: string; 
   name: string;
   folders: CloudFolder[];
   files: CloudFile[];
   isChatFolder?: boolean;
-  inputPeer?: any; // Actual InputPeer object for API calls
+  inputPeer?: any; 
 }
 
 export interface GetChatsPaginatedResponse {
-  folders: CloudFolder[]; // These are the chats
+  folders: CloudFolder[]; 
   nextOffsetDate: number;
   nextOffsetId: number;
   nextOffsetPeer: any;
@@ -56,7 +57,7 @@ export interface DownloadQueueItemType extends CloudFile {
   status: DownloadStatus;
   progress: number;
   downloadedBytes: number;
-  location?: any; // InputFileLocation
+  location?: any; 
   chunks?: Uint8Array[];
   currentOffset: number;
   abortController?: AbortController;
@@ -70,15 +71,14 @@ export interface DownloadQueueItemType extends CloudFile {
 }
 
 export interface FileDownloadInfo {
-    location: any; // InputFileLocation
+    location: any; 
     totalSize: number;
     mimeType: string;
 }
 
-// For Telegram API's DialogFilter (Folder) structure
-export interface InputPeer { // Simplified for now, expand as needed
-    _: string; // e.g., 'inputPeerUser', 'inputPeerChat', 'inputPeerChannel'
-    user_id?: string | number; // string due to BigInt potential
+export interface InputPeer { 
+    _: string; 
+    user_id?: string | number; 
     chat_id?: string | number;
     channel_id?: string | number;
     access_hash?: string;
@@ -89,62 +89,57 @@ export interface DialogFilter {
     flags: number;
     id: number;
     title: string;
-    emoticon?: string; // flags.25
-    color?: number;    // flags.27
+    emoticon?: string; 
+    color?: number;    
     pinned_peers?: InputPeer[];
-    include_peers: InputPeer[]; // This is crucial for the filter logic
+    include_peers: InputPeer[]; 
     exclude_peers?: InputPeer[];
 
-    // Specific to dialogFilter
-    contacts?: boolean;          // flags.0
-    non_contacts?: boolean;      // flags.1
-    groups?: boolean;            // flags.2
-    broadcasts?: boolean;        // flags.3
-    bots?: boolean;              // flags.4
-    exclude_muted?: boolean;     // flags.11
-    exclude_read?: boolean;      // flags.12
-    exclude_archived?: boolean;  // flags.13
+    contacts?: boolean;          
+    non_contacts?: boolean;      
+    groups?: boolean;            
+    broadcasts?: boolean;        
+    bots?: boolean;              
+    exclude_muted?: boolean;     
+    exclude_read?: boolean;      
+    exclude_archived?: boolean;  
 
-    // Specific to dialogFilterChatlist
-    has_my_invites?: boolean;   // flags.26
+    has_my_invites?: boolean;   
 
-    // Client-side UI state additions
-    isReordering?: boolean; // For drag-and-drop UI
-    isLoading?: boolean; // e.g. for when fetching share link
-    inviteLink?: string; // Store fetched invite link
+    isReordering?: boolean; 
+    isLoading?: boolean; 
+    inviteLink?: string; 
 }
 
 export interface MessagesDialogFilters {
     _: 'messages.dialogFilters';
     flags: number;
-    tags_enabled?: boolean; // flags.0
+    tags_enabled?: boolean; 
     filters: DialogFilter[];
 }
 
 
-// For file uploads
 export interface ExtendedFile {
-  id: string; // Unique client-side ID for this upload instance
-  originalFile: File; // The actual File object
+  id: string; 
+  originalFile: File; 
   name: string;
   size: number;
   type: string;
   lastModified: number;
-  uploadProgress?: number;
-  uploadStatus?: 'pending' | 'uploading' | 'processing' | 'completed' | 'failed' | 'cancelled';
+  uploadProgress: number; // Changed from optional to required
+  uploadStatus: 'pending' | 'uploading' | 'processing' | 'completed' | 'failed' | 'cancelled'; // Changed from optional to required
 }
 
 
-// For FileChunkResponse
 type SuccessfulFileChunk_Bytes = {
   bytes: Uint8Array;
-  type: string; // e.g. 'storage.fileJpeg'
+  type: string; 
   isCdnRedirect?: never;
   cdnRedirectData?: never;
   errorType?: never;
 };
 
-type CdnRedirectDataType = {
+export type CdnRedirectDataType = { // Exported this type
     dc_id: number;
     file_token: Uint8Array;
     encryption_key: Uint8Array;
@@ -165,8 +160,11 @@ type ErrorFileChunk = {
   type?: never;
   isCdnRedirect?: never;
   cdnRedirectData?: never;
-  errorType: 'FILE_REFERENCE_EXPIRED' | 'OTHER'; // Expand with more specific error types if needed
+  errorType: 'FILE_REFERENCE_EXPIRED' | 'OTHER'; 
 };
 
 export type FileChunkResponse = SuccessfulFileChunk_Bytes | SuccessfulFileChunk_CdnRedirect | ErrorFileChunk;
-export type { FileHash as AppFileHash }; // Re-export if AppFileHash is same as FileHash
+export type { FileHash as AppFileHash }; 
+
+
+    

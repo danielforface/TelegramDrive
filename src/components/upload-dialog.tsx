@@ -40,7 +40,7 @@ const FileStatusIcon = ({ status }: { status: ExtendedFile['uploadStatus'] }) =>
     case 'cancelled':
       return <X className="w-4 h-4 text-orange-500" />;
     case 'pending':
-      return <RefreshCw className="w-4 h-4 text-muted-foreground" />; // Or a clock icon
+      return <RefreshCw className="w-4 h-4 text-muted-foreground" />; 
     default:
       return null;
   }
@@ -62,16 +62,13 @@ export function UploadDialog({
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     onFilesSelected(event.target.files);
-    if(event.target.files && event.target.files.length > 0) {
-        toast({ title: "Files Selected", description: `${event.target.files.length} file(s) added to upload queue.`});
-    }
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
+    if (event.target.files && event.target.files.length > 0 && fileInputRef.current) {
+      fileInputRef.current.value = ""; // Reset file input to allow selecting the same file again
     }
   };
 
   const handleDropZoneClick = () => {
-    if (isLoading) return; // Prevent opening file dialog during upload
+    if (isLoading) return; 
     fileInputRef.current?.click();
   };
 
@@ -95,10 +92,9 @@ export function UploadDialog({
     if (isLoading) return;
     if (event.dataTransfer.files && event.dataTransfer.files.length > 0) {
       onFilesSelected(event.dataTransfer.files);
-       toast({ title: "Files Dropped", description: `${event.dataTransfer.files.length} file(s) added to upload queue.`});
       event.dataTransfer.clearData();
     }
-  }, [onFilesSelected, toast, isLoading]);
+  }, [onFilesSelected, isLoading]);
 
   const handleUploadClick = () => {
     if (selectedFiles.filter(f => f.uploadStatus === 'pending' || f.uploadStatus === 'failed' || f.uploadStatus === 'cancelled').length === 0) {
@@ -140,7 +136,7 @@ export function UploadDialog({
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
             className={`w-full p-8 border-2 border-dashed rounded-lg flex flex-col items-center justify-center text-center cursor-pointer transition-colors
-                        ${isLoading ? "bg-muted/30 cursor-not-allowed" :
+                        ${isLoading ? "bg-muted/30 cursor-not-allowed opacity-70" :
                         isDraggingOver ? "border-primary bg-primary/10" : "border-border hover:border-primary/50"}`}
           >
             <UploadCloud className={`w-12 h-12 mb-3 ${isDraggingOver && !isLoading ? 'text-primary' : 'text-muted-foreground'}`} />
@@ -202,3 +198,5 @@ export function UploadDialog({
     </Dialog>
   );
 }
+
+    
