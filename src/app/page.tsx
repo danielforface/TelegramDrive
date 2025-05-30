@@ -125,7 +125,6 @@ export default function Home() {
   const fetchDialogFilters = useCallback(async () => {
     if (!isConnected) {
         // console.log("fetchDialogFilters: Not connected, skipping.");
-        // Ensure a default "All Chats" exists and loading state is reset if somehow called while not connected
         if (!dialogFilters.some(f => f.id === ALL_CHATS_FILTER_ID)) {
             setDialogFilters([{ id: ALL_CHATS_FILTER_ID, title: "All Chats", _: 'dialogFilterDefault', flags:0, include_peers: [] }]);
         }
@@ -136,25 +135,20 @@ export default function Home() {
     // console.log("fetchDialogFilters: Fetching dialog filters...");
     setIsLoadingDialogFilters(true);
     try {
-      const filters = await telegramService.getDialogFilters();
-      // console.log("fetchDialogFilters: Received filters from service:", filters);
-      setDialogFilters(filters); // This now includes "All Chats" from the service
+      const filtersFromServer = await telegramService.getDialogFilters();
+      const allChatsSpecialFilter: DialogFilter = { id: ALL_CHATS_FILTER_ID, title: "All Chats", _: 'dialogFilterDefault', flags:0, include_peers: [] };
       
-      // Default to "All Chats" or first available if "All Chats" somehow isn't there.
-      if (filters.some(f => f.id === ALL_CHATS_FILTER_ID)) {
-        setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
-      } else if (filters.length > 0) {
-        // console.warn("fetchDialogFilters: 'All Chats' filter (ID 0) not found in service response. Defaulting to first available.");
-        setActiveDialogFilterId(filters[0].id);
-      } else {
-        // console.warn("fetchDialogFilters: No filters received from service, including 'All Chats'. This is unexpected.");
-        // Ensure a default "All Chats" filter exists for UI consistency even on error or empty response
-        setDialogFilters([{ id: ALL_CHATS_FILTER_ID, title: "All Chats", _: 'dialogFilterDefault', flags:0, include_peers: [] }]);
-        setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
+      let newFilters = [allChatsSpecialFilter];
+      if (filtersFromServer && filtersFromServer.length > 0) {
+          newFilters = [allChatsSpecialFilter, ...filtersFromServer.filter(f => f.id !== ALL_CHATS_FILTER_ID)];
       }
+      setDialogFilters(newFilters);
+      
+      // Set active filter to "All Chats" by default after filters are loaded or if it's the only one.
+      setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
+
     } catch (error: any) {
       handleApiError(error, "Error Fetching Folders", "Could not load your chat folders.");
-      // Ensure a default "All Chats" filter exists for UI consistency even on error
       if (!dialogFilters.some(f => f.id === ALL_CHATS_FILTER_ID)) {
         setDialogFilters([{ id: ALL_CHATS_FILTER_ID, title: "All Chats", _: 'dialogFilterDefault', flags:0, include_peers: [] }]);
       }
@@ -168,7 +162,6 @@ export default function Home() {
 
   const fetchInitialChats = useCallback(async () => {
     if (isProcessingChatsRef.current || !isConnected) {
-        // console.log("fetchInitialChats: Already processing, request in flight, or not connected. Exiting.");
         return;
     }
 
@@ -213,7 +206,6 @@ export default function Home() {
 
 
   const checkExistingConnection = useCallback(async () => {
-    // console.log("Checking existing connection...");
     try {
       const previouslyConnected = await telegramService.isUserConnected();
       if (previouslyConnected) {
@@ -221,24 +213,21 @@ export default function Home() {
         if (storedUser && storedUser.phone) {
             setPhoneNumber(storedUser.phone);
         }
-        // console.log("User was previously connected. Setting state.");
         setIsConnected(true);
         setAuthStep('initial');
         setAuthError(null);
-        fetchDialogFilters(); 
+        await fetchDialogFilters(); // await this before potentially fetching chats
       } else {
-        // console.log("No existing connection found or session invalid.");
         setIsConnected(false);
         setPhoneNumber('');
         setAuthStep('initial');
         setAuthError(null);
         setAllChats([]);
-        setDialogFilters([]);
+        setDialogFilters([{ id: ALL_CHATS_FILTER_ID, title: "All Chats", _: 'dialogFilterDefault', flags:0, include_peers: [] }]);
         setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
-        setIsLoadingDialogFilters(false); // Ensure loading state is false if not connected
+        setIsLoadingDialogFilters(false); 
       }
     } catch (error: any) {
-      // console.warn("Error checking existing connection:", error.message, error.originalErrorObject || error);
       const errorMessage = error.message || (error.originalErrorObject?.error_message);
       if (errorMessage?.includes("Invalid hash in mt_dh_gen_ok")) {
         toast({
@@ -255,7 +244,9 @@ export default function Home() {
          handleApiError(error, "Connection Check Error", `Failed to verify existing connection. ${errorMessage}`);
       }
       setIsConnected(false);
-      setIsLoadingDialogFilters(false); // Also set loading to false on error
+      setDialogFilters([{ id: ALL_CHATS_FILTER_ID, title: "All Chats", _: 'dialogFilterDefault', flags:0, include_peers: [] }]);
+      setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
+      setIsLoadingDialogFilters(false); 
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [toast, handleApiError, fetchDialogFilters]);
@@ -266,13 +257,15 @@ export default function Home() {
   }, []); 
 
   useEffect(() => {
-    if (isConnected && (allChats.length === 0 || activeDialogFilterId !== undefined) && !isProcessingChatsRef.current ) {
+    // This effect triggers fetching chats when isConnected or activeDialogFilterId changes.
+    // Ensures that if a filter is selected, and we are connected, chats for that filter are fetched.
+    if (isConnected && activeDialogFilterId !== undefined && !isProcessingChatsRef.current) {
       if(selectedFolder) setSelectedFolder(null); 
       if(currentChatMedia.length > 0) setCurrentChatMedia([]);
       fetchInitialChats();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected, activeDialogFilterId]);
+  }, [isConnected, activeDialogFilterId]); // fetchInitialChats is memoized and uses activeDialogFilterId from state
 
 
   const handleReset = useCallback(async (performServerLogout = true) => {
@@ -284,7 +277,6 @@ export default function Home() {
             await telegramService.signOut();
             toast({ title: "Disconnected", description: "Successfully signed out." });
         } catch (error: any) {
-            // console.error("Error during server logout:", error);
             if(!(error.message && error.message.includes('AUTH_KEY_UNREGISTERED'))){
                  toast({ title: "Disconnection Error", description: error.message || "Could not sign out properly from server.", variant: "destructive" });
             }
@@ -313,9 +305,9 @@ export default function Home() {
     setHasMoreChatMedia(true);
     setCurrentMediaOffsetId(0);
 
-    setDialogFilters([]);
+    setDialogFilters([{ id: ALL_CHATS_FILTER_ID, title: "All Chats", _: 'dialogFilterDefault', flags:0, include_peers: [] }]);
     setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
-    setIsLoadingDialogFilters(true); // Will be set to false by fetchDialogFilters if not connected
+    setIsLoadingDialogFilters(true); 
 
     downloadQueueRef.current.forEach(item => {
       if (item.abortController && !item.abortController.signal.aborted) {
@@ -346,7 +338,7 @@ export default function Home() {
     setIsUploadingFiles(false);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toast, videoStreamUrl]); 
+  }, [isConnected, toast, videoStreamUrl]); 
 
 
   useEffect(() => {
@@ -449,7 +441,7 @@ export default function Home() {
                 if (bytesNeededForFileDirect <= 0) {
                     actualLimitForApi = 0;
                 } else if (idealRequestSizeDirect <= 0) {
-                    actualLimitForApi = bytesNeededForFileDirect > 0 ? KB_1 : 0;
+                     actualLimitForApi = bytesNeededForFileDirect > 0 ? KB_1 : 0;
                 } else if (idealRequestSizeDirect < KB_1) {
                     actualLimitForApi = KB_1;
                 } else {
@@ -459,8 +451,6 @@ export default function Home() {
                     actualLimitForApi = KB_1;
                 }
                 
-                // console.log(`Processing direct download for ${upToDateItem.name}, offset: ${upToDateItem.currentOffset}, API limit: ${actualLimitForApi}, idealRequestSize: ${idealRequestSizeDirect}, neededForFile: ${bytesNeededForFileDirect}, leftInBlock: ${bytesLeftInCurrentBlockDirect}, totalSize: ${upToDateItem.totalSizeInBytes}`);
-
                 if (actualLimitForApi <= 0) {
                    if (upToDateItem.downloadedBytes >= upToDateItem.totalSizeInBytes) {
                         if (!browserDownloadTriggeredRef.current.has(upToDateItem.id) && upToDateItem.chunks && upToDateItem.chunks.length > 0) {
@@ -477,7 +467,6 @@ export default function Home() {
                         }
                        setDownloadQueue(prevQ => prevQ.map(q => q.id === upToDateItem.id ? { ...q, status: 'completed', progress: 100, downloadedBytes: upToDateItem.totalSizeInBytes!, currentOffset: upToDateItem.totalSizeInBytes!, chunks: [] } : q));
                    } else if (bytesNeededForFileDirect > 0) {
-                        // console.warn("Actual limit calc error for direct download:", { upToDateItem, bytesNeededForFileDirect, idealRequestSizeDirect, actualLimitForApi });
                         setDownloadQueue(prevQ => prevQ.map(q => q.id === upToDateItem.id ? { ...q, status: 'failed', error_message: 'Internal limit calc error' } : q));
                    }
                    activeDownloadsRef.current.delete(upToDateItem.id);
@@ -577,12 +566,10 @@ export default function Home() {
                 })
               );
             } else {
-              // console.error(`Failed to download chunk for ${upToDateItem.name} or no data returned. Response:`, chunkResponse);
               const errorMessage = chunkResponse?.errorType || (chunkResponse && Object.keys(chunkResponse).length === 0 ? 'Empty response object' : 'Unknown error or no data returned');
               setDownloadQueue(prevQ => prevQ.map(q_item => q_item.id === upToDateItem.id ? { ...q_item, status: 'failed', error_message: `Download error: ${errorMessage}` } : q_item));
             }
           } catch (error: any) {
-            //  console.error(`Error processing download item ${upToDateItem.id} (${upToDateItem.name}):`, error);
              if (error.name === 'AbortError' || (error.message && error.message.toLowerCase().includes('aborted'))) {
                 if(upToDateItem.status !== 'cancelled' && upToDateItem.status !== 'failed' && upToDateItem.status !== 'completed' ) {
                     setDownloadQueue(prevQ => prevQ.map(q_item => q_item.id === upToDateItem.id ? { ...q_item, status: 'cancelled', error_message: "Aborted by user or system." } : q_item));
@@ -714,6 +701,7 @@ export default function Home() {
       setHasMoreChats(false); 
     } finally {
       setIsLoadingMoreChats(false); 
+      isLoadingMoreChatsRequestInFlightRef.current = false; // Reset guard here
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConnected, hasMoreChats, chatsOffsetDate, chatsOffsetId, chatsOffsetPeer, activeDialogFilterId, toast, handleApiError]); 
@@ -1240,7 +1228,6 @@ export default function Home() {
     setFilesToUpload([]); 
     uploadAbortControllersRef.current.forEach((controller, id) => {
       if (!controller.signal.aborted) {
-        // console.log(`Aborting upload for ${id} due to dialog close (if not already finished)`);
         controller.abort("Upload dialog closed");
       }
     });
@@ -1301,7 +1288,6 @@ const handleStartUpload = async () => {
     updateUiForFile(fileToUpload.id, 0, 'uploading'); 
 
     try {
-      // console.log(`Starting upload for: ${fileToUpload.name}. Big file: ${fileToUpload.originalFile.size > 10 * 1024 * 1024}`);
       await telegramService.uploadFile(
         selectedFolder.inputPeer,
         fileToUpload.originalFile, 
@@ -1324,7 +1310,6 @@ const handleStartUpload = async () => {
         updateUiForFile(fileToUpload.id, fileToUpload.uploadProgress || 0, 'failed');
         toast({ title: "Upload Failed", description: `Could not upload ${fileToUpload.name}: ${error.message}`, variant: "destructive" });
       }
-      // console.error(`Error uploading ${fileToUpload.name} (ID: ${fileToUpload.id}):`, error);
     } finally {
       uploadAbortControllersRef.current.delete(fileToUpload.id); 
     }
@@ -1334,6 +1319,7 @@ const handleStartUpload = async () => {
 
   const handleSelectDialogFilter = (filterId: number) => {
     setActiveDialogFilterId(filterId);
+    // Chat fetching will be triggered by the useEffect watching activeDialogFilterId
   };
 
 
@@ -1404,8 +1390,9 @@ const handleStartUpload = async () => {
                 <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground">
                   <LayoutPanelLeft className="w-16 h-16 mb-4 opacity-50" />
                   <p className="text-lg mb-2">No chat selected.</p>
+                  <p className="text-sm mb-4">Select a folder tab above, then choose a chat from the dialog.</p>
                   <Button onClick={handleOpenChatSelectionDialog}>
-                    <MessageSquare className="mr-2 h-5 w-5" /> Select a Chat
+                    <MessageSquare className="mr-2 h-5 w-5" /> Select a Chat from Current Folder
                   </Button>
                   {isProcessingChats && allChats.length === 0 && ( 
                     <div className="mt-4 flex items-center">
