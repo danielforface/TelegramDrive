@@ -58,7 +58,7 @@ export default function Home() {
   const [isReorderingFolders, setIsReorderingFolders] = useState(false);
 
   const isProcessingMasterChatsRef = useRef(false);
-  const [isProcessingMasterChatsState, setIsProcessingMasterChatsState] = useState(false);
+  const [isProcessingMasterChats, setIsProcessingMasterChatsState] = useState(false);
   const setIsProcessingMasterChats = (val: boolean) => {
     isProcessingMasterChatsRef.current = val;
     setIsProcessingMasterChatsState(val);
@@ -959,7 +959,7 @@ export default function Home() {
       return;
     }
     setIsConnecting(true);
-    setAuthError(null);
+    setAuthError(null); // Clear previous auth errors
     setPassword(currentPassword); 
     toast({ title: "Verifying Password...", description: "Checking your 2FA password." });
     try {
@@ -1523,13 +1523,13 @@ const handleStartUpload = async () => {
                   <Button onClick={handleOpenChatSelectionDialog}>
                     <MessageSquare className="mr-2 h-5 w-5" /> Select a Chat
                   </Button>
-                  {isProcessingMasterChatsState && displayedChats.length === 0 && ( 
+                  {isProcessingMasterChats && displayedChats.length === 0 && ( 
                     <div className="mt-4 flex items-center">
                       <Loader2 className="animate-spin h-5 w-5 text-primary mr-2" />
                       <span>Loading initial chat list for current folder...</span>
                     </div>
                   )}
-                   { !isProcessingMasterChatsState && displayedChats.length === 0 && !authError && isConnected && ( 
+                   { !isProcessingMasterChats && displayedChats.length === 0 && !authError && isConnected && ( 
                      <div className="mt-4 flex items-center text-sm">
                         <MessageSquare className="mr-2 h-5 w-5 text-muted-foreground" />
                         <span>Your chat list for the current folder appears to be empty or still loading. Click "Select a Chat".</span>
@@ -1564,7 +1564,7 @@ const handleStartUpload = async () => {
         selectedFolderId={selectedFolder?.id || null}
         onSelectFolder={handleSelectFolder} 
         lastItemRef={lastMasterChatElementRef} 
-        isLoading={isProcessingMasterChatsState && displayedChats.length === 0} 
+        isLoading={isProcessingMasterChats && displayedChats.length === 0} 
         isLoadingMore={isLoadingMoreMasterChats} 
         hasMore={hasMoreMasterChats}
         onLoadMore={loadMoreMasterChatsCallback} 
@@ -1609,6 +1609,8 @@ const handleStartUpload = async () => {
     </div>
   );
 }
+
+    
 
     
 
