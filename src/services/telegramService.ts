@@ -12,7 +12,7 @@ export { formatFileSize };
 const API_ID_STRING = process.env.NEXT_PUBLIC_TELEGRAM_API_ID;
 const API_HASH = process.env.NEXT_PUBLIC_TELEGRAM_API_HASH;
 const CRITICAL_ERROR_MESSAGE_PREFIX = "CRITICAL_TELEGRAM_API_ERROR: ";
-const ALL_CHATS_FILTER_ID = 0; // Added for consistency in this file
+const ALL_CHATS_FILTER_ID = 0;
 
 let API_ID: number | undefined = undefined;
 
@@ -340,20 +340,22 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
     delete userSession.phone_code_hash;
     return { user: result.user };
 
-  } catch (error: any) {
+  } catch (error: any) { // This is the catch for the initial auth.signIn
     const errorMessage = error.message || (error.originalErrorObject?.error_message);
 
     if (errorMessage === 'SESSION_PASSWORD_NEEDED') {
       try {
+        console.log('signIn: SESSION_PASSWORD_NEEDED caught. Attempting to call account.getPassword.');
         const passwordData = await api.call('account.getPassword');
+        console.log('signIn: account.getPassword call completed. Response:', passwordData);
 
         if (!passwordData || !passwordData.srp_id || !passwordData.current_algo || !passwordData.srp_B) {
-             console.error("Failed to initialize 2FA: Missing critical SRP parameters from account.getPassword.", passwordData);
+             console.error("signIn: Failed to initialize 2FA: Missing critical SRP parameters from account.getPassword response.", passwordData);
              delete userSession.phone_code_hash;
-             throw new Error('Failed to initialize 2FA: Missing critical SRP parameters.');
+             throw new Error('Failed to initialize 2FA: Missing critical SRP parameters from server.');
         }
 
-        userSession.srp_id = String(passwordData.srp_id);
+        userSession.srp_id = String(passwordData.srp_id); // Ensure srp_id is a string
         userSession.srp_params = {
             g: passwordData.current_algo.g,
             p: passwordData.current_algo.p,
@@ -361,7 +363,7 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
             salt2: passwordData.current_algo.salt2,
             srp_B: passwordData.srp_B
         };
-        console.log('signIn: 2FA required. SRP ID and Params set in userSession:', {
+        console.log('signIn: 2FA required. SRP ID and Params successfully set in userSession:', {
             srp_id: userSession.srp_id,
             srp_params_exist: !!userSession.srp_params,
         });
@@ -373,12 +375,16 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
         throw twoFactorError;
 
       } catch (getPasswordError: any) {
-        console.log('Error fetching password details for 2FA (signIn):', getPasswordError.message, getPasswordError.originalErrorObject || getPasswordError);
+        console.error('signIn: Error during account.getPassword call or subsequent SRP setup:', getPasswordError.message, getPasswordError.originalErrorObject || getPasswordError);
         delete userSession.phone_code_hash;
+        
+        if (getPasswordError.message === 'AUTH_RESTART') {
+            throw getPasswordError;
+        }
         if (getPasswordError.message === '2FA_REQUIRED' && getPasswordError.srp_id) {
           throw getPasswordError;
         }
-        const messageToThrow = getPasswordError.message || 'Failed to fetch 2FA details.';
+        const messageToThrow = getPasswordError.message || 'Failed to fetch 2FA details after SESSION_PASSWORD_NEEDED.';
         throw new Error(messageToThrow);
       }
     }
@@ -413,7 +419,7 @@ export async function checkPassword(password: string): Promise<any> {
         g, p, salt1, salt2, gB: srp_B, password,
     });
 
-    const srp_id_as_string = String(userSession.srp_id);
+    const srp_id_as_string = String(userSession.srp_id); // Already ensured string above, but good practice
     console.log('checkPassword: Calling auth.checkPassword with srp_id:', srp_id_as_string);
 
     const checkResult = await api.call('auth.checkPassword', {
@@ -447,13 +453,9 @@ export async function checkPassword(password: string): Promise<any> {
     if (message === 'SRP_ID_INVALID' || message?.includes('AUTH_RESTART') || message?.includes('SRP_METHOD_INVALID')) {
         throw new Error('Session for 2FA has expired or is invalid. Please try logging in again. (SRP_ID_INVALID or similar)');
     }
-    // For any other error from auth.checkPassword, we should probably treat it as an auth restart too.
-    // For example, if the user object isn't returned as expected or another specific error.
     if (error.originalErrorObject && Object.keys(error.originalErrorObject).length > 0 && error.message) {
-      // If it's a structured MTProto error, rethrow it so page.tsx can handle specific messages
       throw error;
     }
-    // If it's a generic error or something else, map to AUTH_RESTART to be safe.
     console.warn('checkPassword: Unhandled error type, defaulting to AUTH_RESTART.');
     throw new Error('AUTH_RESTART');
   }
@@ -580,7 +582,6 @@ function transformDialogsToCloudFolders(dialogsResult: any): CloudFolder[] {
     }
 
     if (!inputPeerForApiCalls) {
-      // Try to construct from dialog.peer directly if it already has access_hash (e.g. for users)
       if (peer._ === 'peerUser' && peer.user_id && peer.access_hash) {
          inputPeerForApiCalls = { _: 'inputPeerUser', user_id: peer.user_id, access_hash: peer.access_hash };
       } else if (peer._ === 'peerChannel' && peer.channel_id && peer.access_hash) {
@@ -635,9 +636,7 @@ export async function getTelegramChats(
   offsetDate: number = 0,
   offsetId: number = 0,
   offsetPeer: any = { _: 'inputPeerEmpty' },
-  // folderId parameter is now effectively ignored for the API call itself
-  // but kept for logging or potential future client-side strategies if needed.
-  folderId?: number
+  folderId?: number 
 ): Promise<GetChatsPaginatedResponse> {
   if (!(await isUserConnected())) {
     return { folders: [], nextOffsetDate: 0, nextOffsetId: 0, nextOffsetPeer: { _: 'inputPeerEmpty' }, hasMore: false };
@@ -650,8 +649,13 @@ export async function getTelegramChats(
       offset_peer: offsetPeer,
       limit: limit,
       hash: 0,
-      // folder_id is NOT set here, to fetch all dialogs for the master list
   };
+  // The folder_id parameter is intentionally NOT used here for the master chat list strategy.
+  // If a folder_id were to be used, it would be:
+  // if (folderId !== undefined && folderId !== ALL_CHATS_FILTER_ID) {
+  //    params.folder_id = folderId;
+  // }
+
 
   try {
     const dialogsResult = await api.call('messages.getDialogs', params);
@@ -1003,7 +1007,7 @@ export async function refreshFileReference(item: DownloadQueueItemType): Promise
   try {
     const messagesResult = await api.call('messages.getMessages', {
        id: [ { _: 'inputMessageID', id: item.messageId } ],
-       peer: item.inputPeer // Added peer to getMessages call as it's often required
+       peer: item.inputPeer
     });
 
     let foundMessage = null;
@@ -1074,7 +1078,6 @@ function generateRandomLong(): string {
   const buffer = new Uint8Array(8);
   crypto.getRandomValues(buffer);
   const view = new DataView(buffer.buffer);
-  // Use BigInt for true 64-bit representation, then convert to string
   return view.getBigInt64(0, true).toString();
 }
 
@@ -1267,8 +1270,6 @@ export async function updateDialogFilter(
 
   } else if (filterIdToUpdate !== null) {
     params.id = filterIdToUpdate;
-    // To delete a filter, you send messages.updateDialogFilter with the ID and no 'filter' object (flags.0 not set)
-    // The current params.flags is 0, so not setting params.filter should achieve this.
   } else {
     console.error("updateDialogFilter: Invalid call. Must provide filterId for delete, or filterData for create/update.");
     return false;
@@ -1290,5 +1291,3 @@ if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
   (window as any).telegramServiceApi = api;
   (window as any).telegramUserSession = userSession;
 }
-
-    
