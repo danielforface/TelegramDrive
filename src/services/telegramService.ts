@@ -340,7 +340,7 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
     delete userSession.phone_code_hash;
     return { user: result.user };
 
-  } catch (error: any) { // This is the catch for the initial auth.signIn
+  } catch (error: any) {
     const errorMessage = error.message || (error.originalErrorObject?.error_message);
 
     if (errorMessage === 'SESSION_PASSWORD_NEEDED') {
@@ -349,13 +349,14 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
         const passwordData = await api.call('account.getPassword');
         console.log('signIn: account.getPassword call completed. Response:', passwordData);
 
+
         if (!passwordData || !passwordData.srp_id || !passwordData.current_algo || !passwordData.srp_B) {
              console.error("signIn: Failed to initialize 2FA: Missing critical SRP parameters from account.getPassword response.", passwordData);
              delete userSession.phone_code_hash;
              throw new Error('Failed to initialize 2FA: Missing critical SRP parameters from server.');
         }
 
-        userSession.srp_id = String(passwordData.srp_id); // Ensure srp_id is a string
+        userSession.srp_id = String(passwordData.srp_id);
         userSession.srp_params = {
             g: passwordData.current_algo.g,
             p: passwordData.current_algo.p,
@@ -367,6 +368,7 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
             srp_id: userSession.srp_id,
             srp_params_exist: !!userSession.srp_params,
         });
+
 
         delete userSession.phone_code_hash;
 
@@ -402,7 +404,11 @@ export async function checkPassword(password: string): Promise<any> {
   });
 
   if (!userSession.srp_id || !userSession.srp_params || !api.mtproto.mtproto?.crypto?.getSRPParams) {
-    console.error('checkPassword: Pre-condition for 2FA failed. srp_id, srp_params, or crypto methods missing. Triggering AUTH_RESTART.');
+    let missingDetail = "";
+    if (!userSession.srp_id) missingDetail += "srp_id is missing. ";
+    if (!userSession.srp_params) missingDetail += "srp_params are missing. ";
+    if (!api.mtproto.mtproto?.crypto?.getSRPParams) missingDetail += "crypto.getSRPParams method is missing. ";
+    console.error(`checkPassword: Pre-condition for 2FA failed. ${missingDetail}Triggering AUTH_RESTART.`);
     delete userSession.srp_params;
     delete userSession.srp_id;
     throw new Error('AUTH_RESTART');
@@ -419,7 +425,7 @@ export async function checkPassword(password: string): Promise<any> {
         g, p, salt1, salt2, gB: srp_B, password,
     });
 
-    const srp_id_as_string = String(userSession.srp_id); // Already ensured string above, but good practice
+    const srp_id_as_string = String(userSession.srp_id);
     console.log('checkPassword: Calling auth.checkPassword with srp_id:', srp_id_as_string);
 
     const checkResult = await api.call('auth.checkPassword', {
@@ -635,13 +641,13 @@ export async function getTelegramChats(
   limit: number,
   offsetDate: number = 0,
   offsetId: number = 0,
-  offsetPeer: any = { _: 'inputPeerEmpty' },
-  folderId?: number 
+  offsetPeer: any = { _: 'inputPeerEmpty' }
+  // folderId parameter is removed as per the new strategy
 ): Promise<GetChatsPaginatedResponse> {
   if (!(await isUserConnected())) {
     return { folders: [], nextOffsetDate: 0, nextOffsetId: 0, nextOffsetPeer: { _: 'inputPeerEmpty' }, hasMore: false };
   }
-  console.log(`Requesting chats for master list (pagination: date=${offsetDate}, id=${offsetId}). Original requested folderId (for client filtering context): ${folderId === undefined || folderId === ALL_CHATS_FILTER_ID ? 'All Chats' : folderId}`);
+  console.log(`Requesting master chat list (pagination: date=${offsetDate}, id=${offsetId}). Client-side filtering will be applied based on selected folder's include_peers.`);
 
   const params: any = {
       offset_date: offsetDate,
@@ -649,17 +655,11 @@ export async function getTelegramChats(
       offset_peer: offsetPeer,
       limit: limit,
       hash: 0,
+      // folder_id is NOT used here for the master chat list strategy
   };
-  // The folder_id parameter is intentionally NOT used here for the master chat list strategy.
-  // If a folder_id were to be used, it would be:
-  // if (folderId !== undefined && folderId !== ALL_CHATS_FILTER_ID) {
-  //    params.folder_id = folderId;
-  // }
-
 
   try {
     const dialogsResult = await api.call('messages.getDialogs', params);
-
     const transformedFolders = transformDialogsToCloudFolders(dialogsResult);
 
     let newOffsetDate = offsetDate;
