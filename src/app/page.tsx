@@ -17,8 +17,11 @@ import { RefreshCw, Loader2, LayoutPanelLeft, MessageSquare, UploadCloud } from 
 import { useToast } from "@/hooks/use-toast";
 import * as telegramService from "@/services/telegramService";
 
-const INITIAL_CHATS_LOAD_LIMIT = 20; // Unified limit for all folders/all chats initial load
-const SUBSEQUENT_CHATS_LOAD_LIMIT = 10; // Unified limit for subsequent loads
+const INITIAL_MASTER_CHATS_LOAD_LIMIT = 30; 
+const SUBSEQUENT_MASTER_CHATS_LOAD_LIMIT = 20;
+const INITIAL_SPECIFIC_FOLDER_CHATS_LOAD_LIMIT = 20;
+const SUBSEQUENT_SPECIFIC_FOLDER_CHATS_LOAD_LIMIT = 10;
+
 const INITIAL_MEDIA_LOAD_LIMIT = 20;
 const SUBSEQUENT_MEDIA_LOAD_LIMIT = 20;
 const DOWNLOAD_CHUNK_SIZE = 512 * 1024; 
@@ -28,29 +31,72 @@ const ALL_CHATS_FILTER_ID = 0;
 
 type AuthStep = 'initial' | 'awaiting_code' | 'awaiting_password';
 
+interface PaginationState {
+  offsetDate: number;
+  offsetId: number;
+  offsetPeer: any;
+  hasMore: boolean;
+}
+
+const initialPaginationState: PaginationState = {
+  offsetDate: 0,
+  offsetId: 0,
+  offsetPeer: { _: 'inputPeerEmpty' },
+  hasMore: true,
+};
+
+
+function areInputPeersEquivalent(peer1: any, peer2: any): boolean {
+  if (!peer1 || !peer2 || peer1._ !== peer2._) {
+    return false;
+  }
+  // Ensure IDs are compared as strings for consistency
+  switch (peer1._) {
+    case 'inputPeerUser':
+      return String(peer1.user_id) === String(peer2.user_id);
+    case 'inputPeerChat':
+      return String(peer1.chat_id) === String(peer2.chat_id);
+    case 'inputPeerChannel':
+      return String(peer1.channel_id) === String(peer2.channel_id);
+    case 'inputPeerSelf':
+      return peer2._ === 'inputPeerSelf';
+    case 'inputPeerEmpty':
+      return peer2._ === 'inputPeerEmpty';
+    default:
+      console.warn(`areInputPeersEquivalent: Unknown peer type: ${peer1._}`);
+      return false;
+  }
+}
+
+
 export default function Home() {
   const [isConnecting, setIsConnecting] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
 
   const [dialogFilters, setDialogFilters] = useState<DialogFilter[]>([]);
   const [activeDialogFilterId, setActiveDialogFilterId] = useState<number>(ALL_CHATS_FILTER_ID);
+  const [activeFilterDetails, setActiveFilterDetails] = useState<DialogFilter | null>(null);
   const [isLoadingDialogFilters, setIsLoadingDialogFilters] = useState(true);
   const [isReorderingFolders, setIsReorderingFolders] = useState(false);
 
-  const isProcessingChatsRef = useRef(false);
-  const [isProcessingChats, setIsProcessingChatsState] = useState(false);
-  const setIsProcessingChats = (val: boolean) => {
-    isProcessingChatsRef.current = val;
-    setIsProcessingChatsState(val);
-  };
+  // --- Master Chat List State (for "All Chats" and base for client-side filtering) ---
+  const [masterChatList, setMasterChatList] = useState<CloudFolder[]>([]);
+  const [masterChatListPaginationState, setMasterChatListPaginationState] = useState<PaginationState>(initialPaginationState);
+  const [isLoadingMasterChatList, setIsLoadingMasterChatList] = useState(false);
+  const [isLoadingMoreMasterChatList, setIsLoadingMoreMasterChatList] = useState(false);
+  const isLoadingMoreMasterChatListRequestInFlightRef = useRef(false);
 
-  const [chatListForDisplay, setChatListForDisplay] = useState<CloudFolder[]>([]);
-  const [isLoadingMoreChats, setIsLoadingMoreChats] = useState(false);
-  const isLoadingMoreChatsRequestInFlightRef = useRef(false);
-  const [hasMoreChats, setHasMoreChats] = useState(true);
-  const [chatsOffsetDate, setChatsOffsetDate] = useState(0);
-  const [chatsOffsetId, setChatsOffsetId] = useState(0);
-  const [chatsOffsetPeer, setChatsOffsetPeer] = useState<any>({ _: 'inputPeerEmpty' });
+  // --- Specific Folder Chat List State (for folders fetched by ID) ---
+  const [specificFolderChatList, setSpecificFolderChatList] = useState<CloudFolder[]>([]);
+  const [specificFolderPaginationState, setSpecificFolderPaginationState] = useState<PaginationState>(initialPaginationState);
+  const [isLoadingSpecificFolder, setIsLoadingSpecificFolder] = useState(false);
+  const [isLoadingMoreSpecificFolder, setIsLoadingMoreSpecificFolder] = useState(false);
+  const isLoadingMoreSpecificFolderRequestInFlightRef = useRef(false);
+  
+  // --- Derived/Combined State for Display ---
+  const [displayedChats, setDisplayedChats] = useState<CloudFolder[]>([]);
+  const [isLoadingDisplayedChats, setIsLoadingDisplayedChats] = useState(false);
+  const [hasMoreDisplayedChats, setHasMoreDisplayedChats] = useState(true);
 
 
   const [selectedFolder, setSelectedFolder] = useState<CloudFolder | null>(null); 
@@ -102,10 +148,8 @@ export default function Home() {
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState<string | null>(null);
 
-
   const handleReset = useCallback(async (performServerLogout = true) => {
     const currentIsConnected = isConnected; 
-    setIsProcessingChats(false); 
 
     if (performServerLogout && currentIsConnected) {
         toast({ title: "Disconnecting...", description: "Logging out from Telegram." });
@@ -120,7 +164,11 @@ export default function Home() {
     }
 
     setIsConnected(false);
-    setChatListForDisplay([]);
+    setMasterChatList([]);
+    setMasterChatListPaginationState(initialPaginationState);
+    setSpecificFolderChatList([]);
+    setSpecificFolderPaginationState(initialPaginationState);
+    setDisplayedChats([]);
     setSelectedFolder(null);
     setCurrentChatMedia([]);
     setIsConnecting(false); 
@@ -130,13 +178,11 @@ export default function Home() {
     setPassword('');
     setAuthError(null);
 
-    isLoadingMoreChatsRequestInFlightRef.current = false;
-    setIsLoadingMoreChats(false);
-    setHasMoreChats(true);
-    setChatsOffsetDate(0);
-    setChatsOffsetId(0);
-    setChatsOffsetPeer({ _: 'inputPeerEmpty' });
-
+    isLoadingMoreMasterChatListRequestInFlightRef.current = false;
+    setIsLoadingMoreMasterChatList(false);
+    isLoadingMoreSpecificFolderRequestInFlightRef.current = false;
+    setIsLoadingMoreSpecificFolder(false);
+    
     setIsLoadingChatMedia(false);
     setHasMoreChatMedia(true);
     setCurrentMediaOffsetId(0);
@@ -144,6 +190,7 @@ export default function Home() {
     const defaultFilters: DialogFilter[] = [{ _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, pinned_peers: [], include_peers: [], exclude_peers: [] }];
     setDialogFilters(defaultFilters);
     setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
+    setActiveFilterDetails(defaultFilters[0]);
     setIsLoadingDialogFilters(true); 
 
     downloadQueueRef.current.forEach(item => {
@@ -174,7 +221,7 @@ export default function Home() {
     });
     uploadAbortControllersRef.current.clear();
     setIsUploadingFiles(false);
-  }, [isConnected, toast, videoStreamUrl]);
+  }, [isConnected, toast, videoStreamUrl]); // Removed handleReset from its own dependencies
 
 
   const handleApiError = useCallback((error: any, title: string, defaultMessage: string) => {
@@ -231,7 +278,6 @@ export default function Home() {
       if (!allChatsFilterExists) {
          const alreadyAdded = processedFilters.some(f => f.id === ALL_CHATS_FILTER_ID);
          if (!alreadyAdded) {
-            console.log("fetchDialogFilters: No 'dialogFilterDefault' from server or list was empty, ensuring 'All Chats' is present.");
             processedFilters.unshift({ _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, pinned_peers: [], include_peers: [], exclude_peers: [] });
          }
       }
@@ -243,65 +289,283 @@ export default function Home() {
       });
 
       setDialogFilters(processedFilters);
-      if (!processedFilters.some(f => f.id === activeDialogFilterId)) { 
-         setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
+      const currentActiveFilter = processedFilters.find(f => f.id === activeDialogFilterId) || processedFilters.find(f => f.id === ALL_CHATS_FILTER_ID) || processedFilters[0];
+      if (currentActiveFilter) {
+          setActiveDialogFilterId(currentActiveFilter.id);
+          setActiveFilterDetails(currentActiveFilter);
       }
+
 
     } catch (error: any) {
       handleApiError(error, "Error Fetching Folders", "Could not load your chat folders.");
       const defaultFilters: DialogFilter[] = [{ _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, pinned_peers: [], include_peers: [], exclude_peers: [] }];
       setDialogFilters(defaultFilters);
       setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
+      setActiveFilterDetails(defaultFilters[0]);
     } finally {
       console.log("fetchDialogFilters: Setting isLoadingDialogFilters to false.");
       setIsLoadingDialogFilters(false);
     }
-  }, [handleApiError]); 
+  }, [handleApiError, activeDialogFilterId]); 
 
 
-  const fetchInitialChats = useCallback(async () => {
-    if (isProcessingChatsRef.current || !isConnected) {
-        console.log("fetchInitialChats: Skipped due to processing or not connected.");
+  const fetchDataForActiveFilter = useCallback(async (isLoadingMore = false) => {
+    if (!isConnected || !activeFilterDetails) {
+        console.log("fetchDataForActiveFilter: Skipped due to not connected or no active filter details.");
         return;
     }
-    setIsProcessingChats(true); 
 
-    setChatListForDisplay([]);
-    setAuthError(null); 
-    setChatsOffsetDate(0);
-    setChatsOffsetId(0);
-    setChatsOffsetPeer({ _: 'inputPeerEmpty' });
-    setHasMoreChats(true);
-    setIsLoadingMoreChats(false); 
-    isLoadingMoreChatsRequestInFlightRef.current = false; 
+    setIsLoadingDisplayedChats(true);
+    setAuthError(null);
 
-    const currentFolderIdToFetch = activeDialogFilterId;
-    const currentFolderTitle = dialogFilters.find(f => f.id === currentFolderIdToFetch)?.title || (currentFolderIdToFetch === ALL_CHATS_FILTER_ID ? "All Chats" : "Selected Folder");
+    const filterType = activeFilterDetails._;
+    const filterId = activeFilterDetails.id;
+    const filterTitle = activeFilterDetails.title;
 
-    toast({ title: `Fetching Chats for ${currentFolderTitle}...`, description: `Loading initial conversations.` });
-
-    try {
-      const response = await telegramService.getTelegramChats(
-        INITIAL_CHATS_LOAD_LIMIT, 0, 0, { _: 'inputPeerEmpty' },
-        currentFolderIdToFetch 
-      );
-      setChatListForDisplay(response.folders);
-      setChatsOffsetDate(response.nextOffsetDate);
-      setChatsOffsetId(response.nextOffsetId);
-      setChatsOffsetPeer(response.nextOffsetPeer);
-      setHasMoreChats(response.hasMore);
-      if (response.folders.length === 0 && !response.hasMore) {
-        toast({ title: "No Chats Found", description: `Your chat list for "${currentFolderTitle}" appears to be empty.`, variant: "default" });
-      } else if (response.folders.length > 0) {
-        toast({ title: "Chats Loaded!", description: `Loaded ${response.folders.length} initial chats for "${currentFolderTitle}".` });
-      }
-    } catch (error: any) {
-      handleApiError(error, `Error Fetching Chats for ${currentFolderTitle}`, `Could not load your chats. ${error.message || 'Unknown error'}`);
-      setHasMoreChats(false); 
-    } finally {
-      setIsProcessingChats(false);
+    if (isLoadingMore) {
+        toast({ title: `Loading More Chats for ${filterTitle}...` });
+    } else {
+        toast({ title: `Fetching Chats for ${filterTitle}...` });
+        // Reset relevant pagination for a fresh fetch if not loading more
+        if (filterType === 'dialogFilterDefault' || filterType === 'dialogFilterChatlist') {
+            setMasterChatListPaginationState(initialPaginationState);
+            setMasterChatList([]); // Clear master list for new filter unless explicitly loading more
+        } else if (filterType === 'dialogFilter') {
+            setSpecificFolderPaginationState(initialPaginationState);
+            setSpecificFolderChatList([]);
+        }
     }
-  }, [isConnected, handleApiError, toast, activeDialogFilterId, dialogFilters]);
+    
+    try {
+        if (filterType === 'dialogFilterDefault') { // All Chats
+            const currentOffsetState = masterChatListPaginationState;
+            const limit = isLoadingMore ? SUBSEQUENT_MASTER_CHATS_LOAD_LIMIT : INITIAL_MASTER_CHATS_LOAD_LIMIT;
+            setIsLoadingMasterChatList(true);
+            if (isLoadingMore) setIsLoadingMoreMasterChatList(true);
+            
+            const response = await telegramService.getTelegramChats(
+                limit,
+                isLoadingMore ? currentOffsetState.offsetDate : 0,
+                isLoadingMore ? currentOffsetState.offsetId : 0,
+                isLoadingMore ? currentOffsetState.offsetPeer : { _: 'inputPeerEmpty' },
+                ALL_CHATS_FILTER_ID // Explicitly for all chats
+            );
+
+            setMasterChatList(prev => isLoadingMore ? [...prev, ...response.folders] : response.folders);
+            setMasterChatListPaginationState({
+                offsetDate: response.nextOffsetDate,
+                offsetId: response.nextOffsetId,
+                offsetPeer: response.nextOffsetPeer,
+                hasMore: response.hasMore,
+            });
+            if (!isLoadingMore && response.folders.length === 0 && !response.hasMore) {
+                toast({ title: "No Chats Found", description: `Your chat list for "${filterTitle}" appears to be empty.`, variant: "default" });
+            } else if (response.folders.length > 0) {
+                toast({ title: `${isLoadingMore ? "More" : ""} Chats Loaded!`, description: `Loaded ${response.folders.length} ${isLoadingMore ? "additional" : "initial"} chats for "${filterTitle}".` });
+            }
+            if (isLoadingMore) setIsLoadingMoreMasterChatList(false);
+            setIsLoadingMasterChatList(false);
+
+        } else if (filterType === 'dialogFilterChatlist') { // Shared/Chatlist folders - Client-side filter
+             // Ensure master list is somewhat populated if empty
+            if (masterChatList.length === 0 && !isLoadingMasterChatList && masterChatListPaginationState.hasMore) {
+                console.log("fetchDataForActiveFilter (Chatlist): Master list empty, fetching initial batch.");
+                setIsLoadingMasterChatList(true);
+                const response = await telegramService.getTelegramChats(
+                    INITIAL_MASTER_CHATS_LOAD_LIMIT, 0, 0, { _: 'inputPeerEmpty' }, ALL_CHATS_FILTER_ID
+                );
+                setMasterChatList(response.folders);
+                setMasterChatListPaginationState({
+                    offsetDate: response.nextOffsetDate,
+                    offsetId: response.nextOffsetId,
+                    offsetPeer: response.nextOffsetPeer,
+                    hasMore: response.hasMore,
+                });
+                setIsLoadingMasterChatList(false);
+                toast({ title: "Master Chat List Loaded", description: `Loaded ${response.folders.length} chats to filter from.` });
+            }
+            // Client-side filtering will happen in useEffect based on masterChatList and activeFilterDetails
+            // For now, toast indicates the action
+            toast({ title: `Displaying Folder: ${filterTitle}`, description: "Filtering from existing chats." });
+
+
+        } else if (filterType === 'dialogFilter') { // Regular, server-filtered folder
+            const currentOffsetState = specificFolderPaginationState;
+            const limit = isLoadingMore ? SUBSEQUENT_SPECIFIC_FOLDER_CHATS_LOAD_LIMIT : INITIAL_SPECIFIC_FOLDER_CHATS_LOAD_LIMIT;
+            setIsLoadingSpecificFolder(true);
+            if (isLoadingMore) setIsLoadingMoreSpecificFolder(true);
+
+            const response = await telegramService.getTelegramChats(
+                limit,
+                isLoadingMore ? currentOffsetState.offsetDate : 0,
+                isLoadingMore ? currentOffsetState.offsetId : 0,
+                isLoadingMore ? currentOffsetState.offsetPeer : { _: 'inputPeerEmpty' },
+                filterId
+            );
+            setSpecificFolderChatList(prev => isLoadingMore ? [...prev, ...response.folders] : response.folders);
+            setSpecificFolderPaginationState({
+                offsetDate: response.nextOffsetDate,
+                offsetId: response.nextOffsetId,
+                offsetPeer: response.nextOffsetPeer,
+                hasMore: response.hasMore,
+            });
+            if (!isLoadingMore && response.folders.length === 0 && !response.hasMore) {
+                toast({ title: "No Chats Found", description: `Chat list for "${filterTitle}" appears to be empty.`, variant: "default" });
+            } else if (response.folders.length > 0) {
+                 toast({ title: `${isLoadingMore ? "More" : ""} Chats Loaded!`, description: `Loaded ${response.folders.length} ${isLoadingMore ? "additional" : "initial"} chats for "${filterTitle}".` });
+            }
+            if (isLoadingMore) setIsLoadingMoreSpecificFolder(false);
+            setIsLoadingSpecificFolder(false);
+        }
+    } catch (error: any) {
+        const folderDisplayTitle = activeFilterDetails?.title || "Selected Folder";
+        if (error.message && error.message.includes('FOLDER_ID_INVALID')) {
+            handleApiError(error, `Error Fetching Chats for ${folderDisplayTitle}`, `This folder (ID: ${activeFilterDetails?.id}) could not be loaded directly. It might be a special folder type.`);
+             if (filterType === 'dialogFilter') setSpecificFolderPaginationState(prev => ({ ...prev, hasMore: false }));
+        } else {
+            handleApiError(error, `Error Fetching Chats for ${folderDisplayTitle}`, `Could not load chats. ${error.message || 'Unknown error'}`);
+        }
+        if (filterType === 'dialogFilterDefault' || filterType === 'dialogFilterChatlist') {
+             setMasterChatList([]);
+             setMasterChatListPaginationState(prev => ({ ...prev, hasMore: false }));
+             setIsLoadingMasterChatList(false);
+             setIsLoadingMoreMasterChatList(false);
+        } else {
+             setSpecificFolderChatList([]);
+             setSpecificFolderPaginationState(prev => ({ ...prev, hasMore: false }));
+             setIsLoadingSpecificFolder(false);
+             setIsLoadingMoreSpecificFolder(false);
+        }
+    } finally {
+        setIsLoadingDisplayedChats(false);
+    }
+  }, [isConnected, activeFilterDetails, masterChatListPaginationState, specificFolderPaginationState, handleApiError, toast, masterChatList.length, isLoadingMasterChatList]);
+
+  const loadMoreDisplayedChats = useCallback(async () => {
+    if (!activeFilterDetails || isLoadingDisplayedChats) return;
+
+    const filterType = activeFilterDetails._;
+
+    if (filterType === 'dialogFilterDefault') {
+        if (!masterChatListPaginationState.hasMore || isLoadingMoreMasterChatListRequestInFlightRef.current || isLoadingMoreMasterChatList) return;
+        isLoadingMoreMasterChatListRequestInFlightRef.current = true;
+        await fetchDataForActiveFilter(true);
+        isLoadingMoreMasterChatListRequestInFlightRef.current = false;
+
+    } else if (filterType === 'dialogFilterChatlist') {
+        // For client-filtered lists, "load more" means loading more into the master list
+        if (!masterChatListPaginationState.hasMore || isLoadingMoreMasterChatListRequestInFlightRef.current || isLoadingMoreMasterChatList) return;
+        isLoadingMoreMasterChatListRequestInFlightRef.current = true;
+        setIsLoadingMoreMasterChatList(true); // Manually set loading for master list
+        toast({ title: `Loading More Chats for ${activeFilterDetails.title}...` });
+        try {
+            const response = await telegramService.getTelegramChats(
+                SUBSEQUENT_MASTER_CHATS_LOAD_LIMIT,
+                masterChatListPaginationState.offsetDate,
+                masterChatListPaginationState.offsetId,
+                masterChatListPaginationState.offsetPeer,
+                ALL_CHATS_FILTER_ID
+            );
+            setMasterChatList(prev => [...prev, ...response.folders]);
+            setMasterChatListPaginationState({
+                offsetDate: response.nextOffsetDate,
+                offsetId: response.nextOffsetId,
+                offsetPeer: response.nextOffsetPeer,
+                hasMore: response.hasMore,
+            });
+             if (response.folders.length > 0) {
+                 toast({ title: "More Master Chats Loaded", description: `Loaded ${response.folders.length} additional chats to filter from.` });
+            } else if (!response.hasMore) {
+                toast({ title: "All Master Chats Loaded", description: "End of master chat list."});
+            }
+        } catch (error:any) {
+             handleApiError(error, "Error Loading More Master Chats", `Could not load more master chats. ${error.message}`);
+             setMasterChatListPaginationState(prev => ({...prev, hasMore: false}));
+        } finally {
+            setIsLoadingMoreMasterChatList(false);
+            isLoadingMoreMasterChatListRequestInFlightRef.current = false;
+        }
+
+
+    } else if (filterType === 'dialogFilter') {
+        if (!specificFolderPaginationState.hasMore || isLoadingMoreSpecificFolderRequestInFlightRef.current || isLoadingMoreSpecificFolder) return;
+        isLoadingMoreSpecificFolderRequestInFlightRef.current = true;
+        await fetchDataForActiveFilter(true);
+        isLoadingMoreSpecificFolderRequestInFlightRef.current = false;
+    }
+  }, [activeFilterDetails, fetchDataForActiveFilter, masterChatListPaginationState, specificFolderPaginationState, isLoadingDisplayedChats, isLoadingMoreMasterChatList, isLoadingMoreSpecificFolder, toast, handleApiError]);
+
+  
+  // Effect to update activeFilterDetails when activeDialogFilterId changes
+  useEffect(() => {
+    const currentFilter = dialogFilters.find(f => f.id === activeDialogFilterId);
+    if (currentFilter) {
+      setActiveFilterDetails(currentFilter);
+    } else if (dialogFilters.length > 0) {
+      // Fallback if ID not found but filters exist (e.g. after initial load)
+      setActiveFilterDetails(dialogFilters.find(f => f.id === ALL_CHATS_FILTER_ID) || dialogFilters[0]);
+    }
+  }, [activeDialogFilterId, dialogFilters]);
+
+
+  // Effect to trigger fetching data when active filter details change or connection established
+  useEffect(() => {
+    if (isConnected && activeFilterDetails && (dialogFilters.length > 0 || !isLoadingDialogFilters)) {
+      if (selectedFolder) setSelectedFolder(null);
+      if (currentChatMedia.length > 0) setCurrentChatMedia([]);
+      fetchDataForActiveFilter(false); // Initial fetch for the new filter
+    }
+  }, [isConnected, activeFilterDetails, fetchDataForActiveFilter]); // dialogFilters removed as activeFilterDetails depends on it
+
+
+  // Effect to set displayedChats based on the active filter type and loaded data
+  useEffect(() => {
+    if (!activeFilterDetails) {
+      setDisplayedChats([]);
+      setHasMoreDisplayedChats(false);
+      return;
+    }
+
+    const filterType = activeFilterDetails._;
+    if (filterType === 'dialogFilterDefault') {
+      setDisplayedChats([...masterChatList]);
+      setHasMoreDisplayedChats(masterChatListPaginationState.hasMore);
+      setIsLoadingDisplayedChats(isLoadingMasterChatList || isLoadingMoreMasterChatList);
+    } else if (filterType === 'dialogFilterChatlist') {
+      if (activeFilterDetails.include_peers && activeFilterDetails.include_peers.length > 0) {
+        const filtered = masterChatList.filter(chat =>
+          activeFilterDetails.include_peers.some(filterPeer =>
+            areInputPeersEquivalent(chat.inputPeer, filterPeer)
+          )
+        );
+        setDisplayedChats(filtered);
+      } else {
+        // If a chatlist has no include_peers (e.g., empty or misconfigured), show empty
+        setDisplayedChats([]);
+      }
+      // For client-filtered, "hasMore" effectively means master list has more
+      setHasMoreDisplayedChats(masterChatListPaginationState.hasMore);
+      setIsLoadingDisplayedChats(isLoadingMasterChatList || isLoadingMoreMasterChatList); // Loading state tied to master list
+    } else if (filterType === 'dialogFilter') {
+      setDisplayedChats([...specificFolderChatList]);
+      setHasMoreDisplayedChats(specificFolderPaginationState.hasMore);
+      setIsLoadingDisplayedChats(isLoadingSpecificFolder || isLoadingMoreSpecificFolder);
+    } else {
+      setDisplayedChats([]);
+      setHasMoreDisplayedChats(false);
+       setIsLoadingDisplayedChats(false);
+    }
+  }, [
+    activeFilterDetails, 
+    masterChatList, 
+    masterChatListPaginationState.hasMore, 
+    specificFolderChatList, 
+    specificFolderPaginationState.hasMore,
+    isLoadingMasterChatList,
+    isLoadingMoreMasterChatList,
+    isLoadingSpecificFolder,
+    isLoadingMoreSpecificFolder
+  ]);
 
 
   const checkExistingConnection = useCallback(async () => {
@@ -321,10 +585,13 @@ export default function Home() {
         setPhoneNumber('');
         setAuthStep('initial');
         setAuthError(null);
-        setChatListForDisplay([]); 
+        setMasterChatList([]); 
+        setSpecificFolderChatList([]);
+        setDisplayedChats([]);
         const defaultFilters: DialogFilter[] = [{ _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, pinned_peers: [], include_peers: [], exclude_peers: [] }];
         setDialogFilters(defaultFilters);
         setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
+        setActiveFilterDetails(defaultFilters[0]);
         setIsLoadingDialogFilters(false); 
       }
     } catch (error: any) {
@@ -346,6 +613,7 @@ export default function Home() {
       const defaultFilters: DialogFilter[] = [{ _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, pinned_peers: [], include_peers: [], exclude_peers: [] }];
       setDialogFilters(defaultFilters);
       setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
+      setActiveFilterDetails(defaultFilters[0]);
       setIsLoadingDialogFilters(false); 
     }
   }, [toast, handleApiError, fetchDialogFilters]);  
@@ -354,14 +622,6 @@ export default function Home() {
   useEffect(() => {
     checkExistingConnection();
   }, [checkExistingConnection]); 
-
-  useEffect(() => {
-    if (isConnected && (dialogFilters.length > 0 || !isLoadingDialogFilters)) { // Ensure filters are loaded or not loading
-      if(selectedFolder) setSelectedFolder(null); 
-      if(currentChatMedia.length > 0) setCurrentChatMedia([]);
-      fetchInitialChats(); // Will use activeDialogFilterId
-    }
-  }, [isConnected, activeDialogFilterId, dialogFilters, isLoadingDialogFilters, fetchInitialChats]); 
 
 
   useEffect(() => {
@@ -499,7 +759,6 @@ export default function Home() {
                    activeDownloadsRef.current.delete(upToDateItem.id);
                    continue;
                 }
-                console.log(`Processing direct download for ${upToDateItem.name}, offset: ${upToDateItem.currentOffset}, API limit: ${actualLimitForApi}, dataToRequest: ${idealRequestSizeDirect}, neededForFile: ${bytesNeededForFileDirect}, leftInBlock: ${bytesLeftInCurrentBlockDirect}, totalSize: ${upToDateItem.totalSizeInBytes}`);
 
                 chunkResponse = await telegramService.downloadFileChunk(
                     upToDateItem.location!, 
@@ -683,80 +942,44 @@ export default function Home() {
     };
   }, []); 
 
+
   useEffect(() => {
-    if (!isLoadingMoreChats && isConnected) {
-      const timer = setTimeout(() => {
-        isLoadingMoreChatsRequestInFlightRef.current = false;
-      }, 150); 
-      return () => clearTimeout(timer);
+    if (isConnected) { // To avoid running when refs might be cleared on disconnect
+        const timerMaster = setTimeout(() => {
+            isLoadingMoreMasterChatListRequestInFlightRef.current = false;
+        }, 150);
+        const timerSpecific = setTimeout(() => {
+            isLoadingMoreSpecificFolderRequestInFlightRef.current = false;
+        }, 150);
+        return () => {
+            clearTimeout(timerMaster);
+            clearTimeout(timerSpecific);
+        };
     }
-  }, [isLoadingMoreChats, isConnected]);
-
-
-  const loadMoreChatsCallback = useCallback(async () => {
-    if (
-        isLoadingMoreChatsRequestInFlightRef.current || 
-        isLoadingMoreChats || 
-        isProcessingChatsRef.current || 
-        !hasMoreChats || 
-        !isConnected 
-        ) {
-      return;
-    }
-
-    isLoadingMoreChatsRequestInFlightRef.current = true; 
-    setIsLoadingMoreChats(true); 
-    const currentFolderIdToFetch = activeDialogFilterId;
-    const currentFolderTitle = dialogFilters.find(f => f.id === currentFolderIdToFetch)?.title || (currentFolderIdToFetch === ALL_CHATS_FILTER_ID ? "All Chats" : "Selected Folder");
-
-
-    toast({ title: `Loading More Chats for ${currentFolderTitle}...`, description: "Fetching the next batch of conversations." });
-    try {
-      const response = await telegramService.getTelegramChats(
-        SUBSEQUENT_CHATS_LOAD_LIMIT,
-        chatsOffsetDate,
-        chatsOffsetId,
-        chatsOffsetPeer,
-        currentFolderIdToFetch
-      );
-      setChatListForDisplay(prev => [...prev, ...response.folders]);
-      setChatsOffsetDate(response.nextOffsetDate);
-      setChatsOffsetId(response.nextOffsetId);
-      setChatsOffsetPeer(response.nextOffsetPeer);
-      setHasMoreChats(response.hasMore);
-       if (response.folders.length > 0) {
-         toast({ title: "More Chats Loaded!", description: `Loaded ${response.folders.length} additional chats.` });
-      } else if (!response.hasMore) {
-         toast({ title: `All Chats Loaded for ${currentFolderTitle}`, description: "You've reached the end of your chat list."});
-      }
-    } catch (error: any) {
-      handleApiError(error, "Error Loading More Chats", `Could not load more chats. ${error.message}`);
-      setHasMoreChats(false); 
-    } finally {
-      setIsLoadingMoreChats(false); 
-    }
-  }, [isConnected, hasMoreChats, chatsOffsetDate, chatsOffsetId, chatsOffsetPeer, toast, handleApiError, activeDialogFilterId, dialogFilters]);
+  }, [isLoadingMoreMasterChatList, isLoadingMoreSpecificFolder, isConnected]);
 
 
   const observerChats = useRef<IntersectionObserver | null>(null);
   const lastChatElementRef = useCallback((node: HTMLLIElement | null) => {
-    if (isLoadingMoreChats || isProcessingChatsRef.current || isLoadingMoreChatsRequestInFlightRef.current) {
-      return;
-    }
+    if (isLoadingDisplayedChats || !hasMoreDisplayedChats) return;
+
     if (observerChats.current) observerChats.current.disconnect(); 
 
     observerChats.current = new IntersectionObserver(entries => {
-      if (entries[0].isIntersecting &&
-          hasMoreChats &&
-          !isProcessingChatsRef.current && 
-          !isLoadingMoreChats && 
-          !isLoadingMoreChatsRequestInFlightRef.current 
-        ) {
-        loadMoreChatsCallback();
+      if (entries[0].isIntersecting && hasMoreDisplayedChats && !isLoadingDisplayedChats) {
+          let currentLoadingFlag = false;
+          if (activeFilterDetails?._ === 'dialogFilterDefault' || activeFilterDetails?._ === 'dialogFilterChatlist') {
+              currentLoadingFlag = isLoadingMoreMasterChatListRequestInFlightRef.current || isLoadingMoreMasterChatList;
+          } else if (activeFilterDetails?._ === 'dialogFilter') {
+              currentLoadingFlag = isLoadingMoreSpecificFolderRequestInFlightRef.current || isLoadingMoreSpecificFolder;
+          }
+          if (!currentLoadingFlag) {
+            loadMoreDisplayedChats();
+          }
       }
     });
     if (node) observerChats.current.observe(node); 
-  }, [hasMoreChats, loadMoreChatsCallback]); 
+  }, [hasMoreDisplayedChats, loadMoreDisplayedChats, isLoadingDisplayedChats, activeFilterDetails, isLoadingMoreMasterChatList, isLoadingMoreSpecificFolder]); 
 
 
   const fetchInitialChatMedia = useCallback(async (folder: CloudFolder) => {
@@ -823,13 +1046,13 @@ export default function Home() {
   }, [hasMoreChatMedia, loadMoreChatMediaCallback]); 
 
   const handleSelectFolder = (folderId: string) => { 
-    const folder = chatListForDisplay.find(f => f.id === folderId);
+    const folder = displayedChats.find(f => f.id === folderId); // Select from displayed chats
     if (folder) {
       setSelectedFolder(folder); 
       fetchInitialChatMedia(folder); 
       setIsChatSelectionDialogOpen(false); 
     } else {
-      console.warn(`Folder with ID ${folderId} not found in current chatListForDisplay for selection.`);
+      console.warn(`Folder with ID ${folderId} not found in current displayedChats for selection.`);
       setSelectedFolder(null); 
       setCurrentChatMedia([]);
     }
@@ -881,7 +1104,7 @@ export default function Home() {
         setPhoneCode('');   
         setPassword('');    
         toast({ title: "Sign In Successful!", description: "Connected to Telegram." });
-        await fetchDialogFilters(); 
+        await fetchDialogFilters(); //This will also trigger fetchDataForActiveFilter via useEffect
       } else {
         setAuthError("Sign in failed. Unexpected response from server.");
         toast({ title: "Sign In Failed", description: "Unexpected response from server.", variant: "destructive" });
@@ -917,7 +1140,7 @@ export default function Home() {
         setPhoneCode('');   
         setPassword('');   
         toast({ title: "2FA Successful!", description: "Connected to Telegram." });
-        await fetchDialogFilters(); 
+        await fetchDialogFilters(); //This will also trigger fetchDataForActiveFilter via useEffect
       } else {
         setAuthError("2FA failed. Unexpected response from server.");
         toast({ title: "2FA Failed", description: "Unexpected response from server.", variant: "destructive" });
@@ -1341,7 +1564,6 @@ const handleStartUpload = async () => {
     console.log("Selected DialogFilter ID in page.tsx:", filterId);
     if (activeDialogFilterId === filterId && !isReorderingFolders) return; 
     setActiveDialogFilterId(filterId);
-    // Chat list will update via useEffect listening to activeDialogFilterId and isConnected
   };
 
   const handleToggleReorderFolders = async () => {
@@ -1470,16 +1692,16 @@ const handleStartUpload = async () => {
                   <Button onClick={handleOpenChatSelectionDialog}>
                     <MessageSquare className="mr-2 h-5 w-5" /> Select a Chat
                   </Button>
-                  {isProcessingChats && chatListForDisplay.length === 0 && ( 
+                  {isLoadingDisplayedChats && displayedChats.length === 0 && ( 
                     <div className="mt-4 flex items-center">
                       <Loader2 className="animate-spin h-5 w-5 text-primary mr-2" />
                       <span>Loading initial chat list for current folder...</span>
                     </div>
                   )}
-                   { !isProcessingChats && chatListForDisplay.length === 0 && !authError && isConnected && ( 
+                   { !isLoadingDisplayedChats && displayedChats.length === 0 && !authError && isConnected && ( 
                      <div className="mt-4 flex items-center text-sm">
                         <MessageSquare className="mr-2 h-5 w-5 text-muted-foreground" />
-                        <span>Your chat list for the current folder appears to be empty or still loading. Click "Select a Chat".</span>
+                        <span>Your chat list for "{activeFilterDetails?.title || 'current folder'}" appears to be empty or still loading. Click "Select a Chat".</span>
                     </div>
                     )}
                 </div>
@@ -1507,15 +1729,19 @@ const handleStartUpload = async () => {
         onShareFilter={handleShareFilter}
         onAddFilterPlaceholder={handleAddFilterPlaceholder}
         // Chat list props
-        folders={chatListForDisplay} 
+        folders={displayedChats} 
         selectedFolderId={selectedFolder?.id || null}
         onSelectFolder={handleSelectFolder} 
         lastItemRef={lastChatElementRef} 
-        isLoading={isProcessingChats && chatListForDisplay.length === 0} 
-        isLoadingMore={isLoadingMoreChats} 
-        hasMore={hasMoreChats}
-        onLoadMore={loadMoreChatsCallback} 
-        onRefresh={fetchInitialChats} 
+        isLoading={isLoadingDisplayedChats && displayedChats.length === 0} 
+        isLoadingMore={
+            activeFilterDetails?._ === 'dialogFilterDefault' || activeFilterDetails?._ === 'dialogFilterChatlist'
+            ? isLoadingMoreMasterChatList
+            : isLoadingMoreSpecificFolder
+        } 
+        hasMore={hasMoreDisplayedChats}
+        onLoadMore={loadMoreDisplayedChats} 
+        onRefresh={() => fetchDataForActiveFilter(false)} 
       />
 
       <FileDetailsPanel
