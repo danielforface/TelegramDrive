@@ -29,6 +29,7 @@ interface ChatSelectionDialogProps {
   onMoveFilter: (dragIndex: number, hoverIndex: number) => void;
   onShareFilter: (filterId: number) => void;
   onAddFilterPlaceholder: () => void;
+  onOpenCreateCloudChannelDialog: () => void; // New prop
 
   folders: CloudFolder[]; 
   selectedFolderId: string | null; 
@@ -38,7 +39,7 @@ interface ChatSelectionDialogProps {
   hasMore: boolean; 
   onLoadMore: () => void; 
   onRefresh: () => void; 
-  currentErrorMessage?: string | null; // Added for consistency
+  currentErrorMessage?: string | null;
 }
 
 export function ChatSelectionDialog({
@@ -53,6 +54,7 @@ export function ChatSelectionDialog({
   onMoveFilter,
   onShareFilter,
   onAddFilterPlaceholder,
+  onOpenCreateCloudChannelDialog, // Destructure new prop
   folders,
   selectedFolderId,
   onSelectFolder,
@@ -72,7 +74,7 @@ export function ChatSelectionDialog({
             <DialogTitle>Select a Chat</DialogTitle>
           </div>
           <DialogDescription>
-            First, select a folder tab, then choose a conversation.
+            First, select a folder tab, then choose a conversation. Or, create new cloud storage.
           </DialogDescription>
         </DialogHeader>
 
@@ -86,6 +88,7 @@ export function ChatSelectionDialog({
           onMoveFilter={onMoveFilter}
           onShareFilter={onShareFilter}
           onAddFilterPlaceholder={onAddFilterPlaceholder}
+          onOpenCreateCloudChannelDialog={onOpenCreateCloudChannelDialog} // Pass down
           className="flex-shrink-0 sticky top-0 z-10" 
         />
 
@@ -107,7 +110,7 @@ export function ChatSelectionDialog({
           ) : (
             <>
               <ul className="space-y-1">
-                {folders.map((folder) => ( // Removed index and lastItemRef from here
+                {folders.map((folder) => (
                   <ChatListItem
                     key={folder.id}
                     folder={folder}
@@ -115,7 +118,6 @@ export function ChatSelectionDialog({
                     onSelect={() => {
                       onSelectFolder(folder.id);
                     }}
-                    // ref prop removed
                   />
                 ))}
               </ul>
@@ -140,7 +142,7 @@ export function ChatSelectionDialog({
               )}
             </>
           )}
-          {isLoadingMore && folders.length > 0 && ( // Show loader if loading more and list is not empty
+          {isLoadingMore && folders.length > 0 && ( 
             <div className="flex justify-center items-center py-4">
               <Loader2 className="animate-spin h-5 w-5 text-primary" />
               <p className="ml-2 text-sm text-muted-foreground">Loading more chats...</p>
@@ -156,6 +158,4 @@ export function ChatSelectionDialog({
     </Dialog>
   );
 }
-
-
     

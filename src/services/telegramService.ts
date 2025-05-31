@@ -2,7 +2,7 @@
 'use client';
 
 import MTProto from '@mtproto/core/envs/browser';
-import type { CloudFolder, CloudFile, GetChatsPaginatedResponse, MediaHistoryResponse, FileDownloadInfo, FileChunkResponse, DownloadQueueItemType, FileHash as AppFileHash, DialogFilter, MessagesDialogFilters, ExtendedFile, CdnRedirectDataType } from '@/types';
+import type { CloudFolder, CloudFile, GetChatsPaginatedResponse, MediaHistoryResponse, FileDownloadInfo, FileChunkResponse, DownloadQueueItemType, FileHash as AppFileHash, DialogFilter, MessagesDialogFilters, ExtendedFile, CdnRedirectDataType, CloudChannelConfigV1, CloudChannelType } from '@/types';
 import { formatFileSize } from '@/lib/utils';
 import cryptoSha256 from '@cryptography/sha256';
 
@@ -13,6 +13,7 @@ const API_ID_STRING = process.env.NEXT_PUBLIC_TELEGRAM_API_ID;
 const API_HASH = process.env.NEXT_PUBLIC_TELEGRAM_API_HASH;
 const CRITICAL_ERROR_MESSAGE_PREFIX = "CRITICAL_TELEGRAM_API_ERROR: ";
 const ALL_CHATS_FILTER_ID = 0;
+const CLOUDIFIER_APP_SIGNATURE_V1 = "TELEGRAM_CLOUDIFIER_V1.0";
 
 let API_ID: number | undefined = undefined;
 
@@ -568,9 +569,9 @@ function transformDialogsToCloudFolders(dialogsResult: any): CloudFolder[] {
     if (!dialog || !dialog.peer) {
       return null;
     }
-    const peer = dialog.peer; // This is the source for the ID
+    const peer = dialog.peer; 
     const chatTitle = getPeerTitle(peer, chats || [], users || []);
-    let inputPeerForApiCalls: any | undefined; // This is for API calls later
+    let inputPeerForApiCalls: any | undefined; 
 
     const peerUserId = peer.user_id ? String(peer.user_id) : undefined;
     const peerChatId = peer.chat_id ? String(peer.chat_id) : undefined;
@@ -1125,11 +1126,8 @@ export function areUint8ArraysEqual(arr1?: Uint8Array, arr2?: Uint8Array): boole
 }
 
 function generateRandomLong(): string {
-  
-  
   const buffer = new Uint8Array(8);
   crypto.getRandomValues(buffer); 
-  
   const view = new DataView(buffer.buffer);
   return view.getBigInt64(0, true).toString();
 }
@@ -1327,6 +1325,118 @@ export async function updateDialogFilter(
   } catch (error: any) {
     console.error('Error updating/creating/deleting dialog filter:', error.message, error.originalErrorObject || error);
     throw error;
+  }
+}
+
+export async function createManagedCloudChannel(
+  title: string,
+  type: CloudChannelType
+): Promise<{ channelInfo: any; configMessageInfo: any } | null> {
+  if (!(await isUserConnected())) {
+    throw new Error("User not connected. Cannot create cloud channel.");
+  }
+
+  try {
+    console.log(`Attempting to create managed cloud storage: Title: "${title}", Type: ${type}`);
+    const createChannelResult = await api.call('channels.createChannel', {
+      title: title,
+      about: `Managed by Telegram Cloudifier. Type: ${type}. Do not delete the first message.`,
+      megagroup: type === 'supergroup',
+      // broadcast: type === 'channel', // This flag is for old-style broadcast channels, not recommended.
+                                       // Modern channels are created by default if megagroup is false.
+      for_import: false,
+      // geo_point, address etc. are optional
+    });
+
+    if (!createChannelResult || !createChannelResult.chats || createChannelResult.chats.length === 0) {
+      console.error("Failed to create channel: No channel data returned.", createChannelResult);
+      throw new Error("Channel creation failed on Telegram's side: No channel data returned.");
+    }
+
+    const newChannel = createChannelResult.chats[0];
+    const channelInputPeer = {
+      _: 'inputPeerChannel',
+      channel_id: newChannel.id,
+      access_hash: newChannel.access_hash,
+    };
+
+    console.log(`Channel "${title}" (ID: ${newChannel.id}) created successfully. Sending config message...`);
+
+    const now = new Date().toISOString();
+    const initialConfig: CloudChannelConfigV1 = {
+      app_signature: CLOUDIFIER_APP_SIGNATURE_V1,
+      channel_title_at_creation: title,
+      created_timestamp_utc: now,
+      last_updated_timestamp_utc: now,
+      root_entries: {},
+    };
+    const configJsonString = JSON.stringify(initialConfig, null, 2);
+    
+    // Ensure the config message is not too long (Telegram limit is 4096 bytes)
+    if (new TextEncoder().encode(configJsonString).length >= 4000) { // Check with some buffer
+        console.error("Initial config JSON is too long. This is a bug.", configJsonString);
+        // Attempt to delete the channel? Or just fail. For now, fail.
+        // Consider api.call('channels.deleteChannel', { channel_id: channelInputPeer });
+        throw new Error("Internal error: Initial configuration message is too large.");
+    }
+
+
+    const sendMessageResult = await api.call('messages.sendMessage', {
+      peer: channelInputPeer,
+      message: configJsonString,
+      random_id: generateRandomLong(),
+      no_webpage: true, // Good practice for config messages
+    });
+    
+    if (!sendMessageResult || !sendMessageResult.updates || sendMessageResult.updates.length === 0) {
+        console.error("Failed to send config message or result format unexpected.", sendMessageResult);
+        // Attempt to delete the channel as it's unusable without a config message
+        // await api.call('channels.deleteChannel', { channel_id: channelInputPeer }); // Consider error handling for this delete too
+        throw new Error("Failed to send initial configuration message to the new channel.");
+    }
+
+    // Find the sent message from the updates (it's usually an updateNewChannelMessage)
+    let sentMessageInfo = null;
+    const updates = Array.isArray(sendMessageResult.updates) ? sendMessageResult.updates : (sendMessageResult.updates?.updates || []);
+
+    for (const update of updates) {
+        if (update._ === 'updateNewChannelMessage' && update.message && update.message.message === configJsonString) {
+            sentMessageInfo = update.message;
+            break;
+        }
+        // Simpler structure sometimes for sendMessage in channel
+        if (update._ === 'updateMessageID' && sendMessageResult.id === update.id) {
+             // Need to fetch this message to confirm content and get full object,
+             // but for now, we can assume it's the one if IDs match and content was expected.
+             // For robust solution, fetch this message by its new ID.
+             // For this V1, we'll trust the sendMessageResult itself if it's a bare object.
+             if(sendMessageResult.id && sendMessageResult.date && sendMessageResult.message === configJsonString){
+                sentMessageInfo = sendMessageResult;
+             }
+             break;
+        }
+    }
+     if (!sentMessageInfo && sendMessageResult.id && sendMessageResult.message === configJsonString) {
+        // If sendMessageResult itself looks like the message object
+        sentMessageInfo = sendMessageResult;
+    }
+
+
+    if (!sentMessageInfo) {
+        console.warn("Could not definitively find the sent config message in sendMessage updates. Response:", sendMessageResult);
+        // Not throwing an error here, as the message might have sent but not easily identifiable in this specific response structure.
+        // The critical part is that sendMessage didn't throw.
+        // We'll return a placeholder for configMessageInfo.
+        sentMessageInfo = { id: (sendMessageResult as any).id || 1, note: "Config message sent, but full object not found in immediate response." };
+    }
+
+
+    console.log(`Config message sent to channel "${title}". Message ID (approx): ${sentMessageInfo.id}`);
+    return { channelInfo: newChannel, configMessageInfo: sentMessageInfo };
+
+  } catch (error: any) {
+    console.error(`Error in createManagedCloudChannel ("${title}", ${type}):`, error.message, error.originalErrorObject || error);
+    throw error; // Re-throw to be caught by the UI
   }
 }
 

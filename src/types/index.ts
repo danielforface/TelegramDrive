@@ -21,6 +21,8 @@ export interface CloudFolder {
   files: CloudFile[];
   isChatFolder?: boolean;
   inputPeer?: any; 
+  isAppManagedCloud?: boolean; // Added to distinguish app-managed cloud channels
+  cloudConfig?: CloudChannelConfigV1; // To store parsed config later
 }
 
 export interface GetChatsPaginatedResponse {
@@ -126,8 +128,8 @@ export interface ExtendedFile {
   size: number;
   type: string;
   lastModified: number;
-  uploadProgress: number; // Changed from optional to required
-  uploadStatus: 'pending' | 'uploading' | 'processing' | 'completed' | 'failed' | 'cancelled'; // Changed from optional to required
+  uploadProgress: number; 
+  uploadStatus: 'pending' | 'uploading' | 'processing' | 'completed' | 'failed' | 'cancelled'; 
 }
 
 
@@ -139,7 +141,7 @@ type SuccessfulFileChunk_Bytes = {
   errorType?: never;
 };
 
-export type CdnRedirectDataType = { // Exported this type
+export type CdnRedirectDataType = { 
     dc_id: number;
     file_token: Uint8Array;
     encryption_key: Uint8Array;
@@ -166,5 +168,27 @@ type ErrorFileChunk = {
 export type FileChunkResponse = SuccessfulFileChunk_Bytes | SuccessfulFileChunk_CdnRedirect | ErrorFileChunk;
 export type { FileHash as AppFileHash }; 
 
+// Configuration for app-managed cloud channels
+export interface CloudChannelConfigEntry {
+  type: 'file' | 'folder';
+  name: string; // Original name, path is derived from structure
+  tg_message_id?: number; // For files, the Telegram message ID of the actual file
+  mime_type?: string; // For files
+  size_bytes?: number; // For files
+  created_at: string; // ISO timestamp for the entry
+  modified_at: string; // ISO timestamp for the entry
+  entries?: { [name: string]: CloudChannelConfigEntry }; // For folders
+}
 
+export interface CloudChannelConfigV1 {
+  app_signature: string; // e.g., "TELEGRAM_CLOUDIFIER_V1.0"
+  channel_title_at_creation: string;
+  created_timestamp_utc: string; // ISO timestamp for the channel creation by app
+  last_updated_timestamp_utc: string; // ISO timestamp for last config update
+  root_entries: { // Represents the root "/"
+    [name: string]: CloudChannelConfigEntry;
+  };
+}
+
+export type CloudChannelType = 'channel' | 'supergroup';
     

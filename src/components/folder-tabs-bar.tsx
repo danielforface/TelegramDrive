@@ -6,7 +6,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Loader2, ListFilter, Edit3, Share2, PlusSquare, Check, GripVertical } from "lucide-react";
+import { Loader2, ListFilter, Edit3, Share2, PlusSquare, Check, GripVertical, CloudCog } from "lucide-react"; // Added CloudCog
 import { cn } from "@/lib/utils";
 import React from "react";
 
@@ -20,6 +20,7 @@ interface FolderTabsBarProps {
   onMoveFilter: (dragIndex: number, hoverIndex: number) => void;
   onShareFilter: (filterId: number) => void;
   onAddFilterPlaceholder: () => void;
+  onOpenCreateCloudChannelDialog: () => void; // New prop
   className?: string;
 }
 
@@ -35,6 +36,7 @@ export function FolderTabsBar({
   onMoveFilter,
   onShareFilter,
   onAddFilterPlaceholder,
+  onOpenCreateCloudChannelDialog, // Destructure new prop
   className,
 }: FolderTabsBarProps) {
 
@@ -117,11 +119,10 @@ export function FolderTabsBar({
                 <div
                   key={filter.id}
                   className={cn(
-                    "flex items-center rounded-md", // Grouping div for tab trigger and share button
+                    "flex items-center rounded-md", 
                     isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && "tab-shake cursor-move",
                     isReorderingMode && filter.id === ALL_CHATS_FILTER_ID && "cursor-not-allowed opacity-70",
                     draggedItemIndex === index && "opacity-50 border-2 border-dashed border-primary",
-                     // Apply active styles to this wrapper if needed, or rely on TabsTrigger's internal styling
                     activeFilterId === filter.id && !isReorderingMode && "bg-primary/10"
                   )}
                   draggable={isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID}
@@ -133,13 +134,11 @@ export function FolderTabsBar({
                   <TooltipProvider delayDuration={100}>
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        {/* TabsTrigger is now simpler, only contains tab title and icon */}
                         <TabsTrigger
                           value={filter.id.toString()}
                           disabled={isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && draggedItemIndex === index}
                           className={cn(
                             "h-10 relative px-2 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-sm hover:bg-muted/50 flex items-center gap-1.5",
-                            // Removed tab-shake from here as it's on parent
                             activeFilterId === filter.id && !isReorderingMode ? "data-[state=active]:bg-transparent data-[state=active]:shadow-none" : "data-[state=active]:bg-primary/10"
                           )}
                         >
@@ -156,7 +155,6 @@ export function FolderTabsBar({
                     </Tooltip>
                   </TooltipProvider>
 
-                  {/* Share Button - Placed as a sibling to TabsTrigger within the flex container */}
                   {!isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && (
                     <TooltipProvider delayDuration={100}>
                         <Tooltip>
@@ -164,9 +162,9 @@ export function FolderTabsBar({
                                 <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-7 w-7 hover:bg-accent/50 opacity-60 hover:opacity-100 ml-0.5 mr-1 flex-shrink-0" // Adjusted margin
+                                className="h-7 w-7 hover:bg-accent/50 opacity-60 hover:opacity-100 ml-0.5 mr-1 flex-shrink-0"
                                 onClick={(e: React.MouseEvent) => {
-                                    e.stopPropagation(); // Stop propagation to prevent tab activation
+                                    e.stopPropagation(); 
                                     onShareFilter(filter.id);
                                 }}
                                 disabled={filter.isLoading}
@@ -188,10 +186,28 @@ export function FolderTabsBar({
           <ScrollBar orientation="horizontal" className="h-2"/>
         </ScrollArea>
         <div className="flex items-center pl-2 space-x-1 flex-shrink-0">
-          <Button variant="ghost" size="icon" className="h-9 w-9" onClick={onAddFilterPlaceholder} title="Add Folder">
-            <PlusSquare className="h-5 w-5" />
-             <span className="sr-only">Add Folder</span>
-          </Button>
+          <TooltipProvider delayDuration={100}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-9 w-9" onClick={onOpenCreateCloudChannelDialog} title="New Cloud Storage">
+                  <CloudCog className="h-5 w-5" />
+                  <span className="sr-only">New Cloud Storage</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>New Cloud Storage</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+          <TooltipProvider delayDuration={100}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-9 w-9" onClick={onAddFilterPlaceholder} title="Add Folder (Filter)">
+                  <PlusSquare className="h-5 w-5" />
+                  <span className="sr-only">Add Folder (Filter)</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Add Folder (Filter)</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
           <Button variant="outline" size="sm" onClick={onToggleReorderMode} className="h-9">
             {isReorderingMode ? <Check className="mr-1.5 h-4 w-4" /> : <Edit3 className="mr-1.5 h-4 w-4" />}
             {isReorderingMode ? "Done" : "Reorder"}
@@ -201,5 +217,4 @@ export function FolderTabsBar({
     </div>
   );
 }
-
     
