@@ -6,9 +6,11 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Loader2, ListFilter, Edit3, Share2, PlusSquare, Check, GripVertical, CloudCog } from "lucide-react"; // Added CloudCog
+import { Loader2, ListFilter, Edit3, Share2, PlusSquare, Check, GripVertical, CloudCog, Cloud } from "lucide-react";
 import { cn } from "@/lib/utils";
 import React from "react";
+import { ALL_CHATS_FILTER_ID, CLOUD_STORAGE_FILTER_ID } from "@/services/telegramService";
+
 
 interface FolderTabsBarProps {
   filters: DialogFilter[];
@@ -20,11 +22,10 @@ interface FolderTabsBarProps {
   onMoveFilter: (dragIndex: number, hoverIndex: number) => void;
   onShareFilter: (filterId: number) => void;
   onAddFilterPlaceholder: () => void;
-  onOpenCreateCloudChannelDialog: () => void; // New prop
+  onOpenCreateCloudChannelDialog: () => void;
   className?: string;
 }
 
-const ALL_CHATS_FILTER_ID = 0;
 
 export function FolderTabsBar({
   filters,
@@ -36,11 +37,11 @@ export function FolderTabsBar({
   onMoveFilter,
   onShareFilter,
   onAddFilterPlaceholder,
-  onOpenCreateCloudChannelDialog, // Destructure new prop
+  onOpenCreateCloudChannelDialog,
   className,
 }: FolderTabsBarProps) {
 
-  if (isLoading && filters.length <= 1) {
+  if (isLoading && filters.length === 0) { // Changed condition slightly
     return (
       <div className={cn("flex items-center justify-center h-14 border-b px-4 bg-background shadow-sm", className)}>
         <Loader2 className="h-5 w-5 animate-spin text-primary" />
@@ -50,18 +51,20 @@ export function FolderTabsBar({
   }
 
   const displayFilters = [...filters];
+  // Ensure "All Chats" is present if not already
   if (!displayFilters.some(f => f.id === ALL_CHATS_FILTER_ID)) {
       const allChatsDefault: DialogFilter = {
           _:'dialogFilterDefault',
           id: ALL_CHATS_FILTER_ID,
           title: "All Chats",
           flags:0,
-          pinned_peers: [],
-          include_peers: [],
-          exclude_peers: []
+          pinned_peers: [], include_peers: [], exclude_peers: []
       };
       displayFilters.unshift(allChatsDefault);
   }
+  // Ensure "Cloud Storage" is present if not already, and has a unique ID
+  // This is now handled in page.tsx by adding it to dialogFilters directly.
+
 
   const currentTabValue = (activeFilterId !== null && displayFilters.some(f => f.id === activeFilterId))
                           ? activeFilterId.toString()
@@ -70,7 +73,7 @@ export function FolderTabsBar({
   const [draggedItemIndex, setDraggedItemIndex] = React.useState<number | null>(null);
 
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>, index: number) => {
-    if (!isReorderingMode || filters[index].id === ALL_CHATS_FILTER_ID) {
+    if (!isReorderingMode || filters[index].id === ALL_CHATS_FILTER_ID || filters[index].id === CLOUD_STORAGE_FILTER_ID) {
         e.preventDefault();
         return;
     }
@@ -85,14 +88,16 @@ export function FolderTabsBar({
 
   const handleDrop = (e: React.DragEvent<HTMLDivElement>, dropIndex: number) => {
     e.preventDefault();
-    if (!isReorderingMode || draggedItemIndex === null || (filters[dropIndex] && filters[dropIndex].id === ALL_CHATS_FILTER_ID && dropIndex === 0)) {
+    if (!isReorderingMode || draggedItemIndex === null ||
+        (filters[dropIndex] && (filters[dropIndex].id === ALL_CHATS_FILTER_ID || filters[dropIndex].id === CLOUD_STORAGE_FILTER_ID))) {
       setDraggedItemIndex(null);
       return;
     }
     const dragIndexStr = e.dataTransfer.getData('filterIndex');
     if (dragIndexStr) {
       const dragIndex = parseInt(dragIndexStr, 10);
-      if (!isNaN(dragIndex) && dragIndex !== dropIndex && (!filters[dropIndex] || filters[dropIndex].id !== ALL_CHATS_FILTER_ID)) {
+      if (!isNaN(dragIndex) && dragIndex !== dropIndex &&
+          (!filters[dropIndex] || (filters[dropIndex].id !== ALL_CHATS_FILTER_ID && filters[dropIndex].id !== CLOUD_STORAGE_FILTER_ID))) {
         onMoveFilter(dragIndex, dropIndex);
       }
     }
@@ -119,13 +124,13 @@ export function FolderTabsBar({
                 <div
                   key={filter.id}
                   className={cn(
-                    "flex items-center rounded-md", 
-                    isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && "tab-shake cursor-move",
-                    isReorderingMode && filter.id === ALL_CHATS_FILTER_ID && "cursor-not-allowed opacity-70",
+                    "flex items-center rounded-md",
+                    isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && filter.id !== CLOUD_STORAGE_FILTER_ID && "tab-shake cursor-move",
+                    isReorderingMode && (filter.id === ALL_CHATS_FILTER_ID || filter.id === CLOUD_STORAGE_FILTER_ID) && "cursor-not-allowed opacity-70",
                     draggedItemIndex === index && "opacity-50 border-2 border-dashed border-primary",
                     activeFilterId === filter.id && !isReorderingMode && "bg-primary/10"
                   )}
-                  draggable={isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID}
+                  draggable={isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && filter.id !== CLOUD_STORAGE_FILTER_ID}
                   onDragStart={(e) => handleDragStart(e, index)}
                   onDragOver={handleDragOver}
                   onDrop={(e) => handleDrop(e, index)}
@@ -136,15 +141,16 @@ export function FolderTabsBar({
                       <TooltipTrigger asChild>
                         <TabsTrigger
                           value={filter.id.toString()}
-                          disabled={isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && draggedItemIndex === index}
+                          disabled={isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && filter.id !== CLOUD_STORAGE_FILTER_ID && draggedItemIndex === index}
                           className={cn(
                             "h-10 relative px-2 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-sm hover:bg-muted/50 flex items-center gap-1.5",
                             activeFilterId === filter.id && !isReorderingMode ? "data-[state=active]:bg-transparent data-[state=active]:shadow-none" : "data-[state=active]:bg-primary/10"
                           )}
                         >
-                          {isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && <GripVertical className="h-4 w-4 mr-1 text-muted-foreground" />}
+                          {isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && filter.id !== CLOUD_STORAGE_FILTER_ID && <GripVertical className="h-4 w-4 mr-1 text-muted-foreground" />}
                           {filter.id === ALL_CHATS_FILTER_ID && !filter.emoticon && <ListFilter className="h-4 w-4" />}
-                          {filter.emoticon && <span className="text-lg">{filter.emoticon}</span>}
+                          {filter.id === CLOUD_STORAGE_FILTER_ID && <Cloud className="h-4 w-4" />}
+                          {filter.emoticon && filter.id !== CLOUD_STORAGE_FILTER_ID && <span className="text-lg">{filter.emoticon}</span>}
                           <span className="truncate max-w-[100px] sm:max-w-[180px]">{filter.title}</span>
                         </TabsTrigger>
                       </TooltipTrigger>
@@ -155,7 +161,7 @@ export function FolderTabsBar({
                     </Tooltip>
                   </TooltipProvider>
 
-                  {!isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && (
+                  {!isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && filter.id !== CLOUD_STORAGE_FILTER_ID && (
                     <TooltipProvider delayDuration={100}>
                         <Tooltip>
                             <TooltipTrigger asChild>
@@ -164,7 +170,7 @@ export function FolderTabsBar({
                                 size="icon"
                                 className="h-7 w-7 hover:bg-accent/50 opacity-60 hover:opacity-100 ml-0.5 mr-1 flex-shrink-0"
                                 onClick={(e: React.MouseEvent) => {
-                                    e.stopPropagation(); 
+                                    e.stopPropagation();
                                     onShareFilter(filter.id);
                                 }}
                                 disabled={filter.isLoading}
@@ -217,4 +223,3 @@ export function FolderTabsBar({
     </div>
   );
 }
-    
