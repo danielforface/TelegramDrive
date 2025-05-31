@@ -70,7 +70,7 @@ class API {
         updates: { on: () => {} },
         setDefaultDc: async () => Promise.reject(new Error(errorMessage)),
         clearStorage: async () => Promise.resolve(),
-        mtproto: { crypto: { getSRPParams: async () => ({ A: new Uint8Array(), M1: new Uint8Array() }) } }
+        crypto: { getSRPParams: async () => ({ A: new Uint8Array(), M1: new Uint8Array() }) }
       } as any;
       this.apiId = 0;
       this.apiHash = '';
@@ -86,6 +86,8 @@ class API {
         api_id: this.apiId,
         api_hash: this.apiHash,
       });
+      console.log('MTProto client initialized in API class. Checking for crypto.getSRPParams:',
+                  typeof this.mtproto.crypto?.getSRPParams);
       this.initialized = true;
       console.log('MTProto client initialized successfully in API class for browser environment.');
 
@@ -125,7 +127,7 @@ class API {
             updates: { on: () => {} },
             setDefaultDc: async () => Promise.reject(new Error(errorMessage)),
             clearStorage: async () => Promise.resolve(),
-            mtproto: { crypto: { getSRPParams: async () => ({ A: new Uint8Array(), M1: new Uint8Array() }) } }
+            crypto: { getSRPParams: async () => ({ A: new Uint8Array(), M1: new Uint8Array() }) }
         } as any;
         this.initialized = false;
     }
@@ -641,13 +643,13 @@ export async function getTelegramChats(
   limit: number,
   offsetDate: number = 0,
   offsetId: number = 0,
-  offsetPeer: any = { _: 'inputPeerEmpty' }
-  // folderId parameter is removed as per the new strategy
+  offsetPeer: any = { _: 'inputPeerEmpty' },
+  folderId?: number
 ): Promise<GetChatsPaginatedResponse> {
   if (!(await isUserConnected())) {
     return { folders: [], nextOffsetDate: 0, nextOffsetId: 0, nextOffsetPeer: { _: 'inputPeerEmpty' }, hasMore: false };
   }
-  console.log(`Requesting master chat list (pagination: date=${offsetDate}, id=${offsetId}). Client-side filtering will be applied based on selected folder's include_peers.`);
+  console.log(`Requesting chats with folder_id: ${folderId}, pagination: date=${offsetDate}, id=${offsetId}`);
 
   const params: any = {
       offset_date: offsetDate,
@@ -655,8 +657,11 @@ export async function getTelegramChats(
       offset_peer: offsetPeer,
       limit: limit,
       hash: 0,
-      // folder_id is NOT used here for the master chat list strategy
   };
+
+  if (folderId !== undefined && folderId !== ALL_CHATS_FILTER_ID) {
+    params.folder_id = folderId;
+  }
 
   try {
     const dialogsResult = await api.call('messages.getDialogs', params);
@@ -677,28 +682,42 @@ export async function getTelegramChats(
           if (lastMessageInDialogs) {
               newOffsetId = lastMessageInDialogs.id;
               newOffsetDate = lastMessageInDialogs.date;
-              newOffsetPeerInput = lastDialog.peer;
+              // Ensure newOffsetPeerInput is a valid InputPeer structure
+              if (lastDialog.peer && lastDialog.peer._) {
+                newOffsetPeerInput = lastDialog.peer;
+              } else {
+                console.warn("Last dialog peer is invalid, using inputPeerEmpty for next offset peer", lastDialog.peer);
+                newOffsetPeerInput = { _: 'inputPeerEmpty' };
+              }
           } else if (dialogsResult.messages.length > 0) {
               const lastMessageOverall = dialogsResult.messages[dialogsResult.messages.length - 1];
               newOffsetId = lastMessageOverall.id;
               newOffsetDate = lastMessageOverall.date;
-              if (lastMessageOverall.peer_id) {
-                 if (lastMessageOverall.peer_id._ && (lastMessageOverall.peer_id._ === 'inputPeerUser' || lastMessageOverall.peer_id._ === 'inputPeerChat' || lastMessageOverall.peer_id._ === 'inputPeerChannel')) {
-                    newOffsetPeerInput = lastMessageOverall.peer_id;
-                 } else {
-                    const correspondingDialog = dialogsResult.dialogs.find((d:any) => String(d.top_message) === String(lastMessageOverall.id));
-                    newOffsetPeerInput = correspondingDialog ? correspondingDialog.peer : { _: 'inputPeerEmpty' };
-                 }
+              if (lastMessageOverall.peer_id && lastMessageOverall.peer_id._) {
+                 newOffsetPeerInput = lastMessageOverall.peer_id;
               } else {
-                 newOffsetPeerInput = { _: 'inputPeerEmpty' };
+                 const correspondingDialog = dialogsResult.dialogs.find((d:any) => String(d.top_message) === String(lastMessageOverall.id));
+                 if (correspondingDialog && correspondingDialog.peer && correspondingDialog.peer._) {
+                    newOffsetPeerInput = correspondingDialog.peer;
+                 } else {
+                    console.warn("Could not determine offset peer from last message or corresponding dialog. Using inputPeerEmpty.");
+                    newOffsetPeerInput = { _: 'inputPeerEmpty' };
+                 }
               }
           }
       } else {
-          hasMore = false;
+          hasMore = false; // No dialogs means no more, even if messages were returned (e.g. service messages)
       }
     } else {
-        hasMore = false;
+        hasMore = false; // No messages means no more
     }
+    
+    // Safety check for newOffsetPeerInput
+    if (!newOffsetPeerInput || !newOffsetPeerInput._) {
+        console.warn("Final newOffsetPeerInput is invalid, defaulting to inputPeerEmpty. Original:", newOffsetPeerInput);
+        newOffsetPeerInput = { _: 'inputPeerEmpty' };
+    }
+
 
     return {
       folders: transformedFolders,
@@ -1007,7 +1026,7 @@ export async function refreshFileReference(item: DownloadQueueItemType): Promise
   try {
     const messagesResult = await api.call('messages.getMessages', {
        id: [ { _: 'inputMessageID', id: item.messageId } ],
-       peer: item.inputPeer
+       // peer: item.inputPeer // Peer is not needed for messages.getMessages by ID
     });
 
     let foundMessage = null;
@@ -1264,12 +1283,16 @@ export async function updateDialogFilter(
     }
 
     params.filter = telegramFilter;
-    if (filterIdToUpdate === null) {
-        delete params.id;
+    if (filterIdToUpdate === null) { // This means it's a create operation
+        delete params.id; // For creating a new filter, ID should not be in top-level params
     }
 
-  } else if (filterIdToUpdate !== null) {
-    params.id = filterIdToUpdate;
+  } else if (filterIdToUpdate !== null) { // This means it's a delete operation (no filterData provided)
+    // No specific flags or filter object needed, just the ID for deletion
+    // The `messages.updateDialogFilter` without `flags` bit 0 set and without `filter` param implies deletion if ID is present.
+    // However, to be explicit or if API requires it, one might need to pass filter:null or specific flag.
+    // For now, assuming just ID is enough for deletion if no filter object is passed.
+    // Let's ensure `flags` isn't set to (1 << 0) if we are deleting
   } else {
     console.error("updateDialogFilter: Invalid call. Must provide filterId for delete, or filterData for create/update.");
     return false;
@@ -1291,3 +1314,4 @@ if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
   (window as any).telegramServiceApi = api;
   (window as any).telegramUserSession = userSession;
 }
+
