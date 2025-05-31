@@ -12,7 +12,7 @@ export { formatFileSize };
 const API_ID_STRING = process.env.NEXT_PUBLIC_TELEGRAM_API_ID;
 const API_HASH = process.env.NEXT_PUBLIC_TELEGRAM_API_HASH;
 const CRITICAL_ERROR_MESSAGE_PREFIX = "CRITICAL_TELEGRAM_API_ERROR: ";
-const ALL_CHATS_FILTER_ID = 0;
+export const ALL_CHATS_FILTER_ID = 0; // Export this constant
 export const CLOUD_STORAGE_FILTER_ID = -100; // Special ID for our cloud storage tab
 const CLOUDIFIER_APP_SIGNATURE_V1 = "TELEGRAM_CLOUDIFIER_V1.0";
 const MANAGED_CLOUD_CHANNEL_IDS_KEY = 'managed_cloud_channel_ids';
@@ -1584,3 +1584,5 @@ if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
   (window as any).telegramServiceApi = api;
   (window as any).telegramUserSession = userSession;
 }
+
+    

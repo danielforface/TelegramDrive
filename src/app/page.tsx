@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { RefreshCw, Loader2, LayoutPanelLeft, MessageSquare } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import * as telegramService from "@/services/telegramService";
-import { CLOUD_STORAGE_FILTER_ID } from "@/services/telegramService";
+import { CLOUD_STORAGE_FILTER_ID, ALL_CHATS_FILTER_ID } from "@/services/telegramService";
 
 
 const INITIAL_MASTER_CHATS_LOAD_LIMIT = 30;
@@ -30,7 +30,7 @@ const SUBSEQUENT_MEDIA_LOAD_LIMIT = 20;
 const DOWNLOAD_CHUNK_SIZE = 512 * 1024;
 const KB_1 = 1024;
 const ONE_MB = 1024 * 1024;
-const ALL_CHATS_FILTER_ID = 0;
+
 
 type AuthStep = 'initial' | 'awaiting_code' | 'awaiting_password';
 
@@ -1315,9 +1315,8 @@ export default function Home() {
   useEffect(() => {
     let newFilter: DialogFilter | null = dialogFilters.find(f => f.id === activeDialogFilterId) || null;
     if (!newFilter && dialogFilters.length > 0) {
-        // If activeDialogFilterId doesn't match any, default to All Chats or first available
         newFilter = dialogFilters.find(f => f.id === ALL_CHATS_FILTER_ID) || dialogFilters[0];
-        if(newFilter) setActiveDialogFilterId(newFilter.id); // Sync active ID if it was invalid
+        if(newFilter) setActiveDialogFilterId(newFilter.id); 
     }
 
 
@@ -1327,72 +1326,68 @@ export default function Home() {
         setActiveFilterDetails(newFilter);
       }
     } else if (activeFilterDetails !== null && dialogFilters.length === 0 && !isLoadingDialogFilters) {
-      // This case handles when all filters are gone (e.g. after some error or reset)
       setActiveFilterDetails(null);
     }
   }, [activeDialogFilterId, dialogFilters, isLoadingDialogFilters, activeFilterDetails]);
 
 
   useEffect(() => {
-    const filterIdToFetch = activeFilterDetails?.id;
+    if (!isConnected || !activeFilterDetails || isLoadingDialogFilters) return;
 
-    if (isConnected && activeFilterDetails && !isLoadingDialogFilters && filterIdToFetch !== undefined) {
-      const isNewFilter = lastFetchedFilterId !== filterIdToFetch;
-      let isCurrentFilterListEmptyAndNeedsLoad = false;
+    const filterIdToFetch = activeFilterDetails.id;
+    const isNewFilter = lastFetchedFilterId !== filterIdToFetch;
+    let isCurrentFilterListEmptyAndNeedsLoad = false;
 
-      if (filterIdToFetch === CLOUD_STORAGE_FILTER_ID) {
-         isCurrentFilterListEmptyAndNeedsLoad = appManagedCloudFolders.length === 0 && !isLoadingAppManagedCloudFolders;
-      } else {
-        const cachedEntryForCurrent = chatDataCache.get(filterIdToFetch);
-        const cachedEntryForAllChats = chatDataCache.get(ALL_CHATS_FILTER_ID);
+    if (filterIdToFetch === CLOUD_STORAGE_FILTER_ID) {
+       isCurrentFilterListEmptyAndNeedsLoad = appManagedCloudFolders.length === 0 && !isLoadingAppManagedCloudFolders;
+    } else {
+      const cachedEntryForCurrent = chatDataCache.get(filterIdToFetch);
+      const cachedEntryForAllChats = chatDataCache.get(ALL_CHATS_FILTER_ID);
 
-        if (activeFilterDetails._ === 'dialogFilterDefault') {
-            isCurrentFilterListEmptyAndNeedsLoad = (!cachedEntryForAllChats || cachedEntryForAllChats.folders.length === 0) &&
-                                                 (!cachedEntryForAllChats || cachedEntryForAllChats.pagination.hasMore) &&
-                                                 !cachedEntryForAllChats?.isLoading;
-        } else if (activeFilterDetails._ === 'dialogFilterChatlist' || (activeFilterDetails._ === 'dialogFilter' && cachedEntryForCurrent?.error === 'FOLDER_ID_INVALID_FALLBACK')) {
-            isCurrentFilterListEmptyAndNeedsLoad = (!cachedEntryForAllChats || cachedEntryForAllChats.folders.length === 0) &&
-                                                 masterChatListPaginationForFiltering.hasMore &&
-                                                 !cachedEntryForAllChats?.isLoading;
-        } else if (activeFilterDetails._ === 'dialogFilter') {
-             isCurrentFilterListEmptyAndNeedsLoad = (!cachedEntryForCurrent || cachedEntryForCurrent.folders.length === 0) &&
-                                                 (!cachedEntryForCurrent || cachedEntryForCurrent.pagination.hasMore) &&
-                                                 !cachedEntryForCurrent?.isLoading;
+      if (activeFilterDetails._ === 'dialogFilterDefault') {
+          isCurrentFilterListEmptyAndNeedsLoad = (!cachedEntryForAllChats || cachedEntryForAllChats.folders.length === 0) &&
+                                               (!cachedEntryForAllChats || cachedEntryForAllChats.pagination.hasMore) &&
+                                               !cachedEntryForAllChats?.isLoading;
+      } else if (activeFilterDetails._ === 'dialogFilterChatlist' || (activeFilterDetails._ === 'dialogFilter' && cachedEntryForCurrent?.error === 'FOLDER_ID_INVALID_FALLBACK')) {
+          isCurrentFilterListEmptyAndNeedsLoad = (!cachedEntryForAllChats || cachedEntryForAllChats.folders.length === 0) &&
+                                               masterChatListPaginationForFiltering.hasMore &&
+                                               !cachedEntryForAllChats?.isLoading;
+      } else if (activeFilterDetails._ === 'dialogFilter') {
+           isCurrentFilterListEmptyAndNeedsLoad = (!cachedEntryForCurrent || cachedEntryForCurrent.folders.length === 0) &&
+                                               (!cachedEntryForCurrent || cachedEntryForCurrent.pagination.hasMore) &&
+                                               !cachedEntryForCurrent?.isLoading;
+      }
+    }
+
+    if (isNewFilter || isCurrentFilterListEmptyAndNeedsLoad) {
+        console.log(`useEffect for fetch: Conditions met for filter ID ${filterIdToFetch} ('${activeFilterDetails.title}'). Preparing to fetch data. NewFilter: ${isNewFilter}, EmptyAndNeedsLoad: ${isCurrentFilterListEmptyAndNeedsLoad}, LastFetched: ${lastFetchedFilterId}`);
+        setLastFetchedFilterId(filterIdToFetch);
+
+        setSelectedFolder(null);
+        setCurrentChatMedia([]);
+        setDisplayedChats([]);
+        setCurrentErrorMessage(null);
+
+        if (isNewFilter) {
+            if (filterIdToFetch === CLOUD_STORAGE_FILTER_ID) {
+                setAppManagedCloudFolders([]);
+            } else if (activeFilterDetails._ === 'dialogFilterDefault') {
+                if (!chatDataCache.has(ALL_CHATS_FILTER_ID) || chatDataCache.get(ALL_CHATS_FILTER_ID)?.folders.length === 0) {
+                  setMasterChatListForFiltering([]);
+                  setMasterChatListPaginationForFiltering(initialPaginationState);
+                }
+            } else if (activeFilterDetails._ === 'dialogFilter' && chatDataCache.get(filterIdToFetch)?.error !== 'FOLDER_ID_INVALID_FALLBACK') {
+               if (!chatDataCache.has(filterIdToFetch) || chatDataCache.get(filterIdToFetch)?.folders.length === 0) {
+                  setChatDataCache(prev => new Map(prev).set(filterIdToFetch, { folders: [], pagination: initialPaginationState, isLoading: false, error: null}));
+               }
+            }
         }
-      }
-
-
-      if (isNewFilter || isCurrentFilterListEmptyAndNeedsLoad) {
-          console.log(`useEffect for fetch: Conditions met for filter ID ${filterIdToFetch} ('${activeFilterDetails.title}'). Preparing to fetch data. NewFilter: ${isNewFilter}, EmptyAndNeedsLoad: ${isCurrentFilterListEmptyAndNeedsLoad}, LastFetched: ${lastFetchedFilterId}`);
-          setLastFetchedFilterId(filterIdToFetch);
-
-          setSelectedFolder(null);
-          setCurrentChatMedia([]);
-          setDisplayedChats([]);
-          setCurrentErrorMessage(null);
-
-          if (isNewFilter) {
-              if (filterIdToFetch === CLOUD_STORAGE_FILTER_ID) {
-                  setAppManagedCloudFolders([]); // Clear before fetching cloud channels
-              } else if (activeFilterDetails._ === 'dialogFilterDefault') {
-                  if (!chatDataCache.has(ALL_CHATS_FILTER_ID) || chatDataCache.get(ALL_CHATS_FILTER_ID)?.folders.length === 0) {
-                    setMasterChatListForFiltering([]);
-                    setMasterChatListPaginationForFiltering(initialPaginationState);
-                  }
-              } else if (activeFilterDetails._ === 'dialogFilter' && chatDataCache.get(filterIdToFetch)?.error !== 'FOLDER_ID_INVALID_FALLBACK') {
-                 if (!chatDataCache.has(filterIdToFetch) || chatDataCache.get(filterIdToFetch)?.folders.length === 0) {
-                    setChatDataCache(prev => new Map(prev).set(filterIdToFetch, { folders: [], pagination: initialPaginationState, isLoading: false, error: null}));
-                 }
-              }
-          }
-          fetchDataForActiveFilter(false);
-      }
+        fetchDataForActiveFilter(false);
     }
   }, [
       isConnected, activeFilterDetails, isLoadingDialogFilters, lastFetchedFilterId,
-      chatDataCache, fetchDataForActiveFilter,
-      masterChatListForFiltering.length, masterChatListPaginationForFiltering.hasMore,
-      appManagedCloudFolders.length, isLoadingAppManagedCloudFolders // Add cloud folder states
+      chatDataCache, masterChatListForFiltering.length, masterChatListPaginationForFiltering.hasMore,
+      appManagedCloudFolders.length, isLoadingAppManagedCloudFolders, fetchDataForActiveFilter
   ]);
 
 
@@ -1412,7 +1407,7 @@ export default function Home() {
 
     if (currentFilterId === CLOUD_STORAGE_FILTER_ID) {
         setDisplayedChats(appManagedCloudFolders);
-        setHasMoreDisplayedChats(false); // No pagination for cloud channels list for now
+        setHasMoreDisplayedChats(false); 
         setIsLoadingDisplayedChats(isLoadingAppManagedCloudFolders);
         if (appManagedCloudFolders.length === 0 && !isLoadingAppManagedCloudFolders) {
             setCurrentErrorMessage("No Cloud Storage channels found or created yet.");
@@ -1481,7 +1476,7 @@ export default function Home() {
     }
   }, [
       isConnected, activeFilterDetails, chatDataCache, peerToKey, isConnecting, isLoadingDialogFilters,
-      appManagedCloudFolders, isLoadingAppManagedCloudFolders // Added dependencies for cloud storage tab
+      appManagedCloudFolders, isLoadingAppManagedCloudFolders
   ]);
 
 
@@ -2015,3 +2010,5 @@ export default function Home() {
     </div>
   );
 }
+
+    
