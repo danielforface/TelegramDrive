@@ -123,6 +123,82 @@ export default function Home() {
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState<string | null>(null);
 
+
+  const handleReset = useCallback(async (performServerLogout = true) => {
+    const currentIsConnected = isConnected; 
+    setIsProcessingMasterChats(false); 
+
+    if (performServerLogout && currentIsConnected) {
+        toast({ title: "Disconnecting...", description: "Logging out from Telegram." });
+        try {
+            await telegramService.signOut();
+            toast({ title: "Disconnected", description: "Successfully signed out." });
+        } catch (error: any) {
+            if(!(error.message && error.message.includes('AUTH_KEY_UNREGISTERED'))){
+                 toast({ title: "Disconnection Error", description: error.message || "Could not sign out properly from server.", variant: "destructive" });
+            }
+        }
+    }
+
+    setIsConnected(false);
+    setMasterChatList([]);
+    setDisplayedChats([]);
+    setSelectedFolder(null);
+    setCurrentChatMedia([]);
+    setIsConnecting(false); 
+    setAuthStep('initial');
+    setPhoneNumber('');
+    setPhoneCode('');
+    setPassword('');
+    setAuthError(null);
+
+    isLoadingMoreMasterChatsRequestInFlightRef.current = false;
+    setIsLoadingMoreMasterChats(false);
+    setHasMoreMasterChats(true);
+    setMasterChatsOffsetDate(0);
+    setMasterChatsOffsetId(0);
+    setMasterChatsOffsetPeer({ _: 'inputPeerEmpty' });
+
+    setIsLoadingChatMedia(false);
+    setHasMoreChatMedia(true);
+    setCurrentMediaOffsetId(0);
+    
+    const defaultFilters: DialogFilter[] = [{ _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, pinned_peers: [], include_peers: [], exclude_peers: [] }];
+    setDialogFilters(defaultFilters);
+    setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
+    setIsLoadingDialogFilters(true); 
+
+    downloadQueueRef.current.forEach(item => {
+      if (item.abortController && !item.abortController.signal.aborted) {
+        item.abortController.abort("User reset application state");
+      }
+    });
+    setDownloadQueue([]);
+    activeDownloadsRef.current.clear();
+    browserDownloadTriggeredRef.current.clear();
+
+    if (videoStreamAbortControllerRef.current && !videoStreamAbortControllerRef.current.signal.aborted) {
+        videoStreamAbortControllerRef.current.abort("User reset application state");
+    }
+    if (videoStreamUrl) {
+        URL.revokeObjectURL(videoStreamUrl);
+        setVideoStreamUrl(null);
+    }
+    setPlayingVideoUrl(null);
+    setIsPreparingVideoStream(false);
+    setPreparingVideoStreamForFileId(null);
+
+    setIsChatSelectionDialogOpen(false);
+    setIsUploadDialogOpen(false);
+    setFilesToUpload([]);
+    uploadAbortControllersRef.current.forEach((controller) => {
+      if (!controller.signal.aborted) controller.abort("User reset application state");
+    });
+    uploadAbortControllersRef.current.clear();
+    setIsUploadingFiles(false);
+  }, [isConnected, toast, videoStreamUrl]);
+
+
   const handleApiError = useCallback((error: any, title: string, defaultMessage: string) => {
     console.error(`${title} (handleApiError):`, error.message, error.originalErrorObject || error);
     let description = error.message || defaultMessage;
@@ -140,7 +216,7 @@ export default function Home() {
         setAuthError(description); 
         toast({ title, description, variant: "destructive", duration: 5000 });
     }
-  }, [toast]); // Removed handleReset from dependencies to avoid potential loops
+  }, [toast, handleReset]); 
 
   const fetchDialogFilters = useCallback(async () => {
     setIsLoadingDialogFilters(true);
@@ -202,7 +278,7 @@ export default function Home() {
       console.log("fetchDialogFilters: Setting isLoadingDialogFilters to false.");
       setIsLoadingDialogFilters(false);
     }
-  }, [handleApiError, activeDialogFilterId]); 
+  }, [handleApiError]); 
 
 
   const fetchInitialMasterChatList = useCallback(async () => {
@@ -325,80 +401,6 @@ export default function Home() {
     }
   }, [toast, handleApiError, fetchDialogFilters]);  
 
-
-  const handleReset = useCallback(async (performServerLogout = true) => {
-    const currentIsConnected = isConnected; 
-    setIsProcessingMasterChats(false); 
-
-    if (performServerLogout && currentIsConnected) {
-        toast({ title: "Disconnecting...", description: "Logging out from Telegram." });
-        try {
-            await telegramService.signOut();
-            toast({ title: "Disconnected", description: "Successfully signed out." });
-        } catch (error: any) {
-            if(!(error.message && error.message.includes('AUTH_KEY_UNREGISTERED'))){
-                 toast({ title: "Disconnection Error", description: error.message || "Could not sign out properly from server.", variant: "destructive" });
-            }
-        }
-    }
-
-    setIsConnected(false);
-    setMasterChatList([]);
-    setDisplayedChats([]);
-    setSelectedFolder(null);
-    setCurrentChatMedia([]);
-    setIsConnecting(false); 
-    setAuthStep('initial');
-    setPhoneNumber('');
-    setPhoneCode('');
-    setPassword('');
-    setAuthError(null);
-
-    isLoadingMoreMasterChatsRequestInFlightRef.current = false;
-    setIsLoadingMoreMasterChats(false);
-    setHasMoreMasterChats(true);
-    setMasterChatsOffsetDate(0);
-    setMasterChatsOffsetId(0);
-    setMasterChatsOffsetPeer({ _: 'inputPeerEmpty' });
-
-    setIsLoadingChatMedia(false);
-    setHasMoreChatMedia(true);
-    setCurrentMediaOffsetId(0);
-    
-    const defaultFilters: DialogFilter[] = [{ _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, pinned_peers: [], include_peers: [], exclude_peers: [] }];
-    setDialogFilters(defaultFilters);
-    setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
-    setIsLoadingDialogFilters(true); 
-
-    downloadQueueRef.current.forEach(item => {
-      if (item.abortController && !item.abortController.signal.aborted) {
-        item.abortController.abort("User reset application state");
-      }
-    });
-    setDownloadQueue([]);
-    activeDownloadsRef.current.clear();
-    browserDownloadTriggeredRef.current.clear();
-
-    if (videoStreamAbortControllerRef.current && !videoStreamAbortControllerRef.current.signal.aborted) {
-        videoStreamAbortControllerRef.current.abort("User reset application state");
-    }
-    if (videoStreamUrl) {
-        URL.revokeObjectURL(videoStreamUrl);
-        setVideoStreamUrl(null);
-    }
-    setPlayingVideoUrl(null);
-    setIsPreparingVideoStream(false);
-    setPreparingVideoStreamForFileId(null);
-
-    setIsChatSelectionDialogOpen(false);
-    setIsUploadDialogOpen(false);
-    setFilesToUpload([]);
-    uploadAbortControllersRef.current.forEach((controller) => {
-      if (!controller.signal.aborted) controller.abort("User reset application state");
-    });
-    uploadAbortControllersRef.current.clear();
-    setIsUploadingFiles(false);
-  }, [isConnected, toast, videoStreamUrl]);
 
 
   useEffect(() => {
@@ -1607,5 +1609,7 @@ const handleStartUpload = async () => {
     </div>
   );
 }
+
+    
 
     
