@@ -67,7 +67,7 @@ export function FolderTabsBar({
 
   const [draggedItemIndex, setDraggedItemIndex] = React.useState<number | null>(null);
 
-  const handleDragStart = (e: React.DragEvent<HTMLButtonElement>, index: number) => {
+  const handleDragStart = (e: React.DragEvent<HTMLDivElement>, index: number) => {
     if (!isReorderingMode || filters[index].id === ALL_CHATS_FILTER_ID) {
         e.preventDefault();
         return;
@@ -76,12 +76,12 @@ export function FolderTabsBar({
     setDraggedItemIndex(index);
   };
 
-  const handleDragOver = (e: React.DragEvent<HTMLButtonElement>) => {
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     if (!isReorderingMode || draggedItemIndex === null) return;
   };
 
-  const handleDrop = (e: React.DragEvent<HTMLButtonElement>, dropIndex: number) => {
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>, dropIndex: number) => {
     e.preventDefault();
     if (!isReorderingMode || draggedItemIndex === null || (filters[dropIndex] && filters[dropIndex].id === ALL_CHATS_FILTER_ID && dropIndex === 0)) {
       setDraggedItemIndex(null);
@@ -114,67 +114,74 @@ export function FolderTabsBar({
           >
             <TabsList className="h-12 rounded-none border-none bg-transparent p-0 gap-0 sm:gap-1">
               {displayFilters.map((filter, index) => (
-                <TooltipProvider key={filter.id} delayDuration={100}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <TabsTrigger
-                        value={filter.id.toString()}
-                        disabled={isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && draggedItemIndex === index}
-                        draggable={isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID}
-                        onDragStart={(e) => handleDragStart(e, index)}
-                        onDragOver={handleDragOver}
-                        onDrop={(e) => handleDrop(e, index)}
-                        onDragEnd={() => setDraggedItemIndex(null)}
-                        className={cn(
-                          "h-10 relative rounded-md px-2 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-sm hover:bg-muted/50 flex items-center gap-1.5",
-                          isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && "tab-shake cursor-move",
-                          isReorderingMode && filter.id === ALL_CHATS_FILTER_ID && "cursor-not-allowed opacity-70",
-                          draggedItemIndex === index && "opacity-50 border-2 border-dashed border-primary"
-                        )}
-                      >
-                        {isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && <GripVertical className="h-4 w-4 mr-1 text-muted-foreground" />}
-                        {filter.id === ALL_CHATS_FILTER_ID && !filter.emoticon && <ListFilter className="h-4 w-4" />}
-                        {filter.emoticon && <span className="text-lg">{filter.emoticon}</span>}
-                        <span className="truncate max-w-[120px] sm:max-w-xs">{filter.title}</span>
-                        {!isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && (
-                           <div
-                             className="ml-1 p-0"
-                             onClick={(e: React.MouseEvent) => {
-                                e.stopPropagation();
-                                e.preventDefault();
-                             }}
-                             onKeyDown={(e: React.KeyboardEvent) => {
-                                if (e.key === 'Enter' || e.key === ' ') {
-                                   e.stopPropagation();
-                                   e.preventDefault();
-                                } else {
-                                   e.stopPropagation();
-                                }
-                             }}
-                           >
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-6 w-6 hover:bg-accent/50 opacity-60 hover:opacity-100"
-                              onClick={(e: React.MouseEvent) => {
-                                e.stopPropagation(); // Stop propagation from the button itself too
-                                onShareFilter(filter.id);
-                              }}
-                              disabled={filter.isLoading}
-                              aria-label={`Share folder ${filter.title}`}
-                            >
-                              {filter.isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Share2 className="h-3 w-3" />}
-                            </Button>
-                          </div>
-                        )}
-                      </TabsTrigger>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>{filter.title}</p>
-                      {filter.inviteLink && <p className="text-xs text-muted-foreground">Link: {filter.inviteLink}</p>}
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
+                <div
+                  key={filter.id}
+                  className={cn(
+                    "flex items-center rounded-md", // Grouping div for tab trigger and share button
+                    isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && "tab-shake cursor-move",
+                    isReorderingMode && filter.id === ALL_CHATS_FILTER_ID && "cursor-not-allowed opacity-70",
+                    draggedItemIndex === index && "opacity-50 border-2 border-dashed border-primary",
+                     // Apply active styles to this wrapper if needed, or rely on TabsTrigger's internal styling
+                    activeFilterId === filter.id && !isReorderingMode && "bg-primary/10"
+                  )}
+                  draggable={isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID}
+                  onDragStart={(e) => handleDragStart(e, index)}
+                  onDragOver={handleDragOver}
+                  onDrop={(e) => handleDrop(e, index)}
+                  onDragEnd={() => setDraggedItemIndex(null)}
+                >
+                  <TooltipProvider delayDuration={100}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        {/* TabsTrigger is now simpler, only contains tab title and icon */}
+                        <TabsTrigger
+                          value={filter.id.toString()}
+                          disabled={isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && draggedItemIndex === index}
+                          className={cn(
+                            "h-10 relative px-2 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-sm hover:bg-muted/50 flex items-center gap-1.5",
+                            // Removed tab-shake from here as it's on parent
+                            activeFilterId === filter.id && !isReorderingMode ? "data-[state=active]:bg-transparent data-[state=active]:shadow-none" : "data-[state=active]:bg-primary/10"
+                          )}
+                        >
+                          {isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && <GripVertical className="h-4 w-4 mr-1 text-muted-foreground" />}
+                          {filter.id === ALL_CHATS_FILTER_ID && !filter.emoticon && <ListFilter className="h-4 w-4" />}
+                          {filter.emoticon && <span className="text-lg">{filter.emoticon}</span>}
+                          <span className="truncate max-w-[100px] sm:max-w-[180px]">{filter.title}</span>
+                        </TabsTrigger>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>{filter.title}</p>
+                        {filter.inviteLink && <p className="text-xs text-muted-foreground">Link: {filter.inviteLink}</p>}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+
+                  {/* Share Button - Placed as a sibling to TabsTrigger within the flex container */}
+                  {!isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && (
+                    <TooltipProvider delayDuration={100}>
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 hover:bg-accent/50 opacity-60 hover:opacity-100 ml-0.5 mr-1 flex-shrink-0" // Adjusted margin
+                                onClick={(e: React.MouseEvent) => {
+                                    e.stopPropagation(); // Stop propagation to prevent tab activation
+                                    onShareFilter(filter.id);
+                                }}
+                                disabled={filter.isLoading}
+                                aria-label={`Share folder ${filter.title}`}
+                                >
+                                {filter.isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Share2 className="h-3 w-3" />}
+                                </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                                Share Folder
+                            </TooltipContent>
+                        </Tooltip>
+                    </TooltipProvider>
+                  )}
+                </div>
               ))}
             </TabsList>
           </Tabs>
@@ -194,3 +201,5 @@ export function FolderTabsBar({
     </div>
   );
 }
+
+    
