@@ -118,24 +118,17 @@ export default function Home() {
   const uploadAbortControllersRef = useRef<Map<string, AbortController>>(new Map());
   const headerRef = useRef<HTMLDivElement>(null);
   const footerRef = useRef<HTMLDivElement>(null);
-  const observerChats = useRef<IntersectionObserver | null>(null);
-  const observerMedia = useRef<IntersectionObserver | null>(null);
+  // Intersection observers are no longer needed
+  // const observerChats = useRef<IntersectionObserver | null>(null);
+  // const observerMedia = useRef<IntersectionObserver | null>(null);
 
   // --- Hook Instantiations ---
   const { toast } = useToast();
 
   // --- useCallback Declarations (Ordered by dependency) ---
 
-  const peerToKey = useCallback((peer: any): string | null => {
-    if (!peer) return null;
-    if (peer._ === 'inputPeerUser') return `user:${String(peer.user_id)}`;
-    if (peer._ === 'inputPeerChat') return `chat:${String(peer.chat_id)}`;
-    if (peer._ === 'inputPeerChannel') return `channel:${String(peer.channel_id)}`;
-    return null;
-  }, []);
-
   const handleReset = useCallback(async (performServerLogout = true) => {
-    const currentIsConnected = isConnected; // Capture current state
+    const currentIsConnected = isConnected; 
 
     if (performServerLogout && currentIsConnected) {
         toast({ title: "Disconnecting...", description: "Logging out from Telegram." });
@@ -207,7 +200,7 @@ export default function Home() {
     });
     uploadAbortControllersRef.current.clear();
     setIsUploadingFiles(false);
-  }, [isConnected, toast, videoStreamUrl]); // isConnected is a dependency
+  }, [isConnected, toast, videoStreamUrl]);
 
 
   const handleApiError = useCallback((error: any, title: string, defaultMessage: string) => {
@@ -236,7 +229,7 @@ export default function Home() {
         setIsLoadingDialogFilters(false);
         return;
     }
-    if (hasFetchedDialogFiltersOnce && dialogFilters.length > 1) { // Check if already fetched and has more than just default
+    if (hasFetchedDialogFiltersOnce && dialogFilters.length > 1) { 
       console.log("fetchDialogFilters: Skipped, already fetched and populated.");
       setIsLoadingDialogFilters(false);
       return;
@@ -284,7 +277,7 @@ export default function Home() {
       const defaultFiltersOnError: DialogFilter[] = [{ _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, pinned_peers: [], include_peers: [], exclude_peers: [] }];
       setDialogFilters(defaultFiltersOnError);
       setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
-      setHasFetchedDialogFiltersOnce(false); // Allow retry on next connection if error
+      setHasFetchedDialogFiltersOnce(false); 
     } finally {
       setIsLoadingDialogFilters(false);
     }
@@ -313,15 +306,6 @@ export default function Home() {
       error: null,
     }));
 
-    // Update master list loading state if applicable
-    if (cacheKeyToFetch === ALL_CHATS_FILTER_ID) {
-        // Assuming you have these states:
-        // setIsLoadingMasterChatList(true); 
-    } else if (folderIdForApiCall !== undefined && cacheKeyToFetch === folderIdForApiCall) {
-        // setIsLoadingSpecificFolder(true); 
-    }
-
-
     const limit = isLoadingMore 
         ? (folderIdForApiCall === undefined ? SUBSEQUENT_MASTER_CHATS_LOAD_LIMIT : SUBSEQUENT_SPECIFIC_FOLDER_CHATS_LOAD_LIMIT)
         : (folderIdForApiCall === undefined ? INITIAL_MASTER_CHATS_LOAD_LIMIT : INITIAL_SPECIFIC_FOLDER_CHATS_LOAD_LIMIT);
@@ -337,7 +321,7 @@ export default function Home() {
 
       const newFoldersFromServer = response.folders;
       let combinedFolders;
-      const currentCachedData = chatDataCache.get(cacheKeyToFetch); // Get current cache entry again
+      const currentCachedData = chatDataCache.get(cacheKeyToFetch); 
 
       if (isLoadingMore) {
           const existingFoldersInCache = currentCachedData?.folders || [];
@@ -365,7 +349,7 @@ export default function Home() {
       });
 
       if (cacheKeyToFetch === ALL_CHATS_FILTER_ID) {
-        setMasterChatListForFiltering(combinedFolders); // Update the separate master list for filtering
+        setMasterChatListForFiltering(combinedFolders); 
         setMasterChatListPaginationForFiltering({
             offsetDate: response.nextOffsetDate,
             offsetId: response.nextOffsetId,
@@ -374,9 +358,9 @@ export default function Home() {
         });
       }
       if (response.folders.length > 0) {
-           toast({ title: `${isLoadingMore ? "More" : ""} Chats Loaded!`, description: `Loaded ${response.folders.length} chats for ${folderIdForApiCall !== undefined ? `folder ID ${folderIdForApiCall}` : 'All Chats'}.` });
+           toast({ title: `${isLoadingMore ? "More" : ""} Chats Loaded!`, description: `Loaded ${response.folders.length} chats for ${folderIdForApiCall !== undefined && folderIdForApiCall !== ALL_CHATS_FILTER_ID ? `folder ID ${folderIdForApiCall}` : 'All Chats'}.` });
       } else if (!response.hasMore && !isLoadingMore){
-           toast({ title: "No Chats Found", description: `Chat list for "${folderIdForApiCall !== undefined ? `folder ID ${folderIdForApiCall}` : 'All Chats'}" appears to be empty.`, variant: "default" });
+           toast({ title: "No Chats Found", description: `Chat list for "${folderIdForApiCall !== undefined && folderIdForApiCall !== ALL_CHATS_FILTER_ID ? `folder ID ${folderIdForApiCall}` : 'All Chats'}" appears to be empty.`, variant: "default" });
       }
 
     } catch (error: any) {
@@ -384,11 +368,11 @@ export default function Home() {
       let errorTypeForCache = 'GENERAL_ERROR';
 
       if (error.message?.includes('FOLDER_ID_INVALID') && folderIdForApiCall !== undefined) {
-        errorMsg = `Folder (ID: ${folderIdForApiCall}) is invalid or not directly loadable. Will attempt to show based on 'All Chats' if possible.`;
+        errorMsg = `Folder (ID: ${folderIdForApiCall}) is invalid. Will attempt to show matching chats from 'All Chats' if applicable.`;
         errorTypeForCache = 'FOLDER_ID_INVALID_FALLBACK';
         toast({ title: `Folder Load Issue (ID: ${folderIdForApiCall})`, description: errorMsg, variant: "default", duration: 7000 });
       } else {
-        handleApiError(error, `Error loading chats for ${folderIdForApiCall !== undefined ? `folder ID ${folderIdForApiCall}` : 'All Chats'}`, errorMsg);
+        handleApiError(error, `Error loading chats for ${folderIdForApiCall !== undefined && folderIdForApiCall !== ALL_CHATS_FILTER_ID ? `folder ID ${folderIdForApiCall}` : 'All Chats'}`, errorMsg);
       }
       
       setChatDataCache(prev => new Map(prev).set(cacheKeyToFetch, {
@@ -402,12 +386,6 @@ export default function Home() {
         setMasterChatListForFiltering(isLoadingMore ? masterChatListForFiltering : []);
         setMasterChatListPaginationForFiltering(prev => ({ ...prev, hasMore: false }));
       }
-    } finally {
-        if (cacheKeyToFetch === ALL_CHATS_FILTER_ID) {
-            // setIsLoadingMasterChatList(false);
-        } else if (folderIdForApiCall !== undefined && cacheKeyToFetch === folderIdForApiCall) {
-            // setIsLoadingSpecificFolder(false);
-        }
     }
   }, [chatDataCache, handleApiError, toast, masterChatListForFiltering]);
 
@@ -447,19 +425,19 @@ export default function Home() {
     const cachedEntry = chatDataCache.get(currentFilterId);
     const masterCacheEntry = chatDataCache.get(ALL_CHATS_FILTER_ID);
 
-    if (filterType === 'dialogFilterDefault') {
+    if (filterType === 'dialogFilterDefault') { // All Chats
         if (masterCacheEntry?.pagination.hasMore && !masterCacheEntry.isLoading) {
             fetchDataForActiveFilter(true);
         }
-    } else if (filterType === 'dialogFilter') {
-      if (cachedEntry?.error === 'FOLDER_ID_INVALID_FALLBACK') {
+    } else if (filterType === 'dialogFilter') { // Server-defined folder
+      if (cachedEntry?.error === 'FOLDER_ID_INVALID_FALLBACK') { // Fallback to master list
         if (masterCacheEntry?.pagination.hasMore && !masterCacheEntry.isLoading) {
           fetchDataForActiveFilter(true);
         }
-      } else if (cachedEntry?.pagination.hasMore && !cachedEntry.isLoading) {
+      } else if (cachedEntry?.pagination.hasMore && !cachedEntry.isLoading) { // Direct fetch has more
         fetchDataForActiveFilter(true);
       }
-    } else if (filterType === 'dialogFilterChatlist') {
+    } else if (filterType === 'dialogFilterChatlist') { // Client-filtered (from master)
       if (masterCacheEntry?.pagination.hasMore && !masterCacheEntry.isLoading) {
         fetchDataForActiveFilter(true);
       }
@@ -568,6 +546,13 @@ export default function Home() {
     }
   }, [isLoadingChatMedia, hasMoreChatMedia, selectedFolder, currentMediaOffsetId, toast, handleApiError]);
 
+  const peerToKey = useCallback((peer: any): string | null => {
+    if (!peer) return null;
+    if (peer._ === 'inputPeerUser') return `user:${String(peer.user_id)}`;
+    if (peer._ === 'inputPeerChat') return `chat:${String(peer.chat_id)}`;
+    if (peer._ === 'inputPeerChannel') return `channel:${String(peer.channel_id)}`;
+    return null;
+  }, []);
 
   const handleSelectFolder = (folderId: string) => {
     const folder = displayedChats.find(f => f.id === folderId);
@@ -1211,16 +1196,16 @@ export default function Home() {
                                                !cachedEntryForAllChats?.isLoading;
       } else if (activeFilterDetails._ === 'dialogFilterChatlist' || (activeFilterDetails._ === 'dialogFilter' && cachedEntryForCurrent?.error === 'FOLDER_ID_INVALID_FALLBACK')) {
           isCurrentFilterListEmptyAndNeedsLoad = (!cachedEntryForAllChats || cachedEntryForAllChats.folders.length === 0) && 
-                                               masterChatListPaginationForFiltering.hasMore && // Use the separate pagination state for master list
+                                               masterChatListPaginationForFiltering.hasMore && 
                                                !cachedEntryForAllChats?.isLoading;
-      } else if (activeFilterDetails._ === 'dialogFilter') { // Direct fetch for dialogFilter (not fallback)
+      } else if (activeFilterDetails._ === 'dialogFilter') { 
            isCurrentFilterListEmptyAndNeedsLoad = (!cachedEntryForCurrent || cachedEntryForCurrent.folders.length === 0) && 
                                                (!cachedEntryForCurrent || cachedEntryForCurrent.pagination.hasMore) &&
                                                !cachedEntryForCurrent?.isLoading;
       }
       
       if (isNewFilter || isCurrentFilterListEmptyAndNeedsLoad) {
-          console.log(`useEffect for fetch data (orchestrator): Conditions met for filter ID ${filterIdToFetch} ('${activeFilterDetails.title}'). Preparing to fetch data. NewFilter: ${isNewFilter}, EmptyAndNeedsLoad: ${isCurrentFilterListEmptyAndNeedsLoad}, LastFetched: ${lastFetchedFilterId}`);
+          console.log(`useEffect for fetch: Conditions met for filter ID ${filterIdToFetch} ('${activeFilterDetails.title}'). Preparing to fetch data. NewFilter: ${isNewFilter}, EmptyAndNeedsLoad: ${isCurrentFilterListEmptyAndNeedsLoad}, LastFetched: ${lastFetchedFilterId}`);
           setLastFetchedFilterId(filterIdToFetch); 
           
           setSelectedFolder(null);
@@ -1228,10 +1213,10 @@ export default function Home() {
           setDisplayedChats([]); 
           setCurrentErrorMessage(null);
 
-          if (isNewFilter) { // Only reset specific list pagination if it's a truly new filter
+          if (isNewFilter) { 
               if (activeFilterDetails._ === 'dialogFilterDefault') {
                   if (!chatDataCache.has(ALL_CHATS_FILTER_ID) || chatDataCache.get(ALL_CHATS_FILTER_ID)?.folders.length === 0) {
-                    setMasterChatListForFiltering([]); // Already done by setDisplayedChats implicitly through next effect, but for clarity
+                    setMasterChatListForFiltering([]); 
                     setMasterChatListPaginationForFiltering(initialPaginationState);
                   }
               } else if (activeFilterDetails._ === 'dialogFilter' && cachedEntryForCurrent?.error !== 'FOLDER_ID_INVALID_FALLBACK') {
@@ -1245,14 +1230,13 @@ export default function Home() {
     }
   }, [
       isConnected, activeFilterDetails, isLoadingDialogFilters, lastFetchedFilterId,
-      // Dependencies for isCurrentFilterListEmptyAndNeedsLoad check
-      chatDataCache, // This is key, as fetchAndCacheDialogs updates it
-      masterChatListForFiltering.length, masterChatListPaginationForFiltering.hasMore, // For master list based checks
-      fetchDataForActiveFilter // fetchDataForActiveFilter is stable due to useCallback
+      chatDataCache, 
+      masterChatListForFiltering.length, masterChatListPaginationForFiltering.hasMore, 
+      fetchDataForActiveFilter
   ]);
 
 
-  useEffect(() => { // This useEffect updates displayedChats based on cache and activeFilterDetails
+  useEffect(() => { 
     if (!isConnected || !activeFilterDetails) {
       setIsLoadingDisplayedChats(isConnecting || isLoadingDialogFilters);
       setDisplayedChats([]);
@@ -1270,16 +1254,16 @@ export default function Home() {
       if (cachedEntryForAllChats) {
         setDisplayedChats(cachedEntryForAllChats.folders);
         setHasMoreDisplayedChats(cachedEntryForAllChats.pagination.hasMore);
-        if (cachedEntryForAllChats.error) setCurrentErrorMessage(`Error for "All Chats": ${cachedEntryForAllChats.error}`);
+        if (cachedEntryForAllChats.error && cachedEntryForAllChats.error !== 'FOLDER_ID_INVALID_FALLBACK') setCurrentErrorMessage(`Error for "All Chats": ${cachedEntryForAllChats.error}`);
       } else {
         setDisplayedChats([]);
-        setHasMoreDisplayedChats(initialPaginationState.hasMore); // Assume has more if not cached yet
+        setHasMoreDisplayedChats(initialPaginationState.hasMore); 
       }
       setIsLoadingDisplayedChats(cachedEntryForAllChats?.isLoading || false);
     } else if (filterType === 'dialogFilter') {
       if (cachedEntryForCurrentFilter?.error === 'FOLDER_ID_INVALID_FALLBACK') {
-        setCurrentErrorMessage(`"${activeFilterDetails.title}" could not be loaded directly. Displaying matching chats from 'All Chats'.`);
-        if (cachedEntryForAllChats) { // Source from All Chats cache
+        setCurrentErrorMessage(`"${activeFilterDetails.title}" could not be loaded directly. Displaying matching chats from 'All Chats'. Some older chats might not appear until 'All Chats' is loaded further.`);
+        if (cachedEntryForAllChats) { 
             const includePeerKeys = new Set((activeFilterDetails.include_peers || []).map(peerToKey).filter(Boolean));
             const pinnedPeerKeys = new Set((activeFilterDetails.pinned_peers || []).map(peerToKey).filter(Boolean));
             
@@ -1295,21 +1279,21 @@ export default function Home() {
             setHasMoreDisplayedChats(cachedEntryForAllChats.pagination.hasMore);
         } else {
             setDisplayedChats([]);
-            setHasMoreDisplayedChats(initialPaginationState.hasMore); // Assume master has more if not cached
+            setHasMoreDisplayedChats(initialPaginationState.hasMore); 
         }
         setIsLoadingDisplayedChats(cachedEntryForAllChats?.isLoading || false);
-      } else if (cachedEntryForCurrentFilter) { // Direct fetch successful or completed
+      } else if (cachedEntryForCurrentFilter) { 
         setDisplayedChats(cachedEntryForCurrentFilter.folders);
         setHasMoreDisplayedChats(cachedEntryForCurrentFilter.pagination.hasMore);
-        if (cachedEntryForCurrentFilter.error) setCurrentErrorMessage(`Error for "${activeFilterDetails.title}": ${cachedEntryForCurrentFilter.error}`);
+        if (cachedEntryForCurrentFilter.error && cachedEntryForCurrentFilter.error !== 'FOLDER_ID_INVALID_FALLBACK') setCurrentErrorMessage(`Error for "${activeFilterDetails.title}": ${cachedEntryForCurrentFilter.error}`);
         setIsLoadingDisplayedChats(cachedEntryForCurrentFilter.isLoading);
-      } else { // Direct fetch not yet attempted or loading
+      } else { 
          setDisplayedChats([]);
          setHasMoreDisplayedChats(initialPaginationState.hasMore);
-         setIsLoadingDisplayedChats(false); // Or true if you have a separate isLoadingSpecificFolder state
+         setIsLoadingDisplayedChats(false); 
       }
     } else if (filterType === 'dialogFilterChatlist') {
-      if (cachedEntryForAllChats) { // Source from All Chats cache
+      if (cachedEntryForAllChats) { 
           const includePeerKeys = new Set((activeFilterDetails.include_peers || []).map(peerToKey).filter(Boolean));
           const pinnedPeerKeys = new Set((activeFilterDetails.pinned_peers || []).map(peerToKey).filter(Boolean));
           const filtered = (cachedEntryForAllChats.folders || []).filter(chat => {
@@ -1333,7 +1317,7 @@ export default function Home() {
   ]);
 
 
-  useEffect(() => { // Process Download Queue
+  useEffect(() => { 
     const processQueue = async () => {
       for (let i = 0; i < downloadQueueRef.current.length; i++) {
         const itemInLoop = downloadQueueRef.current[i];
@@ -1637,7 +1621,7 @@ export default function Home() {
       }
     };
 
-    const intervalId = setInterval(processQueue, 750); // Adjust interval as needed
+    const intervalId = setInterval(processQueue, 750); 
 
     return () => {
         clearInterval(intervalId);
@@ -1649,10 +1633,10 @@ export default function Home() {
         });
         activeDownloadsRef.current.clear();
     };
-  }, []); // Empty dependency array for single setup/cleanup
+  }, []); 
 
 
-  useEffect(() => { // Cleanup video object URL on component unmount or when videoStreamUrl changes
+  useEffect(() => { 
     return () => {
         if (videoStreamUrl) {
             URL.revokeObjectURL(videoStreamUrl);
@@ -1663,30 +1647,9 @@ export default function Home() {
     };
   }, [videoStreamUrl]);
 
-
-  const lastChatElementRef = useCallback((node: HTMLLIElement | null) => {
-    if (isLoadingDisplayedChats || !hasMoreDisplayedChats) return;
-    if (observerChats.current) observerChats.current.disconnect();
-    observerChats.current = new IntersectionObserver(entries => {
-      if (entries[0].isIntersecting && hasMoreDisplayedChats && !isLoadingDisplayedChats) {
-        loadMoreDisplayedChats();
-      }
-    });
-    if (node) observerChats.current.observe(node);
-  }, [hasMoreDisplayedChats, loadMoreDisplayedChats, isLoadingDisplayedChats]);
-
-
-  const lastMediaItemRef = useCallback((node: HTMLDivElement | null) => {
-    if (isLoadingChatMedia) return;
-    if (observerMedia.current) observerMedia.current.disconnect();
-    observerMedia.current = new IntersectionObserver(entries => {
-      if (entries[0].isIntersecting && hasMoreChatMedia && !isLoadingChatMedia) {
-        loadMoreChatMediaCallback();
-      }
-    });
-    if (node) observerMedia.current.observe(node);
-  }, [hasMoreChatMedia, loadMoreChatMediaCallback, isLoadingChatMedia]);
-
+  // Remove IntersectionObserver related refs and callbacks
+  // const lastChatElementRef = ...
+  // const lastMediaItemRef = ...
 
 
   // --- Return JSX ---
@@ -1763,7 +1726,6 @@ export default function Home() {
                 files={currentChatMedia}
                 isLoading={isLoadingChatMedia && currentChatMedia.length === 0}
                 hasMore={hasMoreChatMedia}
-                lastItemRef={lastMediaItemRef}
                 onFileDetailsClick={handleOpenFileDetails}
                 onQueueDownloadClick={handleQueueDownload}
                 onFileViewImageClick={handleViewImage}
@@ -1771,6 +1733,8 @@ export default function Home() {
                 onOpenUploadDialog={handleOpenUploadDialog}
                 isPreparingStream={isPreparingVideoStream}
                 preparingStreamForFileId={preparingVideoStreamForFileId}
+                onLoadMoreMedia={loadMoreChatMediaCallback} // Pass the callback
+                isLoadingMoreMedia={isLoadingChatMedia && currentChatMedia.length > 0} // New prop for button state
                 />
             ) : (
                 <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground">
@@ -1823,13 +1787,13 @@ export default function Home() {
         folders={displayedChats}
         selectedFolderId={selectedFolder?.id || null}
         onSelectFolder={handleSelectFolder}
-        lastItemRef={lastChatElementRef}
         isLoading={isLoadingDisplayedChats && displayedChats.length === 0}
         isLoadingMore={isLoadingDisplayedChats && displayedChats.length > 0}
         hasMore={hasMoreDisplayedChats}
-        onLoadMore={loadMoreDisplayedChats}
+        onLoadMore={loadMoreDisplayedChats} // Keep this for the button
         onRefresh={handleRefreshCurrentFilter}
         currentErrorMessage={currentErrorMessage}
+        // lastItemRef prop removed
       />
 
       <FileDetailsPanel
@@ -1870,6 +1834,8 @@ export default function Home() {
     </div>
   );
 }
+    
+
     
 
     

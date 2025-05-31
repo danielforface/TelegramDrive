@@ -15,16 +15,17 @@ import { format, isToday, isYesterday, startOfDay, isSameDay, isSameMonth } from
 interface MainContentViewProps {
   folderName: string | null;
   files: CloudFile[];
-  isLoading: boolean;
+  isLoading: boolean; // For initial load or when files array is empty
+  isLoadingMoreMedia?: boolean; // Specifically for the "load more" button state
   hasMore: boolean;
-  lastItemRef?: (node: HTMLDivElement | null) => void;
   onFileDetailsClick: (file: CloudFile) => void;
   onQueueDownloadClick: (file: CloudFile) => void;
   onFileViewImageClick: (file: CloudFile) => void;
   onFilePlayVideoClick: (file: CloudFile) => void;
-  onOpenUploadDialog: () => void; // New prop for opening upload dialog
+  onOpenUploadDialog: () => void; 
   isPreparingStream?: boolean;
   preparingStreamForFileId?: string | null;
+  onLoadMoreMedia?: () => void; // Callback for the "Load More" button
 }
 
 const TABS_CONFIG = [
@@ -42,30 +43,30 @@ export function MainContentView({
   folderName,
   files,
   isLoading,
+  isLoadingMoreMedia,
   hasMore,
-  lastItemRef,
   onFileDetailsClick,
   onQueueDownloadClick,
   onFileViewImageClick,
   onFilePlayVideoClick,
   onOpenUploadDialog,
   isPreparingStream,
-  preparingStreamForFileId
+  preparingStreamForFileId,
+  onLoadMoreMedia, 
 }: MainContentViewProps) {
   const [activeTab, setActiveTab] = useState("all");
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
-  const [searchTerm, setSearchTerm] = useState(""); // Placeholder for future search dialog integration
+  const [searchTerm, setSearchTerm] = useState("");
 
 
   useEffect(() => {
     setActiveTab("all");
     setSelectedDate(undefined);
-    setSearchTerm(""); // Reset search term when folder changes
+    setSearchTerm(""); 
   }, [folderName]);
 
   const handleSearchButtonClick = () => {
-    // This will eventually open a search dialog. For now, it does nothing.
     console.log("Search button clicked. Dialog to be implemented.");
   };
 
@@ -205,7 +206,7 @@ export function MainContentView({
           {displayFiles.length > 0 ? (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
               {displayFiles.map((file, index) => {
-                if (!file.timestamp) return null; // Skip files without a timestamp for date grouping
+                if (!file.timestamp) return null; 
                 const fileDate = new Date(file.timestamp * 1000);
                 let dayHeader = null;
                 let monthHeader = null;
@@ -241,7 +242,7 @@ export function MainContentView({
                     key={`${file.id}-${activeTab}-${selectedDate ? format(selectedDate, "yyyy-MM-dd") : 'all'}-${index}`}
                     file={file}
                     style={{ animationDelay: `${index * 30}ms` }}
-                    onDetailsClick={onFileDetailsClick} // Correct prop name
+                    onDetailsClick={onFileDetailsClick} 
                     onQueueDownloadClick={onQueueDownloadClick}
                     onViewImageClick={onFileViewImageClick}
                     onPlayVideoClick={onFilePlayVideoClick}
@@ -249,20 +250,13 @@ export function MainContentView({
                     preparingStreamForFileId={preparingStreamForFileId}
                   />
                 );
-
-                const itemWithRefWrapper = (node: HTMLDivElement | null) => {
-                  if (index === displayFiles.length - 1 && hasMore && !isLoading && !selectedDate) {
-                    if (lastItemRef) lastItemRef(node);
-                  }
-                };
                 
                 return (
                   <React.Fragment key={`fragment-${file.id}`}>
                     {monthHeader}
                     {dayHeader}
-                    <div ref={itemWithRefWrapper}>
-                       {itemContent}
-                    </div>
+                    {/* Wrapper div for ref is removed, button handles load more */}
+                    {itemContent}
                   </React.Fragment>
                 );
               })}
@@ -273,20 +267,34 @@ export function MainContentView({
                 <p className="text-lg">No media items to display for the current selection.</p>
              </div>
           )}
-          {isLoading && displayFiles.length > 0 && (
+          {isLoadingMoreMedia && displayFiles.length > 0 && ( // Use isLoadingMoreMedia for button spinner
             <div className="flex justify-center items-center p-4 mt-4">
               <Loader2 className="animate-spin h-8 w-8 text-primary" />
               <p className="ml-3 text-muted-foreground">Loading more media...</p>
             </div>
           )}
-          {!isLoading && !hasMore && displayFiles.length > 0 && (
-             <p className="text-center text-sm text-muted-foreground py-4 mt-4">No more media to load for the current filter.</p>
+          {!isLoading && !isLoadingMoreMedia && hasMore && displayFiles.length > 0 && !selectedDate && onLoadMoreMedia && (
+            <div className="col-span-full flex justify-center py-4 mt-4">
+              <Button
+                onClick={onLoadMoreMedia}
+                disabled={isLoadingMoreMedia}
+                variant="outline"
+              >
+                {isLoadingMoreMedia ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : null}
+                Load More Media
+              </Button>
+            </div>
           )}
-           {!isLoading && hasMore && displayFiles.length > 0 && !selectedDate && (
-             <p className="text-center text-sm text-muted-foreground py-4 mt-4">Scroll down to load more media.</p>
+          {!isLoading && !isLoadingMoreMedia && !hasMore && displayFiles.length > 0 && (
+             <p className="text-center text-sm text-muted-foreground py-4 mt-4">No more media to load for the current filter.</p>
           )}
         </div>
       )}
     </div>
   );
 }
+
+
+    
