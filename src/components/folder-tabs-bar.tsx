@@ -141,12 +141,14 @@ export function FolderTabsBar({
                              className="ml-1 p-0"
                              onClick={(e: React.MouseEvent) => {
                                 e.stopPropagation();
-                                e.preventDefault(); // Crucial to prevent TabsTrigger's default action
+                                e.preventDefault();
                              }}
-                             onKeyDown={(e: React.KeyboardEvent) => { // Stop keyboard activation too
+                             onKeyDown={(e: React.KeyboardEvent) => {
                                 if (e.key === 'Enter' || e.key === ' ') {
                                    e.stopPropagation();
                                    e.preventDefault();
+                                } else {
+                                   e.stopPropagation();
                                 }
                              }}
                            >
@@ -154,8 +156,8 @@ export function FolderTabsBar({
                               variant="ghost"
                               size="icon"
                               className="h-6 w-6 hover:bg-accent/50 opacity-60 hover:opacity-100"
-                              onClick={(e: React.MouseEvent) => { // This is the button's own click
-                                // e.stopPropagation(); // Already handled by the div
+                              onClick={(e: React.MouseEvent) => {
+                                e.stopPropagation(); // Stop propagation from the button itself too
                                 onShareFilter(filter.id);
                               }}
                               disabled={filter.isLoading}

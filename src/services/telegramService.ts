@@ -400,14 +400,14 @@ export async function checkPassword(password: string): Promise<any> {
   console.log('checkPassword: Entered. Current userSession state for 2FA:', {
       srp_id: userSession.srp_id,
       srp_params_exist: !!userSession.srp_params,
-      crypto_available: !!api.mtproto.mtproto?.crypto?.getSRPParams,
+      crypto_available: !!api.mtproto.crypto?.getSRPParams,
   });
 
-  if (!userSession.srp_id || !userSession.srp_params || !api.mtproto.mtproto?.crypto?.getSRPParams) {
+  if (!userSession.srp_id || !userSession.srp_params || !api.mtproto.crypto?.getSRPParams) {
     let missingDetail = "";
     if (!userSession.srp_id) missingDetail += "srp_id is missing. ";
     if (!userSession.srp_params) missingDetail += "srp_params are missing. ";
-    if (!api.mtproto.mtproto?.crypto?.getSRPParams) missingDetail += "crypto.getSRPParams method is missing. ";
+    if (!api.mtproto.crypto?.getSRPParams) missingDetail += "crypto.getSRPParams method is missing. ";
     console.error(`checkPassword: Pre-condition for 2FA failed. ${missingDetail}Triggering AUTH_RESTART.`);
     delete userSession.srp_params;
     delete userSession.srp_id;
@@ -417,11 +417,11 @@ export async function checkPassword(password: string): Promise<any> {
   try {
     const { g, p, salt1, salt2, srp_B } = userSession.srp_params;
 
-    if (!api.mtproto.mtproto?.crypto?.getSRPParams){
+    if (!api.mtproto.crypto?.getSRPParams){
         console.error("checkPassword: SRP crypto methods not available on mtproto instance.");
         throw new Error("SRP crypto methods not available on mtproto instance.");
     }
-    const { A, M1 } = await api.mtproto.mtproto.crypto.getSRPParams({
+    const { A, M1 } = await api.mtproto.crypto.getSRPParams({
         g, p, salt1, salt2, gB: srp_B, password,
     });
 
