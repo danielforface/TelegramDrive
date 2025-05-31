@@ -1,5 +1,5 @@
 
-import { CloudLightning, RefreshCw, Download, MessageSquare } from 'lucide-react'; // Added MessageSquare
+import { CloudLightning, RefreshCw, Download, MessageSquare, Cloud } from 'lucide-react'; // Added Cloud
 import Link from 'next/link';
 import { Button } from "@/components/ui/button";
 import React from 'react';
@@ -7,12 +7,13 @@ import React from 'react';
 interface HeaderProps {
   onDisconnect?: () => void;
   onOpenDownloadManager?: () => void;
-  onOpenChatSelectionDialog?: () => void; // New prop
+  onOpenChatSelectionDialog?: () => void;
+  onOpenCloudStorageSelector?: () => void; // New prop for cloud storage
   isConnected?: boolean;
 }
 
 export const Header = React.forwardRef<HTMLDivElement, HeaderProps>(
-  ({ onDisconnect, onOpenDownloadManager, onOpenChatSelectionDialog, isConnected }, ref) => {
+  ({ onDisconnect, onOpenDownloadManager, onOpenChatSelectionDialog, onOpenCloudStorageSelector, isConnected }, ref) => {
   return (
     <header ref={ref} className="py-4 px-4 sm:px-6 lg:px-8 border-b border-border shadow-sm">
       <div className="max-w-7xl mx-auto flex items-center justify-between">
@@ -24,8 +25,13 @@ export const Header = React.forwardRef<HTMLDivElement, HeaderProps>(
         </Link>
         <div className="flex items-center gap-2">
           {isConnected && onOpenChatSelectionDialog && (
-            <Button variant="outline" size="icon" onClick={onOpenChatSelectionDialog} title="Select Chat">
+            <Button variant="outline" size="icon" onClick={onOpenChatSelectionDialog} title="Select Chat Folder">
               <MessageSquare className="h-5 w-5" />
+            </Button>
+          )}
+          {isConnected && onOpenCloudStorageSelector && ( // New Button for Cloud Storage
+            <Button variant="outline" size="icon" onClick={onOpenCloudStorageSelector} title="Select Cloud Storage">
+              <Cloud className="h-5 w-5" />
             </Button>
           )}
           {isConnected && onOpenDownloadManager && (

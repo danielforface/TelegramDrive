@@ -12,46 +12,49 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { Loader2, RefreshCw, MessageSquare, Cloud } from "lucide-react"; // Added Cloud
+import { Loader2, RefreshCw, MessageSquare, Cloud } from "lucide-react";
 import { ChatListItem } from "./chat-list-item";
 import { FolderTabsBar } from "./folder-tabs-bar";
-import { CLOUD_STORAGE_FILTER_ID } from "@/services/telegramService";
+// CLOUD_STORAGE_FILTER_ID is no longer needed here as a special tab ID
 
 interface ChatSelectionDialogProps {
   isOpen: boolean;
   onOpenChange: (isOpen: boolean) => void;
+  viewMode?: 'default' | 'cloudStorage'; // New prop to control mode
 
-  dialogFilters: DialogFilter[];
-  activeDialogFilterId: number | null;
-  onSelectDialogFilter: (filterId: number) => void;
-  isLoadingDialogFilters: boolean;
-  isReorderingFolders: boolean;
-  onToggleReorderFolders: () => void;
-  onMoveFilter: (dragIndex: number, hoverIndex: number) => void;
-  onShareFilter: (filterId: number) => void;
-  onAddFilterPlaceholder: () => void;
-  onOpenCreateCloudChannelDialog: () => void;
+  // Props for 'default' viewMode (regular chats & folders)
+  dialogFilters?: DialogFilter[];
+  activeDialogFilterId?: number | null;
+  onSelectDialogFilter?: (filterId: number) => void;
+  isLoadingDialogFilters?: boolean;
+  isReorderingFolders?: boolean;
+  onToggleReorderFolders?: () => void;
+  onMoveFilter?: (dragIndex: number, hoverIndex: number) => void;
+  onShareFilter?: (filterId: number) => void;
+  onAddFilterPlaceholder?: () => void;
+  onOpenCreateCloudChannelDialog?: () => void; // Can still be triggered from default view
 
-  folders: CloudFolder[]; // This will be 'displayedChats' or 'appManagedCloudFolders' from page.tsx
+  // Props for both viewModes
+  folders: CloudFolder[];
   selectedFolderId: string | null;
-  onSelectFolder: (folderId: string) => void;
-  isLoading: boolean; // Combined loading state based on active tab
+  onSelectFolder: (folderId: string) => void; // Renamed from onSelectCloudChannel for generic use
+  isLoading: boolean;
   isLoadingMore: boolean;
   hasMore: boolean;
   onLoadMore: () => void;
   onRefresh: () => void;
   currentErrorMessage?: string | null;
-  isCloudStorageView?: boolean; // To differentiate UI for cloud storage tab
 }
 
 export function ChatSelectionDialog({
   isOpen,
   onOpenChange,
-  dialogFilters,
-  activeDialogFilterId,
+  viewMode = 'default', // Default to 'default'
+  dialogFilters = [], // Default to empty array
+  activeDialogFilterId = null,
   onSelectDialogFilter,
-  isLoadingDialogFilters,
-  isReorderingFolders,
+  isLoadingDialogFilters = false,
+  isReorderingFolders = false,
   onToggleReorderFolders,
   onMoveFilter,
   onShareFilter,
@@ -66,36 +69,44 @@ export function ChatSelectionDialog({
   onLoadMore,
   onRefresh,
   currentErrorMessage,
-  isCloudStorageView,
 }: ChatSelectionDialogProps) {
+  
+  const isCloudStorageView = viewMode === 'cloudStorage';
+
+  const dialogTitle = isCloudStorageView ? "Select Cloud Storage" : "Select a Chat";
+  const dialogDescription = isCloudStorageView
+    ? "Choose an app-managed cloud storage channel."
+    : "First, select a folder tab, then choose a conversation. Or, create new cloud storage.";
+  const loadMoreButtonText = isCloudStorageView ? "Load More Channels" : "Load More Chats";
+  const noItemsMessage = currentErrorMessage || 
+                        (isCloudStorageView ? "No cloud storage channels found." : "No chats found in this folder.");
+
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl p-0 flex flex-col max-h-[90vh]">
         <DialogHeader className="p-6 border-b">
           <div className="flex items-center gap-2">
              {isCloudStorageView ? <Cloud className="h-6 w-6 text-primary" /> : <MessageSquare className="h-6 w-6 text-primary" />}
-            <DialogTitle>{isCloudStorageView ? "Select Cloud Storage" : "Select a Chat"}</DialogTitle>
+            <DialogTitle>{dialogTitle}</DialogTitle>
           </div>
-          <DialogDescription>
-            {isCloudStorageView
-              ? "Choose an app-managed cloud storage channel."
-              : "First, select a folder tab, then choose a conversation. Or, create new cloud storage."}
-          </DialogDescription>
+          <DialogDescription>{dialogDescription}</DialogDescription>
         </DialogHeader>
 
-        <FolderTabsBar
-          filters={dialogFilters}
-          activeFilterId={activeDialogFilterId}
-          onSelectFilter={onSelectDialogFilter}
-          isLoading={isLoadingDialogFilters}
-          isReorderingMode={isReorderingFolders}
-          onToggleReorderMode={onToggleReorderFolders}
-          onMoveFilter={onMoveFilter}
-          onShareFilter={onShareFilter}
-          onAddFilterPlaceholder={onAddFilterPlaceholder}
-          onOpenCreateCloudChannelDialog={onOpenCreateCloudChannelDialog}
-          className="flex-shrink-0 sticky top-0 z-10"
-        />
+        {!isCloudStorageView && onSelectDialogFilter && onToggleReorderFolders && onMoveFilter && onShareFilter && onAddFilterPlaceholder && onOpenCreateCloudChannelDialog && (
+          <FolderTabsBar
+            filters={dialogFilters}
+            activeFilterId={activeDialogFilterId}
+            onSelectFilter={onSelectDialogFilter}
+            isLoading={isLoadingDialogFilters}
+            isReorderingMode={isReorderingFolders}
+            onToggleReorderMode={onToggleReorderFolders}
+            onMoveFilter={onMoveFilter}
+            onShareFilter={onShareFilter}
+            onAddFilterPlaceholder={onAddFilterPlaceholder}
+            onOpenCreateCloudChannelDialog={onOpenCreateCloudChannelDialog}
+            className="flex-shrink-0 sticky top-0 z-10"
+          />
+        )}
 
         <ScrollArea className="flex-grow overflow-y-auto px-6 py-4">
           {isLoading && folders.length === 0 ? (
@@ -108,7 +119,7 @@ export function ChatSelectionDialog({
           ) : folders.length === 0 && !isLoadingMore ? (
             <div className="flex flex-col items-center justify-center h-full py-10">
               <p className="text-muted-foreground mb-3">
-                {currentErrorMessage || (isCloudStorageView ? "No cloud storage channels found." : "No chats found in this folder.")}
+                {noItemsMessage}
               </p>
               <Button onClick={onRefresh} variant="outline" disabled={isLoading}>
                 <RefreshCw className="mr-2 h-4 w-4" /> Try Refresh
@@ -138,7 +149,7 @@ export function ChatSelectionDialog({
                     {isLoadingMore ? (
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     ) : null}
-                    Load More {isCloudStorageView ? "Channels" : "Chats"}
+                    {loadMoreButtonText}
                   </Button>
                 </div>
               )}
