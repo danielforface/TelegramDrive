@@ -145,12 +145,12 @@ class API {
     let originalErrorObject: any = null;
 
     try {
-      // console.log(`API Call: ${method}`, params, options); // Kept for debugging specific calls if needed
+      // console.log(`API Call: ${method}`, params, options); 
       const result = await this.mtproto.call(method, params, options);
       return result;
     } catch (error: any) {
       originalErrorObject = JSON.parse(JSON.stringify(error));
-      // console.log(`MTProto call '${method}' raw error object:`, originalErrorObject, error); // Kept for debugging
+      // console.log(`MTProto call '${method}' raw error object:`, originalErrorObject, error); 
 
 
       const { error_code, error_message } = originalErrorObject || {};
@@ -222,7 +222,7 @@ let userSession: {
   phone?: string;
   phone_code_hash?: string;
   user?: any;
-  srp_id?: string; // Stored as string
+  srp_id?: string; 
   srp_params?: {
     g: number;
     p: Uint8Array;
@@ -287,8 +287,8 @@ export function getUserSessionDetails(): { phone?: string; user?: any } {
 }
 
 export async function sendCode(fullPhoneNumber: string): Promise<string> {
-  userSession = { phone: fullPhoneNumber }; // Reset session parts except phone
-  saveUserDataToLocalStorage(); // Save phone number
+  userSession = { phone: fullPhoneNumber }; 
+  saveUserDataToLocalStorage(); 
   console.log(`Attempting to send code to ${fullPhoneNumber} via API class`);
 
   const sendCodePayload = {
@@ -322,7 +322,7 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
     console.warn("signIn called without phone_code_hash in session. This may lead to AUTH_RESTART or failure.");
     throw new Error('AUTH_RESTART'); 
   }
-  if (!userSession.phone) userSession.phone = fullPhoneNumber; // Ensure phone is set if somehow lost
+  if (!userSession.phone) userSession.phone = fullPhoneNumber; 
 
   try {
     console.log('signIn: Calling auth.signIn with phone_code_hash:', userSession.phone_code_hash);
@@ -341,7 +341,7 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
         userSession.user = result.user;
         saveUserDataToLocalStorage();
     }
-    delete userSession.phone_code_hash; // Clean up phone_code_hash after use
+    delete userSession.phone_code_hash; 
     return { user: result.user };
 
   } catch (error: any) {
@@ -360,13 +360,13 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
              throw new Error('Failed to initialize 2FA: Missing critical SRP parameters from server.');
         }
 
-        userSession.srp_id = String(passwordData.srp_id); // Ensure srp_id is stored as string
+        userSession.srp_id = String(passwordData.srp_id); 
         userSession.srp_params = {
             g: passwordData.current_algo.g,
-            p: passwordData.current_algo.p, // Uint8Array
-            salt1: passwordData.current_algo.salt1, // Uint8Array
-            salt2: passwordData.current_algo.salt2, // Uint8Array
-            srp_B: passwordData.srp_B // Uint8Array
+            p: passwordData.current_algo.p, 
+            salt1: passwordData.current_algo.salt1, 
+            salt2: passwordData.current_algo.salt2, 
+            srp_B: passwordData.srp_B 
         };
         console.log('signIn: 2FA required. SRP ID and Params successfully set in userSession:', {
             srp_id: userSession.srp_id,
@@ -374,28 +374,28 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
         });
 
 
-        delete userSession.phone_code_hash; // Clean up phone_code_hash
+        delete userSession.phone_code_hash; 
 
         const twoFactorError: any = new Error('2FA_REQUIRED');
-        twoFactorError.srp_id = userSession.srp_id; // Pass the srp_id with the error
+        twoFactorError.srp_id = userSession.srp_id; 
         throw twoFactorError;
 
       } catch (getPasswordError: any) {
         console.error('signIn: Error during account.getPassword call or subsequent SRP setup:', getPasswordError.message, getPasswordError.originalErrorObject || getPasswordError);
-        delete userSession.phone_code_hash; // Clean up phone_code_hash
+        delete userSession.phone_code_hash; 
         
-        // Propagate 2FA_REQUIRED if it was thrown from this block
+        
         if (getPasswordError.message === '2FA_REQUIRED' && getPasswordError.srp_id) {
           throw getPasswordError;
         }
-        if (getPasswordError.message === 'AUTH_RESTART') { // Propagate AUTH_RESTART
+        if (getPasswordError.message === 'AUTH_RESTART') { 
             throw getPasswordError;
         }
         const messageToThrow = getPasswordError.message || 'Failed to fetch 2FA details after SESSION_PASSWORD_NEEDED.';
         throw new Error(messageToThrow);
       }
     }
-    // If not SESSION_PASSWORD_NEEDED, clean up phone_code_hash and rethrow original error
+    
     delete userSession.phone_code_hash;
     throw error; 
   }
@@ -427,7 +427,7 @@ export async function checkPassword(password: string): Promise<any> {
         g, p, salt1, salt2, gB: srp_B, password,
     });
 
-    const srp_id_as_string = String(userSession.srp_id); // Ensure it's a string
+    const srp_id_as_string = String(userSession.srp_id); 
     console.log('checkPassword: Calling auth.checkPassword with srp_id:', srp_id_as_string);
 
     const checkResult = await api.call('auth.checkPassword', {
@@ -444,7 +444,7 @@ export async function checkPassword(password: string): Promise<any> {
         userSession.user = checkResult.user;
         saveUserDataToLocalStorage();
     }
-    // Clean up SRP data after successful 2FA
+    
     delete userSession.srp_params;
     delete userSession.srp_id;
     return checkResult.user;
@@ -453,7 +453,7 @@ export async function checkPassword(password: string): Promise<any> {
     const message = error.message || error.originalErrorObject?.error_message;
     console.error('checkPassword: Error during auth.checkPassword or SRP calculation:', message, error.originalErrorObject || error);
 
-    // Clean up SRP data on any error during checkPassword
+    
     delete userSession.srp_params;
     delete userSession.srp_id;
 
@@ -464,11 +464,11 @@ export async function checkPassword(password: string): Promise<any> {
         console.warn('checkPassword: SRP_ID_INVALID or AUTH_RESTART scenario. Throwing AUTH_RESTART.');
         throw new Error('AUTH_RESTART');
     }
-    // If it's an error object from api.call with originalErrorObject, rethrow it
+    
     if (error.originalErrorObject && Object.keys(error.originalErrorObject).length > 0 && error.message) {
       throw error;
     }
-    // Default to AUTH_RESTART for other unexpected errors
+    
     console.warn('checkPassword: Unhandled error type, defaulting to AUTH_RESTART.');
     throw new Error('AUTH_RESTART');
   }
@@ -499,7 +499,7 @@ export async function signOut(): Promise<void> {
 
 export async function isUserConnected(): Promise<boolean> {
   if (API_ID === undefined || !API_HASH || !api.initialized) {
-      if (userSession.user) await signOut(); // Ensure client state matches if API config is bad
+      if (userSession.user) await signOut(); 
       return false;
   }
 
@@ -521,7 +521,7 @@ export async function isUserConnected(): Promise<boolean> {
             return false;
         }
          console.warn(`isUserConnected check failed with non-critical auth error, but user object exists. Error: ${errorMessage}. Treating as connected for now.`);
-        return true; // Or false, depending on desired strictness
+        return true; 
     }
   }
   return false;
@@ -568,9 +568,9 @@ function transformDialogsToCloudFolders(dialogsResult: any): CloudFolder[] {
     if (!dialog || !dialog.peer) {
       return null;
     }
-    const peer = dialog.peer;
+    const peer = dialog.peer; // This is the source for the ID
     const chatTitle = getPeerTitle(peer, chats || [], users || []);
-    let inputPeerForApiCalls: any | undefined;
+    let inputPeerForApiCalls: any | undefined; // This is for API calls later
 
     const peerUserId = peer.user_id ? String(peer.user_id) : undefined;
     const peerChatId = peer.chat_id ? String(peer.chat_id) : undefined;
@@ -581,8 +581,8 @@ function transformDialogsToCloudFolders(dialogsResult: any): CloudFolder[] {
             const userAssociated = users?.find((u:any) => String(u.id) === peerUserId);
             if (userAssociated && userAssociated.access_hash !== undefined) {
                 inputPeerForApiCalls = { _: 'inputPeerUser', user_id: userAssociated.id, access_hash: userAssociated.access_hash };
-            } else if (peer.access_hash) { // Fallback if user not in users list but peer has hash
-                 inputPeerForApiCalls = { _: 'inputPeerUser', user_id: peer.user_id, access_hash: peer.access_hash };
+            } else if (dialog.peer.access_hash !== undefined) { 
+                 inputPeerForApiCalls = { _: 'inputPeerUser', user_id: peer.user_id, access_hash: dialog.peer.access_hash };
             }
         } else if (peer._ === 'peerChat' && peerChatId) {
             inputPeerForApiCalls = { _: 'inputPeerChat', chat_id: peer.chat_id };
@@ -590,8 +590,8 @@ function transformDialogsToCloudFolders(dialogsResult: any): CloudFolder[] {
             const chatAssociated = chats?.find((c:any) => String(c.id) === peerChannelId);
             if (chatAssociated && chatAssociated.access_hash !== undefined) {
                 inputPeerForApiCalls = { _: 'inputPeerChannel', channel_id: chatAssociated.id, access_hash: chatAssociated.access_hash };
-            } else if (peer.access_hash) { // Fallback for channel
-                inputPeerForApiCalls = { _: 'inputPeerChannel', channel_id: peer.channel_id, access_hash: peer.access_hash };
+            } else if (dialog.peer.access_hash !== undefined) { 
+                inputPeerForApiCalls = { _: 'inputPeerChannel', channel_id: peer.channel_id, access_hash: dialog.peer.access_hash };
             }
         }
     } catch (e) {
@@ -599,27 +599,34 @@ function transformDialogsToCloudFolders(dialogsResult: any): CloudFolder[] {
     }
 
     if (!inputPeerForApiCalls) {
-      // Fallback based on direct peer data if not found in chats/users lists
-      if (peer._ === 'peerUser' && peer.user_id && peer.access_hash) {
+      if (peer._ === 'peerUser' && peer.user_id != null && peer.access_hash != null) {
          inputPeerForApiCalls = { _: 'inputPeerUser', user_id: peer.user_id, access_hash: peer.access_hash };
-      } else if (peer._ === 'peerChannel' && peer.channel_id && peer.access_hash) {
+      } else if (peer._ === 'peerChannel' && peer.channel_id != null && peer.access_hash != null) {
          inputPeerForApiCalls = { _: 'inputPeerChannel', channel_id: peer.channel_id, access_hash: peer.access_hash };
-      } else if (peer._ === 'peerChat' && peer.chat_id) {
+      } else if (peer._ === 'peerChat' && peer.chat_id != null ) {
          inputPeerForApiCalls = { _: 'inputPeerChat', chat_id: peer.chat_id };
       } else {
-        console.warn("Could not construct valid inputPeer for dialog:", JSON.stringify(dialog));
-        return null; // Skip this dialog if a valid inputPeer cannot be formed
+        console.warn("transformDialogsToCloudFolders: Could not construct valid inputPeer for dialog from peer directly:", JSON.stringify(dialog.peer));
       }
     }
-
-    const idSuffix = peerUserId || peerChatId || peerChannelId || String(dialog.top_message) || String(Date.now());
-    const folderIdBase = `${inputPeerForApiCalls._}-${idSuffix}`;
+    
+    let cloudFolderId: string;
+    if (peer._ === 'peerUser' && peer.user_id != null) {
+        cloudFolderId = `user-${peer.user_id}`;
+    } else if (peer._ === 'peerChat' && peer.chat_id != null) {
+        cloudFolderId = `chat-${peer.chat_id}`;
+    } else if (peer._ === 'peerChannel' && peer.channel_id != null) {
+        cloudFolderId = `channel-${peer.channel_id}`;
+    } else {
+        console.error("transformDialogsToCloudFolders: dialog.peer is of unexpected type or missing ID. Peer:", JSON.stringify(peer));
+        cloudFolderId = `malformed-peer-${dialog.top_message || Date.now() + Math.random()}`;
+    }
 
     return {
-      id: folderIdBase,
+      id: cloudFolderId,
       name: chatTitle,
       isChatFolder: true,
-      inputPeer: inputPeerForApiCalls,
+      inputPeer: inputPeerForApiCalls, 
       files: [],
       folders: [],
     };
@@ -633,7 +640,7 @@ export async function getDialogFilters(): Promise<DialogFilter[]> {
   }
   try {
     const result = await api.call('messages.getDialogFilters');
-    // console.log("Full result from messages.getDialogFilters:", result); // Keep for debugging
+    
 
     if (Array.isArray(result)) {
       return result as DialogFilter[];
@@ -645,7 +652,7 @@ export async function getDialogFilters(): Promise<DialogFilter[]> {
     }
   } catch (error: any) {
     console.error('Error fetching dialog filters:', error.message, error.originalErrorObject || error);
-    return []; // Return empty or rethrow, depending on desired error handling
+    return []; 
   }
 }
 
@@ -655,7 +662,7 @@ export async function getTelegramChats(
   offsetDate: number = 0,
   offsetId: number = 0,
   offsetPeer: any = { _: 'inputPeerEmpty' },
-  folderId?: number // This is the DialogFilter.id
+  folderId?: number 
 ): Promise<GetChatsPaginatedResponse> {
   if (!(await isUserConnected())) {
     return { folders: [], nextOffsetDate: 0, nextOffsetId: 0, nextOffsetPeer: { _: 'inputPeerEmpty' }, hasMore: false };
@@ -664,9 +671,9 @@ export async function getTelegramChats(
   const params: any = {
       offset_date: offsetDate,
       offset_id: offsetId,
-      offset_peer: offsetPeer || { _: 'inputPeerEmpty' }, // Ensure offsetPeer is valid
+      offset_peer: offsetPeer || { _: 'inputPeerEmpty' }, 
       limit: limit,
-      hash: 0, // Using 0 for hash to avoid dealing with its complexities for now
+      hash: 0, 
   };
 
   if (folderId !== undefined && folderId !== ALL_CHATS_FILTER_ID) {
@@ -684,7 +691,7 @@ export async function getTelegramChats(
     let hasMore = false;
 
     if (dialogsResult.messages && dialogsResult.messages.length > 0) {
-      hasMore = dialogsResult.messages.length >= limit; // Basic check
+      hasMore = dialogsResult.messages.length >= limit; 
 
       if (dialogsResult.dialogs && dialogsResult.dialogs.length > 0) {
           const lastDialog = dialogsResult.dialogs[dialogsResult.dialogs.length - 1];
@@ -693,19 +700,19 @@ export async function getTelegramChats(
           if (lastMessageInDialogs) {
               newOffsetId = lastMessageInDialogs.id;
               newOffsetDate = lastMessageInDialogs.date;
-              // Construct InputPeer from the last dialog's peer object
+              
               if (lastDialog.peer && lastDialog.peer._) {
                   if (lastDialog.peer._ === 'peerUser') {
                       const user = dialogsResult.users?.find((u:any) => String(u.id) === String(lastDialog.peer.user_id));
-                      if (user && user.access_hash) newOffsetPeerInput = { _: 'inputPeerUser', user_id: user.id, access_hash: user.access_hash};
-                      else if (lastDialog.peer.access_hash) newOffsetPeerInput = { _: 'inputPeerUser', user_id: lastDialog.peer.user_id, access_hash: lastDialog.peer.access_hash};
+                      if (user && user.access_hash != null) newOffsetPeerInput = { _: 'inputPeerUser', user_id: user.id, access_hash: user.access_hash};
+                      else if (lastDialog.peer.access_hash != null) newOffsetPeerInput = { _: 'inputPeerUser', user_id: lastDialog.peer.user_id, access_hash: lastDialog.peer.access_hash};
                       else newOffsetPeerInput = { _: 'inputPeerEmpty' };
                   } else if (lastDialog.peer._ === 'peerChat') {
                       newOffsetPeerInput = { _: 'inputPeerChat', chat_id: lastDialog.peer.chat_id };
                   } else if (lastDialog.peer._ === 'peerChannel') {
                        const channel = dialogsResult.chats?.find((c:any) => String(c.id) === String(lastDialog.peer.channel_id));
-                       if (channel && channel.access_hash) newOffsetPeerInput = { _: 'inputPeerChannel', channel_id: channel.id, access_hash: channel.access_hash };
-                       else if (lastDialog.peer.access_hash) newOffsetPeerInput = { _: 'inputPeerChannel', channel_id: lastDialog.peer.channel_id, access_hash: lastDialog.peer.access_hash};
+                       if (channel && channel.access_hash != null) newOffsetPeerInput = { _: 'inputPeerChannel', channel_id: channel.id, access_hash: channel.access_hash };
+                       else if (lastDialog.peer.access_hash != null) newOffsetPeerInput = { _: 'inputPeerChannel', channel_id: lastDialog.peer.channel_id, access_hash: lastDialog.peer.access_hash};
                        else newOffsetPeerInput = { _: 'inputPeerEmpty' };
                   } else {
                       newOffsetPeerInput = { _: 'inputPeerEmpty' };
@@ -715,13 +722,13 @@ export async function getTelegramChats(
                 newOffsetPeerInput = { _: 'inputPeerEmpty' };
               }
           } else if (dialogsResult.messages.length > 0 && dialogsResult.dialogs.length < limit) {
-             // If fewer dialogs than limit but some messages, it implies no more dialogs of the requested type
+             
              hasMore = false;
           }
-      } else { // No dialogs returned
+      } else { 
           hasMore = false;
       }
-    } else { // No messages returned
+    } else { 
         hasMore = false;
     }
     
@@ -789,12 +796,12 @@ export async function getChatMediaHistory(
             mediaObjectForFile = historyResult.photos?.find((p:any) => String(p.id) === String(msg.media.photo.id)) || msg.media.photo;
           } else if (msg.media.document && msg.media.document.id) {
             mediaObjectForFile = historyResult.documents?.find((d:any) => String(d.id) === String(msg.media.document.id)) || msg.media.document;
-          } else if (msg.media.photo) { // Fallback if photo/document not in separate lists
+          } else if (msg.media.photo) { 
              mediaObjectForFile = msg.media.photo;
           } else if (msg.media.document) {
              mediaObjectForFile = msg.media.document;
           } else {
-             return; // Skip if no identifiable media object
+             return; 
           }
 
           if (msg.media._ === 'messageMediaPhoto' && mediaObjectForFile) {
@@ -834,10 +841,10 @@ export async function getChatMediaHistory(
               size: fileSize,
               totalSizeInBytes: totalSizeInBytes,
               timestamp: msg.date,
-              url: undefined, // URL will be set dynamically for preview/play
+              url: undefined, 
               dataAiHint: dataAiHint,
-              telegramMessage: mediaObjectForFile, // Store the full media object
-              inputPeer: inputPeer, // Store the peer for context
+              telegramMessage: mediaObjectForFile, 
+              inputPeer: inputPeer, 
             });
           }
         }
@@ -846,14 +853,13 @@ export async function getChatMediaHistory(
       if (messagesArray.length > 0) {
         newOffsetId = messagesArray[messagesArray.length - 1].id;
       }
-      // Determine if there are more messages based on whether the limit was met
-      // And if the returned type is messages.messagesSlice or messages.channelMessages
+      
       if (historyResult._ === 'messages.messagesSlice' || historyResult._ === 'messages.channelMessages') {
         hasMoreMessages = messagesArray.length >= limit && (historyResult.count ? messagesArray.length < historyResult.count : true);
-      } else { // messages.messages (means all messages returned)
+      } else { 
         hasMoreMessages = false;
       }
-    } else { // No messages array or empty
+    } else { 
         hasMoreMessages = false;
     }
 
@@ -894,7 +900,7 @@ export async function prepareFileDownloadInfo(file: CloudFile): Promise<FileDown
           thumb_size: largestSize.type || '',
         };
         totalSize = Number(largestSize.size) || file.totalSizeInBytes || 0;
-        mimeType = 'image/jpeg'; // Default for photos if not specified
+        mimeType = 'image/jpeg'; 
       } else {
          console.warn("prepareFileDownloadInfo: No suitable size found for photo:", mediaObject.id);
       }
@@ -909,7 +915,7 @@ export async function prepareFileDownloadInfo(file: CloudFile): Promise<FileDown
         id: mediaObject.id,
         access_hash: mediaObject.access_hash,
         file_reference: mediaObject.file_reference,
-        thumb_size: '', // Typically empty for full document
+        thumb_size: '', 
       };
       totalSize = Number(mediaObject.size) || file.totalSizeInBytes || 0;
       mimeType = mediaObject.mime_type || 'application/octet-stream';
@@ -940,7 +946,7 @@ export async function downloadFileChunk(
     console.error("downloadFileChunk called with null location.");
     return { errorType: 'OTHER' as const };
   }
-  // console.log("Downloading chunk: offset=" + offset + ", limit=" + limit, location)
+  
   try {
     const result = await api.call('upload.getFile', {
       location: location,
@@ -981,7 +987,7 @@ export async function downloadFileChunk(
   } catch (error: any) {
     if (error.name === 'AbortError' || (error.message && error.message.toLowerCase().includes('aborted'))) {
       console.log("downloadFileChunk: Aborted by user/system.");
-      return { errorType: 'OTHER' as const }; // Or a specific 'ABORTED' type if needed
+      return { errorType: 'OTHER' as const }; 
     }
     console.error('Error downloading file chunk:', error.message, error.originalErrorObject || error);
     const errorMessage = error.message || error.originalErrorObject?.error_message;
@@ -1011,7 +1017,7 @@ export async function downloadCdnFileChunk(
     }
 
     if (result._ === 'upload.cdnFile' && result.bytes) {
-      return { bytes: result.bytes, type: 'application/octet-stream' }; // CDN type is not specified, assume generic
+      return { bytes: result.bytes, type: 'application/octet-stream' }; 
     }
      console.warn("downloadCdnFileChunk: Unexpected response structure from upload.getCdnFile:", result);
     return { errorType: 'OTHER' as const };
@@ -1027,7 +1033,7 @@ export async function downloadCdnFileChunk(
 }
 
 export async function refreshFileReference(item: DownloadQueueItemType): Promise<any | null> {
-  if (!item.telegramMessage) { // inputPeer is not strictly needed for getMessages by ID
+  if (!item.telegramMessage) { 
       console.warn("refreshFileReference: Missing original telegramMessage for item:", item.name);
       return null;
   }
@@ -1037,8 +1043,7 @@ export async function refreshFileReference(item: DownloadQueueItemType): Promise
   }
 
   try {
-    // For messages.getMessages with specific IDs, 'peer' is not required in the request.
-    // The message ID is globally unique.
+    
     const messagesResult = await api.call('messages.getMessages', {
        id: [ { _: 'inputMessageID', id: item.messageId } ],
     });
@@ -1054,17 +1059,17 @@ export async function refreshFileReference(item: DownloadQueueItemType): Promise
       let newFileReference = null;
       let updatedMediaObject = null;
 
-      // Logic to extract media object and file_reference
+      
       if (updatedMessage.media.photo && updatedMessage.media.photo.id) {
         updatedMediaObject = messagesResult.photos?.find((p:any) => String(p.id) === String(updatedMessage.media.photo.id)) || updatedMessage.media.photo;
         newFileReference = updatedMediaObject?.file_reference;
       } else if (updatedMessage.media.document && updatedMessage.media.document.id) {
         updatedMediaObject = messagesResult.documents?.find((d:any) => String(d.id) === String(updatedMessage.media.document.id)) || updatedMessage.media.document;
         newFileReference = updatedMediaObject?.file_reference;
-      } else if (updatedMessage.media.photo) { // Fallback
+      } else if (updatedMessage.media.photo) { 
          updatedMediaObject = updatedMessage.media.photo;
          newFileReference = updatedMediaObject?.file_reference;
-      } else if (updatedMessage.media.document) { // Fallback
+      } else if (updatedMessage.media.document) { 
          updatedMediaObject = updatedMessage.media.document;
          newFileReference = updatedMediaObject?.file_reference;
       }
@@ -1072,12 +1077,12 @@ export async function refreshFileReference(item: DownloadQueueItemType): Promise
 
       if (newFileReference && updatedMediaObject) {
         console.log("File reference refreshed for:", item.name, "New reference (type):", typeof newFileReference, "Is Uint8Array:", newFileReference instanceof Uint8Array);
-        // Ensure file_reference is correctly formatted if it's an object (it should be Uint8Array)
+        
         if (typeof newFileReference === 'object' && !(newFileReference instanceof Uint8Array)) {
            console.warn("refreshFileReference: newFileReference is an object but not Uint8Array. This is unusual.", newFileReference);
-           // Attempt to find a byte array within it, or handle as error. For now, logging.
+           
         }
-        return updatedMediaObject; // Return the full media object which should now have the updated file_reference
+        return updatedMediaObject; 
       } else {
         console.warn("Could not obtain new file_reference or updatedMediaObject for item:", item.name, "Updated Message:", updatedMessage);
       }
@@ -1090,24 +1095,23 @@ export async function refreshFileReference(item: DownloadQueueItemType): Promise
   return null;
 }
 
-// Function to calculate SHA256 hash for CDN file verification
+
 export async function calculateSHA256(data: Uint8Array): Promise<Uint8Array> {
-  // Using Web Crypto API which is standard in browsers
-  // For Node.js, you'd use `crypto.createHash('sha256').update(data).digest()`
+  
+  
   try {
-    // const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-    // return new Uint8Array(hashBuffer);
-    // Using the imported @cryptography/sha256
+    
+    
     const hash = cryptoSha256(data);
-    return Promise.resolve(hash); // The library is synchronous
+    return Promise.resolve(hash); 
   } catch (error) {
     console.error("Error calculating SHA256:", error);
-    throw new Error("SHA256 calculation failed"); // Or handle more gracefully
+    throw new Error("SHA256 calculation failed"); 
   }
 }
 
 
-// Helper to compare two Uint8Arrays (e.g., for CDN file hashes)
+
 export function areUint8ArraysEqual(arr1?: Uint8Array, arr2?: Uint8Array): boolean {
   if (!arr1 || !arr2 || arr1.length !== arr2.length) {
     return false;
@@ -1121,25 +1125,25 @@ export function areUint8ArraysEqual(arr1?: Uint8Array, arr2?: Uint8Array): boole
 }
 
 function generateRandomLong(): string {
-  // Generate a 64-bit random number as a string
-  // This is a common way to generate random_id for Telegram API calls
+  
+  
   const buffer = new Uint8Array(8);
-  crypto.getRandomValues(buffer); // For browser environment
-  // Convert to BigInt then to string to ensure it's a valid long
+  crypto.getRandomValues(buffer); 
+  
   const view = new DataView(buffer.buffer);
   return view.getBigInt64(0, true).toString();
 }
 
 const TEN_MB = 10 * 1024 * 1024;
-const UPLOAD_PART_SIZE = 512 * 1024; // 512KB, must be a divisor of 1MB
+const UPLOAD_PART_SIZE = 512 * 1024; 
 
 export async function uploadFile(
   inputPeer: any,
   fileToUpload: File,
   onProgress: (percent: number) => void,
-  signal?: AbortSignal // AbortSignal for cancellation
+  signal?: AbortSignal 
 ): Promise<any> {
-  const client_file_id_str = generateRandomLong(); // Unique ID for this file upload session
+  const client_file_id_str = generateRandomLong(); 
   const isBigFile = fileToUpload.size > TEN_MB;
   const totalChunks = Math.ceil(fileToUpload.size / UPLOAD_PART_SIZE);
 
@@ -1155,7 +1159,7 @@ export async function uploadFile(
     const offset = i * UPLOAD_PART_SIZE;
     const chunkBlob = fileToUpload.slice(offset, offset + UPLOAD_PART_SIZE);
     
-    // Convert Blob to ArrayBuffer then to Uint8Array
+    
     const chunkBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result as ArrayBuffer);
@@ -1167,64 +1171,64 @@ export async function uploadFile(
     try {
       let partUploadResult;
       if (isBigFile) {
-        // console.log(`Uploading big file part ${i}/${totalChunks -1} for ${fileToUpload.name}`);
+        
         partUploadResult = await api.call('upload.saveBigFilePart', {
           file_id: client_file_id_str,
           file_part: i,
           file_total_parts: totalChunks,
           bytes: chunkBytes,
-        }, { signal }); // Pass signal here
+        }, { signal }); 
       } else {
-        // console.log(`Uploading small file part ${i}/${totalChunks -1} for ${fileToUpload.name}`);
+        
         partUploadResult = await api.call('upload.saveFilePart', {
           file_id: client_file_id_str,
           file_part: i,
           bytes: chunkBytes,
-        }, { signal }); // Pass signal here
+        }, { signal }); 
       }
 
-      if (partUploadResult?._ !== 'boolTrue' && partUploadResult !== true) { // MTProto often returns true for boolTrue
+      if (partUploadResult?._ !== 'boolTrue' && partUploadResult !== true) { 
           console.error(`Failed to save file part ${i} for ${fileToUpload.name}. Server response:`, partUploadResult);
           throw new Error(`Failed to save file part ${i}. Server response: ${JSON.stringify(partUploadResult)}`);
       }
 
-      const progressPercent = Math.round(((i + 1) / totalChunks) * 90); // Cap at 90% until final sendMedia
+      const progressPercent = Math.round(((i + 1) / totalChunks) * 90); 
       onProgress(progressPercent);
 
     } catch (error: any) {
       console.error(`Error uploading part ${i} for ${fileToUpload.name}:`, error.message, error.originalErrorObject || error);
-      throw error; // Propagate error to stop upload
+      throw error; 
     }
   }
 
-  onProgress(95); // Indicate parts are done, preparing to send media
+  onProgress(95); 
   console.log(`All parts uploaded for ${fileToUpload.name}. Sending media...`);
 
-  // Construct the inputFile based on whether it's a big file or not
+  
   const inputFilePayload = isBigFile
     ? { _: 'inputFileBig', id: client_file_id_str, parts: totalChunks, name: fileToUpload.name }
-    : { _: 'inputFile', id: client_file_id_str, parts: totalChunks, name: fileToUpload.name, md5_checksum: '' /* Optional, can be empty */ };
+    : { _: 'inputFile', id: client_file_id_str, parts: totalChunks, name: fileToUpload.name, md5_checksum: ''  };
 
   try {
     const result = await api.call('messages.sendMedia', {
       peer: inputPeer,
       media: {
         _: 'inputMediaUploadedDocument',
-        nosound_video: false, // Adjust if handling videos specifically
-        force_file: false,   // Set to true to send as file even if it's a recognized media type
-        spoiler: false,      // For spoiler media
+        nosound_video: false, 
+        force_file: false,   
+        spoiler: false,      
         file: inputFilePayload,
         mime_type: fileToUpload.type || 'application/octet-stream',
         attributes: [
           { _: 'documentAttributeFilename', file_name: fileToUpload.name },
-          // Potentially add documentAttributeAudio/Video if applicable and you have duration, etc.
+          
         ],
-        // thumb: { _: 'inputDocumentEmpty' } // Optional: for custom thumbnail
+        
       },
-      message: '', // Optional caption
-      random_id: generateRandomLong(), // Client-side unique ID for the message
-      // schedule_date, send_as, etc. are other optional params
-    }, { signal }); // Pass signal here
+      message: '', 
+      random_id: generateRandomLong(), 
+      
+    }, { signal }); 
 
     console.log(`Media sent successfully for ${fileToUpload.name}:`, result);
     onProgress(100);
@@ -1251,8 +1255,8 @@ export async function updateDialogFiltersOrder(order: number[]): Promise<boolean
 export async function exportChatlistInvite(filterId: number): Promise<{ link: string } | null> {
   try {
     console.log("Attempting to export chatlist invite for filter ID:", filterId);
-    // According to schema, chatlists.exportChatlistInvite needs a `chatlist: InputChatlist`
-    // which is `inputChatlistDialogFilter#f3e0da33 filter_id:int = InputChatlist;`
+    
+    
     const inputChatlist = {
         _: 'inputChatlistDialogFilter',
         filter_id: filterId
@@ -1260,15 +1264,15 @@ export async function exportChatlistInvite(filterId: number): Promise<{ link: st
 
     const result = await api.call('chatlists.exportChatlistInvite', {
         chatlist: inputChatlist,
-        title: '', // Title seems to be for the invite link itself, can be empty or derived
-        peers: []  // Peers to specifically include in this link, can be empty
+        title: '', 
+        peers: []  
     });
     console.log("Export chatlist invite result:", result);
-    // Result should be chatlists.ExportedChatlistInvite, which contains invite:ExportedChatlistInvite
+    
     if (result && result.invite && result.invite.url) {
         return { link: result.invite.url };
     }
-    // Fallback for older schema or direct ExportedChatlistInvite response
+    
     if (result && result.url) {
         return { link: result.url };
     }
@@ -1280,51 +1284,40 @@ export async function exportChatlistInvite(filterId: number): Promise<{ link: st
   }
 }
 
-// Placeholder for messages.updateDialogFilter as its usage for create/delete is complex
-// and depends on how `flags` and `filter` presence/absence are interpreted by the API.
-// The schema provided shows: messages.updateDialogFilter#1ad4a04a flags:# id:int filter:flags.0?DialogFilter = Bool;
-// This means 'filter' is optional if flags bit 0 is not set.
-// To delete a filter: call with `id` and no `filter` (flags bit 0 should not be set).
-// To create a filter: call with `id:0` (or a new temp client ID that server replaces) and the `filter` object (flags bit 0 must be set).
-// To update a filter: call with existing `id` and the `filter` object (flags bit 0 must be set).
+
 export async function updateDialogFilter(
-  filterIdToUpdate: number | null, // null for create, existing ID for update/delete
-  filterData?: DialogFilter // undefined for delete
+  filterIdToUpdate: number | null, 
+  filterData?: DialogFilter 
 ): Promise<boolean> {
   const params: any = {
-    flags: 0, // Default flags
+    flags: 0, 
   };
 
   if (filterIdToUpdate !== null) {
     params.id = filterIdToUpdate;
   } else {
-    // For creation, Telegram typically expects a 0 or a temporary client-generated ID
-    // that it will replace. For simplicity, let's assume the API handles ID generation
-    // or that filterData.id is used if present and filterIdToUpdate is null.
-    // If creating, filterData.id should be 0 or a new temp ID.
-    // If filterData is provided and has an ID, and filterIdToUpdate is null, it's ambiguous.
-    // Let's assume if filterIdToUpdate is null, it's a create, and filterData provides details.
-    // The API might use filterData.id or generate a new one.
-    // For now, we will require filterData to be present for creation.
+    
+    
+    
+    
     if (!filterData) {
         console.error("updateDialogFilter: For creation (filterIdToUpdate is null), filterData must be provided.");
         return false;
     }
-    // If it's a create, the ID in params should ideally be 0 or not set,
-    // letting the server assign. However, the method takes an 'id' param.
-    // Let's use a convention: if filterIdToUpdate is null, we use filterData.id (expecting it to be new/0).
-    params.id = filterData.id; // This might need adjustment based on API behavior for creation.
+    
+    
+    params.id = filterData.id; 
   }
 
-  if (filterData) { // Create or Update
-    params.flags |= (1 << 0); // Set bit 0 to indicate 'filter' is present
-    params.filter = filterData; // Pass the DialogFilter object
-  } else if (filterIdToUpdate === null) { // Trying to create without filterData
+  if (filterData) { 
+    params.flags |= (1 << 0); 
+    params.filter = filterData; 
+  } else if (filterIdToUpdate === null) { 
      console.error("updateDialogFilter: Cannot create a filter without filterData.");
      return false;
   }
-  // If filterData is undefined and filterIdToUpdate is not null, it's a delete operation.
-  // In this case, flags bit 0 remains 0, and 'filter' param is absent.
+  
+  
 
   try {
     console.log("Attempting to update/create/delete dialog filter with params:", JSON.stringify(params, null, 2));
@@ -1343,3 +1336,4 @@ if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
   (window as any).telegramUserSession = userSession;
 }
 
+    
