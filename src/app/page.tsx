@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
@@ -75,8 +76,11 @@ export default function Home() {
   const [dialogFilters, setDialogFilters] = useState<DialogFilter[]>([]);
   const [activeDialogFilterId, setActiveDialogFilterId] = useState<number>(ALL_CHATS_FILTER_ID);
   const [activeFilterDetails, setActiveFilterDetails] = useState<DialogFilter | null>(null);
-  const [isLoadingDialogFilters, setIsLoadingDialogFilters] = useState(true);
+  const [isLoadingDialogFilters, setIsLoadingDialogFilters] = useState(true); // True initially
   const [isReorderingFolders, setIsReorderingFolders] = useState(false);
+  const [hasFetchedDialogFilters, setHasFetchedDialogFilters] = useState(false);
+  const [lastFetchedFilterId, setLastFetchedFilterId] = useState<number | null>(null);
+
 
   // --- Master Chat List State (for "All Chats" and base for client-side filtering) ---
   const [masterChatList, setMasterChatList] = useState<CloudFolder[]>([]);
@@ -189,8 +193,11 @@ export default function Home() {
     const defaultFilters: DialogFilter[] = [{ _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, pinned_peers: [], include_peers: [], exclude_peers: [] }];
     setDialogFilters(defaultFilters);
     setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
-    setActiveFilterDetails(defaultFilters[0]);
-    setIsLoadingDialogFilters(true);
+    setActiveFilterDetails(defaultFilters[0]); // Set default active details
+    setIsLoadingDialogFilters(true); // Will be false after fetch or if fetch not needed
+    setHasFetchedDialogFilters(false); // Reset flag
+    setLastFetchedFilterId(null); // Reset flag
+
 
     downloadQueueRef.current.forEach(item => {
       if (item.abortController && !item.abortController.signal.aborted) {
@@ -243,9 +250,11 @@ export default function Home() {
   }, [toast, handleReset]);
 
   const fetchDialogFilters = useCallback(async () => {
+    console.log("fetchDialogFilters: Called. isLoadingDialogFilters:", isLoadingDialogFilters);
     setIsLoadingDialogFilters(true);
     try {
       const filtersFromServer = await telegramService.getDialogFilters();
+      console.log("Filters received in page.tsx from service:", filtersFromServer);
       const processedFilters: DialogFilter[] = [];
       let allChatsFilterExists = false;
 
@@ -286,16 +295,13 @@ export default function Home() {
       });
 
       setDialogFilters(processedFilters);
-      const currentActiveFilter = processedFilters.find(f => f.id === activeDialogFilterId) ||
-                                  processedFilters.find(f => f.id === ALL_CHATS_FILTER_ID) ||
-                                  (processedFilters.length > 0 ? processedFilters[0] : null);
-
-      if (currentActiveFilter) {
-          setActiveDialogFilterId(currentActiveFilter.id);
-          // activeFilterDetails will be set by the useEffect watching activeDialogFilterId
-      } else {
-          setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
+      // setActiveDialogFilterId will trigger useEffect to set activeFilterDetails
+      // If no active filter ID is explicitly set, default to ALL_CHATS_FILTER_ID
+      const currentFilterStillValid = processedFilters.some(f => f.id === activeDialogFilterId);
+      if (!currentFilterStillValid) {
+        setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
       }
+      setHasFetchedDialogFilters(true);
 
     } catch (error: any) {
       handleApiError(error, "Error Fetching Folders", "Could not load your chat folders.");
@@ -303,17 +309,18 @@ export default function Home() {
       setDialogFilters(defaultFiltersOnError);
       setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
     } finally {
+      console.log("fetchDialogFilters: Setting isLoadingDialogFilters to false.");
       setIsLoadingDialogFilters(false);
     }
-  }, [handleApiError, activeDialogFilterId]);
+  }, [handleApiError, activeDialogFilterId]); // Removed setIsLoadingDialogFilters from here
 
 
  const fetchDataForActiveFilter = useCallback(async (isLoadingMore = false) => {
     if (!isConnected || !activeFilterDetails) {
+        console.warn("fetchDataForActiveFilter: Skipped because not connected or no activeFilterDetails.");
         return;
     }
 
-    setIsLoadingDisplayedChats(true); // This will be set more accurately by the useEffect watching lists
     setAuthError(null);
 
     const filterType = activeFilterDetails._;
@@ -324,11 +331,10 @@ export default function Home() {
         toast({ title: `Loading More Chats for ${filterTitle}...` });
     } else {
         toast({ title: `Fetching Chats for ${filterTitle}...` });
-        // Resetting specific list pagination is handled in the useEffect that calls this
     }
 
     try {
-        if (filterType === 'dialogFilterDefault') { // All Chats
+        if (filterType === 'dialogFilterDefault') {
             const currentOffsetState = masterChatListPaginationState;
             const limit = isLoadingMore ? SUBSEQUENT_MASTER_CHATS_LOAD_LIMIT : INITIAL_MASTER_CHATS_LOAD_LIMIT;
             setIsLoadingMasterChatList(true);
@@ -339,7 +345,7 @@ export default function Home() {
                 isLoadingMore ? currentOffsetState.offsetDate : 0,
                 isLoadingMore ? currentOffsetState.offsetId : 0,
                 isLoadingMore ? currentOffsetState.offsetPeer : { _: 'inputPeerEmpty' },
-                ALL_CHATS_FILTER_ID
+                ALL_CHATS_FILTER_ID // Explicitly ALL_CHATS_FILTER_ID for master list
             );
 
             setMasterChatList(prev => isLoadingMore ? [...prev, ...response.folders] : response.folders);
@@ -358,9 +364,9 @@ export default function Home() {
             setIsLoadingMasterChatList(false);
 
         } else if (filterType === 'dialogFilterChatlist') {
-             // Client-side filtering, master list must be loaded
             if (!isLoadingMore && masterChatList.length === 0 && masterChatListPaginationState.hasMore && !isLoadingMasterChatList) {
                 setIsLoadingMasterChatList(true);
+                 // Fetch initial batch for master list if empty
                 const response = await telegramService.getTelegramChats(
                     INITIAL_MASTER_CHATS_LOAD_LIMIT, 0, 0, { _: 'inputPeerEmpty' }, ALL_CHATS_FILTER_ID
                 );
@@ -376,8 +382,6 @@ export default function Home() {
             } else if (!isLoadingMore) {
                  toast({ title: `Displaying Folder: ${filterTitle}`, description: "Filtering from existing chats." });
             }
-             // "Load more" for chatlists is handled by loading more masterChatList items
-
         } else if (filterType === 'dialogFilter') {
             const currentOffsetState = specificFolderPaginationState;
             const limit = isLoadingMore ? SUBSEQUENT_SPECIFIC_FOLDER_CHATS_LOAD_LIMIT : INITIAL_SPECIFIC_FOLDER_CHATS_LOAD_LIMIT;
@@ -389,7 +393,7 @@ export default function Home() {
                 isLoadingMore ? currentOffsetState.offsetDate : 0,
                 isLoadingMore ? currentOffsetState.offsetId : 0,
                 isLoadingMore ? currentOffsetState.offsetPeer : { _: 'inputPeerEmpty' },
-                filterId
+                filterId // Use the specific filter ID for these types
             );
             setSpecificFolderChatList(prev => isLoadingMore ? [...prev, ...response.folders] : response.folders);
             setSpecificFolderPaginationState({
@@ -412,29 +416,24 @@ export default function Home() {
             handleApiError(error, `Error Fetching Chats for ${folderDisplayTitle}`, `This folder (ID: ${activeFilterDetails?.id}) could not be loaded directly. It might be a special folder type.`);
              if (filterType === 'dialogFilter') {
                 setSpecificFolderPaginationState(prev => ({ ...prev, hasMore: false }));
-                setSpecificFolderChatList([]); // Ensure list is empty on failure
+                setSpecificFolderChatList([]);
              }
         } else {
             handleApiError(error, `Error Fetching Chats for ${folderDisplayTitle}`, `Could not load chats. ${error.message || 'Unknown error'}`);
         }
-        // Reset states on error
         if (filterType === 'dialogFilterDefault') {
              setMasterChatList([]);
              setMasterChatListPaginationState(prev => ({ ...prev, hasMore: false }));
              setIsLoadingMasterChatList(false);
              setIsLoadingMoreMasterChatList(false);
         } else if (filterType === 'dialogFilterChatlist') {
-            setMasterChatListPaginationState(prev => ({ ...prev, hasMore: false }));
-            setIsLoadingMasterChatList(false);
-            setIsLoadingMoreMasterChatList(false);
-        } else { // dialogFilter that failed with other error
+            // Master list errors handled by its own setters, no separate reset here
+        } else { 
              setSpecificFolderChatList([]);
              setSpecificFolderPaginationState(prev => ({ ...prev, hasMore: false }));
              setIsLoadingSpecificFolder(false);
              setIsLoadingMoreSpecificFolder(false);
         }
-    } finally {
-        // setIsLoadingDisplayedChats will be set by the useEffect watching the source lists
     }
   }, [isConnected, activeFilterDetails, masterChatListPaginationState, specificFolderPaginationState, handleApiError, toast, masterChatList.length, isLoadingMasterChatList]);
 
@@ -492,48 +491,79 @@ export default function Home() {
   }, [activeFilterDetails, fetchDataForActiveFilter, masterChatListPaginationState, specificFolderPaginationState, isLoadingDisplayedChats, isLoadingMoreMasterChatList, isLoadingMoreSpecificFolder, toast, handleApiError]);
 
 
-  // Effect to update activeFilterDetails when activeDialogFilterId changes
+  // Effect to update activeFilterDetails when activeDialogFilterId or dialogFilters change
   useEffect(() => {
-    const currentFilter = dialogFilters.find(f => f.id === activeDialogFilterId);
-    if (currentFilter) {
-      // Only update if the filter ID or type actually changes to prevent unnecessary re-renders
-      if (activeFilterDetails?.id !== currentFilter.id || activeFilterDetails?._ !== currentFilter._) {
-          setActiveFilterDetails(currentFilter);
+    const newFilter = dialogFilters.find(f => f.id === activeDialogFilterId) ||
+                      dialogFilters.find(f => f.id === ALL_CHATS_FILTER_ID) ||
+                      (dialogFilters.length > 0 ? dialogFilters[0] : null);
+
+    if (newFilter) {
+      if (activeFilterDetails?.id !== newFilter.id || activeFilterDetails?._ !== newFilter._) {
+        console.log(`Setting activeFilterDetails: ID ${newFilter.id}, Title: '${newFilter.title}'`);
+        setActiveFilterDetails(newFilter);
       }
-    } else if (dialogFilters.length > 0) {
-      // Fallback if current activeDialogFilterId doesn't match any loaded filter
-      const fallbackFilter = dialogFilters.find(f => f.id === ALL_CHATS_FILTER_ID) || dialogFilters[0];
-      if (activeFilterDetails?.id !== fallbackFilter.id || activeFilterDetails?._ !== fallbackFilter._) {
-          setActiveFilterDetails(fallbackFilter);
-      }
+    } else if (activeFilterDetails !== null) {
+      console.log(`Clearing activeFilterDetails, no filter found for ID ${activeDialogFilterId}`);
+      setActiveFilterDetails(null);
     }
-  }, [activeDialogFilterId, dialogFilters, activeFilterDetails]);
+  }, [activeDialogFilterId, dialogFilters]); // Removed activeFilterDetails from dependency array
 
 
   // Effect to trigger fetching data when active filter details change or connection established
   useEffect(() => {
-    if (isConnected && activeFilterDetails && !isLoadingDialogFilters) {
-      console.log(`useEffect for fetch: activeFilterDetails changed to ${activeFilterDetails.title} (ID: ${activeFilterDetails.id}). Preparing to fetch data.`);
-      setSelectedFolder(null); // Clear selected chat when folder tab changes
-      setCurrentChatMedia([]); // Clear media for previous chat
+    const filterIdToFetch = activeFilterDetails?.id;
 
-      // Reset pagination and lists for the specific type of filter we're about to load
-      // This ensures fetchDataForActiveFilter starts fresh for the new filter.
-      if(activeFilterDetails._ === 'dialogFilterDefault') {
-         setMasterChatList([]); // Clear if it's a new "All Chats" view (e.g. after reconnect)
-         setMasterChatListPaginationState(initialPaginationState);
+    if (isConnected && activeFilterDetails && !isLoadingDialogFilters && filterIdToFetch !== undefined) {
+      // Fetch only if the filter ID has changed from the last one we fetched for,
+      // OR if the relevant list for the current filter is empty and not loading (handles initial load/retry)
+      const isNewFilter = lastFetchedFilterId !== filterIdToFetch;
+      let isCurrentFilterListEmptyAndNotLoading = false;
+
+      if (activeFilterDetails._ === 'dialogFilterDefault') {
+        isCurrentFilterListEmptyAndNotLoading = masterChatList.length === 0 && !isLoadingMasterChatList && masterChatListPaginationState.hasMore;
       } else if (activeFilterDetails._ === 'dialogFilterChatlist') {
-         // For Chatlist, we rely on masterChatList. If master is empty, fetchData will load it.
-         // No explicit reset of masterChatList here, but pagination might be reset if master is empty.
+        // For chatlist, master list is the source. Fetch master if it's empty.
+        isCurrentFilterListEmptyAndNotLoading = masterChatList.length === 0 && !isLoadingMasterChatList && masterChatListPaginationState.hasMore && activeFilterDetails.include_peers.length > 0;
       } else if (activeFilterDetails._ === 'dialogFilter') {
-         setSpecificFolderChatList([]);
-         setSpecificFolderPaginationState(initialPaginationState);
+        isCurrentFilterListEmptyAndNotLoading = specificFolderChatList.length === 0 && !isLoadingSpecificFolder && specificFolderPaginationState.hasMore;
       }
-      setDisplayedChats([]); // Clear displayed chats immediately
 
-      fetchDataForActiveFilter(false); // Initial fetch for the new filter
+      if (isNewFilter || isCurrentFilterListEmptyAndNotLoading) {
+        console.log(`useEffect for fetch: Conditions met for filter ID ${filterIdToFetch} ('${activeFilterDetails.title}'). Preparing to fetch data. NewFilter: ${isNewFilter}, EmptyAndNotLoading: ${isCurrentFilterListEmptyAndNotLoading}`);
+        setLastFetchedFilterId(filterIdToFetch);
+
+        setSelectedFolder(null);
+        setCurrentChatMedia([]);
+        setDisplayedChats([]); // Clear displayed chats immediately for the new filter
+
+        // Reset pagination and lists for the specific type of filter we're about to load IF IT'S A NEW FILTER
+        if (isNewFilter) {
+            if (activeFilterDetails._ === 'dialogFilterDefault') {
+                setMasterChatList([]);
+                setMasterChatListPaginationState(initialPaginationState);
+            } else if (activeFilterDetails._ === 'dialogFilterChatlist') {
+                // If master list itself needs reset for a new chatlist (e.g., if we decide masterList is chatlist-specific)
+                // For now, assume masterList is global and let fetchDataForActiveFilter load it if empty
+            } else if (activeFilterDetails._ === 'dialogFilter') {
+                setSpecificFolderChatList([]);
+                setSpecificFolderPaginationState(initialPaginationState);
+            }
+        }
+        fetchDataForActiveFilter(false);
+      } else {
+        console.log(`useEffect for fetch: Conditions NOT met for filter ID ${filterIdToFetch}. isNewFilter: ${isNewFilter}, isEmptyAndNotLoading: ${isCurrentFilterListEmptyAndNotLoading}`);
+      }
     }
-  }, [isConnected, activeFilterDetails, isLoadingDialogFilters, fetchDataForActiveFilter]);
+  }, [
+      isConnected,
+      activeFilterDetails, // This is the primary trigger
+      isLoadingDialogFilters,
+      fetchDataForActiveFilter, // useCallback dep
+      lastFetchedFilterId, // New dep to prevent refetch of same filter
+      // Add source list states to re-evaluate if a fetch is needed for the *same* filter if it's empty
+      masterChatList.length, isLoadingMasterChatList, masterChatListPaginationState.hasMore,
+      specificFolderChatList.length, isLoadingSpecificFolder, specificFolderPaginationState.hasMore
+    ]);
 
 
   // Effect to set displayedChats based on the active filter type and loaded data
@@ -559,16 +589,9 @@ export default function Home() {
         );
         setDisplayedChats(filtered);
       } else {
-        // If a chatlist has no include_peers (e.g., "All Groups" which is a criteria-based filter)
-        // this client-side filter won't work. It should have been handled by server-side.
-        // This indicates a potential mismatch in DialogFilter type interpretation.
-        // For now, if include_peers is empty for a chatlist, show master (or handle as server-filtered)
-        // If masterChatList is already filtered by server for "All Groups", then include_peers might be empty.
-        // This logic might need to be smarter if DialogFilterChatlist *always* relies on include_peers.
-        setDisplayedChats([]); // Or a message "This chatlist type is not fully supported for display"
-        console.warn(`DialogFilterChatlist '${activeFilterDetails.title}' has empty include_peers. Displaying empty or requires server-side fetch of this type.`);
+        setDisplayedChats([]); 
+        console.warn(`DialogFilterChatlist '${activeFilterDetails.title}' has empty include_peers. Displaying empty.`);
       }
-      // 'hasMore' for chatlists is tied to 'hasMore' of the master list if we expect to find more peers later
       setHasMoreDisplayedChats(masterChatListPaginationState.hasMore);
       setIsLoadingDisplayedChats(isLoadingMasterChatList || isLoadingMoreMasterChatList);
     } else if (filterType === 'dialogFilter') {
@@ -594,6 +617,7 @@ export default function Home() {
 
 
   const checkExistingConnection = useCallback(async () => {
+    setIsLoadingDialogFilters(true); // Assume loading at start
     try {
       const previouslyConnected = await telegramService.isUserConnected();
       if (previouslyConnected) {
@@ -604,23 +628,20 @@ export default function Home() {
         setIsConnected(true);
         setAuthStep('initial');
         setAuthError(null);
-        // Fetch dialog filters only if connected
-        // This will subsequently trigger data fetch via useEffect
-        if (dialogFilters.length === 0 || (dialogFilters.length === 1 && dialogFilters[0].id === ALL_CHATS_FILTER_ID)) {
+        if (!hasFetchedDialogFilters) {
             await fetchDialogFilters();
+            // setHasFetchedDialogFilters(true); // fetchDialogFilters sets this now
+        } else {
+            setIsLoadingDialogFilters(false); // If already fetched, not loading
         }
       } else {
         setIsConnected(false);
         setPhoneNumber('');
         setAuthStep('initial');
         setAuthError(null);
-        setMasterChatList([]);
-        setSpecificFolderChatList([]);
-        setDisplayedChats([]);
-        const defaultFiltersOnError: DialogFilter[] = [{ _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, pinned_peers: [], include_peers: [], exclude_peers: [] }];
-        setDialogFilters(defaultFiltersOnError);
-        setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
-        setIsLoadingDialogFilters(false);
+        handleReset(false); // Reset state without server logout
+        setHasFetchedDialogFilters(false);
+        setIsLoadingDialogFilters(false); // Not loading if not connected
       }
     } catch (error: any) {
       const errorMessage = error.message || (error.originalErrorObject?.error_message);
@@ -641,9 +662,11 @@ export default function Home() {
       const defaultFiltersOnError: DialogFilter[] = [{ _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, pinned_peers: [], include_peers: [], exclude_peers: [] }];
       setDialogFilters(defaultFiltersOnError);
       setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
+      setActiveFilterDetails(defaultFiltersOnError[0]);
+      setHasFetchedDialogFilters(false);
       setIsLoadingDialogFilters(false);
     }
-  }, [toast, handleApiError, fetchDialogFilters, dialogFilters.length]);
+  }, [toast, handleApiError, fetchDialogFilters, hasFetchedDialogFilters, handleReset]);
 
 
   useEffect(() => {
@@ -971,7 +994,7 @@ export default function Home() {
 
 
   useEffect(() => {
-    if (isConnected) { // To avoid running when refs might be cleared on disconnect
+    if (isConnected) { 
         const timerMaster = setTimeout(() => {
             isLoadingMoreMasterChatListRequestInFlightRef.current = false;
         }, 150);
@@ -1131,7 +1154,9 @@ export default function Home() {
         setPhoneCode('');
         setPassword('');
         toast({ title: "Sign In Successful!", description: "Connected to Telegram." });
-        await fetchDialogFilters();
+        if (!hasFetchedDialogFilters) {
+            await fetchDialogFilters();
+        }
       } else {
         setAuthError("Sign in failed. Unexpected response from server.");
         toast({ title: "Sign In Failed", description: "Unexpected response from server.", variant: "destructive" });
@@ -1167,7 +1192,9 @@ export default function Home() {
         setPhoneCode('');
         setPassword('');
         toast({ title: "2FA Successful!", description: "Connected to Telegram." });
-        await fetchDialogFilters();
+         if (!hasFetchedDialogFilters) {
+            await fetchDialogFilters();
+        }
       } else {
         setAuthError("2FA failed. Unexpected response from server.");
         toast({ title: "2FA Failed", description: "Unexpected response from server.", variant: "destructive" });
@@ -1589,7 +1616,9 @@ const handleStartUpload = async () => {
 
   const handleSelectDialogFilter = (filterId: number) => {
     if (activeDialogFilterId === filterId && !isReorderingFolders) return;
-    setActiveDialogFilterId(filterId);
+    // Setting activeDialogFilterId will trigger the useEffect to update activeFilterDetails
+    // which in turn will trigger the useEffect to fetch data if lastFetchedFilterId condition is met.
+    setActiveDialogFilterId(filterId); 
   };
 
   const handleToggleReorderFolders = async () => {
@@ -1604,7 +1633,9 @@ const handleStartUpload = async () => {
         toast({ title: "Folder Order Saved", description: "The new folder order has been saved to Telegram." });
       } catch (error: any) {
         handleApiError(error, "Error Saving Order", "Could not save the folder order.");
-        fetchDialogFilters();
+        // Re-fetch filters to revert to server state on error
+        setHasFetchedDialogFilters(false); // Allow re-fetch
+        await fetchDialogFilters();
       }
     }
     setIsReorderingFolders(prev => !prev);
@@ -1653,7 +1684,33 @@ const handleStartUpload = async () => {
     toast({ title: "Add New Folder", description: "This feature (adding a new folder) is not yet implemented." });
   };
 
-  if (!isConnected) {
+  const handleRefreshCurrentFilter = () => {
+    if (activeFilterDetails) {
+        console.log(`Manual refresh triggered for filter ID: ${activeFilterDetails.id} ('${activeFilterDetails.title}')`);
+        setLastFetchedFilterId(null); // Allow re-fetch by clearing lastFetchedFilterId
+        // The useEffect watching activeFilterDetails will then re-trigger the fetch
+        // because lastFetchedFilterId !== activeFilterDetails.id will be true.
+        // We might need to explicitly call fetchDataForActiveFilter if the above doesn't trigger reliably
+        // due to activeFilterDetails reference not changing.
+        // For safety, explicitly reset lists and call fetch.
+        if (activeFilterDetails._ === 'dialogFilterDefault') {
+            setMasterChatList([]);
+            setMasterChatListPaginationState(initialPaginationState);
+        } else if (activeFilterDetails._ === 'dialogFilterChatlist') {
+            // For Chatlist, master list is the source. Re-fetching master.
+            setMasterChatList([]);
+            setMasterChatListPaginationState(initialPaginationState);
+        } else if (activeFilterDetails._ === 'dialogFilter') {
+            setSpecificFolderChatList([]);
+            setSpecificFolderPaginationState(initialPaginationState);
+        }
+        setDisplayedChats([]);
+        fetchDataForActiveFilter(false);
+    }
+  };
+
+
+  if (!isConnected && !isConnecting && authStep === 'initial') {
     return (
       <>
         <Header ref={headerRef} isConnected={false} />
@@ -1682,6 +1739,29 @@ const handleStartUpload = async () => {
       </>
     );
   }
+  
+  // Show loading screen if connecting or initial dialog filters are loading
+  if (isConnecting || (isConnected && isLoadingDialogFilters && !activeFilterDetails) ) {
+     return (
+      <div className="min-h-screen flex flex-col">
+        <Header ref={headerRef} isConnected={isConnected} />
+        <main className="flex-grow flex items-center justify-center text-center">
+          <div>
+            <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
+            <p className="text-lg text-muted-foreground">
+              {isConnecting ? "Connecting to Telegram..." : "Loading your folders..."}
+            </p>
+          </div>
+        </main>
+         <footer ref={footerRef} className="py-3 px-4 sm:px-6 lg:px-8 text-center border-t text-xs">
+            <p className="text-muted-foreground">
+            Telegram Cloudifier &copy; {new Date().getFullYear()}
+            </p>
+        </footer>
+      </div>
+    );
+  }
+
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -1721,13 +1801,13 @@ const handleStartUpload = async () => {
                   {isLoadingDisplayedChats && displayedChats.length === 0 && (
                     <div className="mt-4 flex items-center">
                       <Loader2 className="animate-spin h-5 w-5 text-primary mr-2" />
-                      <span>Loading initial chat list for current folder...</span>
+                      <span>Loading initial chat list for "{activeFilterDetails?.title || 'current folder'}"...</span>
                     </div>
                   )}
                    { !isLoadingDisplayedChats && displayedChats.length === 0 && !authError && isConnected && (
                      <div className="mt-4 flex items-center text-sm">
                         <MessageSquare className="mr-2 h-5 w-5 text-muted-foreground" />
-                        <span>Your chat list for "{activeFilterDetails?.title || 'current folder'}" appears to be empty or still loading. Click "Select a Chat".</span>
+                        <span>Your chat list for "{activeFilterDetails?.title || 'current folder'}" appears to be empty. Click "Select a Chat" or try refreshing.</span>
                     </div>
                     )}
                 </div>
@@ -1747,7 +1827,7 @@ const handleStartUpload = async () => {
         dialogFilters={dialogFilters}
         activeDialogFilterId={activeDialogFilterId}
         onSelectDialogFilter={handleSelectDialogFilter}
-        isLoadingDialogFilters={isLoadingDialogFilters}
+        isLoadingDialogFilters={isLoadingDialogFilters && dialogFilters.length <=1 }
         isReorderingFolders={isReorderingFolders}
         onToggleReorderFolders={handleToggleReorderFolders}
         onMoveFilter={handleMoveFilter}
@@ -1765,7 +1845,7 @@ const handleStartUpload = async () => {
         }
         hasMore={hasMoreDisplayedChats}
         onLoadMore={loadMoreDisplayedChats}
-        onRefresh={() => activeFilterDetails && fetchDataForActiveFilter(false)}
+        onRefresh={handleRefreshCurrentFilter}
       />
 
       <FileDetailsPanel
@@ -1806,3 +1886,5 @@ const handleStartUpload = async () => {
     </div>
   );
 }
+
+    
