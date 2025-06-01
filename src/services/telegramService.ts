@@ -7,12 +7,11 @@ import { formatFileSize } from '@/lib/utils';
 import cryptoSha256 from '@cryptography/sha256';
 
 export { formatFileSize };
-
+export const ALL_CHATS_FILTER_ID = 0; 
 
 const API_ID_STRING = process.env.NEXT_PUBLIC_TELEGRAM_API_ID;
 const API_HASH = process.env.NEXT_PUBLIC_TELEGRAM_API_HASH;
 const CRITICAL_ERROR_MESSAGE_PREFIX = "CRITICAL_TELEGRAM_API_ERROR: ";
-export const ALL_CHATS_FILTER_ID = 0; 
 const CLOUDIFIER_APP_SIGNATURE_V1 = "TELEGRAM_CLOUDIFIER_V1.0";
 
 
@@ -480,7 +479,7 @@ export async function isUserConnected(): Promise<boolean> {
   console.log("[isUserConnected] Checking connection status.");
   if (API_ID === undefined || !API_HASH || !api.initialized) {
       console.log("[isUserConnected] API not configured or not initialized. Returning false.");
-      if (userSession.user) await signOut(); // Ensure local state is cleared if API is bad
+      if (userSession.user) await signOut(); 
       return false;
   }
 
@@ -504,7 +503,7 @@ export async function isUserConnected(): Promise<boolean> {
             return false;
         }
          console.warn(`[isUserConnected] users.getUsers check failed with non-critical auth error, but user object exists. Error: ${errorMessage}. Treating as connected for now.`);
-        return true; // Or false depending on how strictly to treat this
+        return true; 
     }
   }
   console.log("[isUserConnected] No user object in session. User is not connected.");
@@ -559,7 +558,7 @@ function transformDialogToCloudFolder(dialog: any, chats: any[], users: any[], i
             const userAssociated = users?.find((u:any) => String(u.id) === peerUserId);
             if (userAssociated && userAssociated.access_hash !== undefined) {
                 inputPeerForApiCalls = { _: 'inputPeerUser', user_id: userAssociated.id, access_hash: userAssociated.access_hash };
-            } else if (dialog.peer.access_hash !== undefined) { // Fallback to access_hash on peer itself if available
+            } else if (dialog.peer.access_hash !== undefined) { 
                  inputPeerForApiCalls = { _: 'inputPeerUser', user_id: peer.user_id, access_hash: dialog.peer.access_hash };
             }
         } else if (peer._ === 'peerChat' && peerChatId) {
@@ -568,7 +567,7 @@ function transformDialogToCloudFolder(dialog: any, chats: any[], users: any[], i
             const chatAssociated = chats?.find((c:any) => String(c.id) === peerChannelId);
             if (chatAssociated && chatAssociated.access_hash !== undefined) {
                 inputPeerForApiCalls = { _: 'inputPeerChannel', channel_id: chatAssociated.id, access_hash: chatAssociated.access_hash };
-            } else if (dialog.peer.access_hash !== undefined) { // Fallback
+            } else if (dialog.peer.access_hash !== undefined) { 
                 inputPeerForApiCalls = { _: 'inputPeerChannel', channel_id: peer.channel_id, access_hash: dialog.peer.access_hash };
             }
         }
@@ -577,7 +576,6 @@ function transformDialogToCloudFolder(dialog: any, chats: any[], users: any[], i
     }
 
     if (!inputPeerForApiCalls) {
-      // Try constructing from dialog.peer directly if it has necessary fields
       if (peer._ === 'peerUser' && peer.user_id != null && peer.access_hash != null) {
          inputPeerForApiCalls = { _: 'inputPeerUser', user_id: peer.user_id, access_hash: peer.access_hash };
       } else if (peer._ === 'peerChannel' && peer.channel_id != null && peer.access_hash != null) {
@@ -637,9 +635,9 @@ export async function getDialogFilters(): Promise<DialogFilter[]> {
     const result = await api.call('messages.getDialogFilters');
     console.log("[getDialogFilters] API response:", result);
 
-    if (Array.isArray(result)) { // Sometimes API returns array directly
+    if (Array.isArray(result)) { 
       return result as DialogFilter[];
-    } else if (result && Array.isArray(result.filters)) { // Expected structure
+    } else if (result && Array.isArray(result.filters)) { 
       return result.filters as DialogFilter[];
     } else {
       console.warn("[getDialogFilters] Unexpected structure for messages.getDialogFilters response:", result);
@@ -1053,7 +1051,6 @@ export async function refreshFileReference(item: DownloadQueueItemType): Promise
   console.log(`[refreshFileReference] Refreshing for item: ${item.name}, msgId: ${item.messageId}, peer:`, item.inputPeer);
 
   try {
-    // For channels/supergroups, messages.getMessages might need channel_id in peer or use channels.getMessages
     let messagesResult;
     if (item.inputPeer._ === 'inputPeerChannel') {
         messagesResult = await api.call('channels.getMessages', {
@@ -1321,7 +1318,7 @@ export async function createManagedCloudChannel(
   try {
     const createChannelResult = await api.call('channels.createChannel', {
       title: title,
-      about: channelAbout, // Embed signature here
+      about: channelAbout, 
       megagroup: type === 'supergroup',
       for_import: false, 
     });
@@ -1397,63 +1394,68 @@ export async function createManagedCloudChannel(
 }
 
 export async function fetchAndVerifyManagedCloudChannels(): Promise<CloudFolder[]> {
-  console.log("[fetchAndVerifyManagedCloudChannels] Called. Scanning for cloud channels by checking 'about' field.");
+  console.log("[FVC] Called. Scanning for cloud channels by checking 'about' field.");
   if (!(await isUserConnected())) {
-    console.log("[fetchAndVerifyManagedCloudChannels] User not connected, returning empty array.");
+    console.log("[FVC] User not connected, returning empty array.");
     return [];
   }
 
   const verifiedCloudChannels: CloudFolder[] = [];
   let allDialogs: any[] = [];
-  let allChats: any[] = [];
-  let allUsers: any[] = [];
+  let allChatsFromDialogs: any[] = []; // Renamed to avoid confusion with the local 'chats' in transformDialogToCloudFolder scope
+  let allUsersFromDialogs: any[] = []; // Renamed
 
   try {
     const dialogsResult = await api.call('messages.getDialogs', {
       offset_date: 0,
       offset_id: 0,
       offset_peer: { _: 'inputPeerEmpty' },
-      limit: 200, 
+      limit: 200, // Fetch a decent batch to scan
       hash: 0,
     });
 
     if (dialogsResult && dialogsResult.dialogs) {
       allDialogs = dialogsResult.dialogs;
-      allChats = dialogsResult.chats || [];
-      allUsers = dialogsResult.users || [];
+      allChatsFromDialogs = dialogsResult.chats || [];
+      allUsersFromDialogs = dialogsResult.users || [];
+      console.log(`[FVC] Fetched ${allDialogs.length} dialogs, ${allChatsFromDialogs.length} chats, ${allUsersFromDialogs.length} users.`);
     } else {
-      console.warn("[fetchAndVerifyManagedCloudChannels] No dialogs found in messages.getDialogs response.");
+      console.warn("[FVC] No dialogs found in messages.getDialogs response.");
       return [];
     }
   } catch (error: any) {
-    console.error("[fetchAndVerifyManagedCloudChannels] Error fetching dialogs for scanning:", error.message);
+    console.error("[FVC] Error fetching dialogs for scanning:", error.message);
     return []; 
   }
 
-  console.log(`[fetchAndVerifyManagedCloudChannels] Scanning ${allDialogs.length} dialogs.`);
+  console.log(`[FVC] Scanning ${allDialogs.length} dialogs for cloud signature in 'about' field.`);
 
   for (const dialog of allDialogs) {
-    if (dialog.peer?._ !== 'peerChannel') {
+    if (dialog.peer?._ !== 'peerChannel') { // This condition is for entities that *are* channels/supergroups
       continue; 
     }
 
-    const channelInfo = allChats.find(c => String(c.id) === String(dialog.peer.channel_id));
+    // Find the corresponding full chat object from the 'chats' array in dialogsResult
+    const channelInfo = allChatsFromDialogs.find(c => String(c.id) === String(dialog.peer.channel_id));
+    
     if (!channelInfo) {
-      console.warn(`[fetchAndVerifyManagedCloudChannels] Skipping channel ID ${dialog.peer.channel_id}: Full channel info not found in 'chats' array from getDialogs.`);
+      console.warn(`[FVC] Skipping peerChannel ID ${dialog.peer.channel_id}: Full channel info not found in 'chats' array from getDialogs. Dialog peer:`, dialog.peer);
       continue;
     }
     
-    console.log(`[fetchAndVerifyManagedCloudChannels] Checking channel: "${channelInfo.title}" (ID: ${channelInfo.id}), About: "${channelInfo.about}"`);
+    // Determine if it's a channel or supergroup for logging
+    const entityType = channelInfo.megagroup ? "Supergroup" : (channelInfo.gigagroup ? "Gigagroup" : "Channel");
+    const aboutFieldPreview = channelInfo.about ? channelInfo.about.substring(0, 100) + (channelInfo.about.length > 100 ? '...' : '') : 'N/A';
+
+    console.log(`[FVC] Checking ${entityType}: "${channelInfo.title}" (ID: ${channelInfo.id}). IsMegagroup: ${!!channelInfo.megagroup}. About: "${aboutFieldPreview}"`);
 
     if (channelInfo.about && typeof channelInfo.about === 'string' && channelInfo.about.includes(CLOUDIFIER_APP_SIGNATURE_V1)) {
-        console.log(`[fetchAndVerifyManagedCloudChannels] Channel ID ${channelInfo.id} ("${channelInfo.title}") VERIFIED via 'about' field.`);
+        console.log(`[FVC] VERIFIED (via 'about' field) ${entityType} ID ${channelInfo.id} ("${channelInfo.title}") as Cloud Storage.`);
         
-        // Since we're simplifying and not fetching message 1, we don't have a config object here yet.
-        // This will be fetched when the user actually *selects* this cloud folder.
         const cloudFolder = transformDialogToCloudFolder(
             dialog, 
-            allChats,
-            allUsers,
+            allChatsFromDialogs, // Pass the correct chats array
+            allUsersFromDialogs,   // Pass the correct users array
             true, // isAppManagedCloud
             undefined // cloudConfig initially undefined, will be fetched on demand
         );
@@ -1461,7 +1463,7 @@ export async function fetchAndVerifyManagedCloudChannels(): Promise<CloudFolder[
             verifiedCloudChannels.push(cloudFolder);
         }
     } else {
-        // console.log(`[fetchAndVerifyManagedCloudChannels] Channel ID ${channelInfo.id} ("${channelInfo.title}") NOT a cloud channel (about field no match or empty).`);
+        // console.log(`[FVC] ${entityType} ID ${channelInfo.id} ("${channelInfo.title}") - 'about' field did not match signature or was empty.`);
     }
   }
 
@@ -1475,3 +1477,4 @@ if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
   (window as any).telegramUserSession = userSession;
 }
     
+
