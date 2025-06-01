@@ -12,8 +12,8 @@ export { formatFileSize };
 const API_ID_STRING = process.env.NEXT_PUBLIC_TELEGRAM_API_ID;
 const API_HASH = process.env.NEXT_PUBLIC_TELEGRAM_API_HASH;
 const CRITICAL_ERROR_MESSAGE_PREFIX = "CRITICAL_TELEGRAM_API_ERROR: ";
-export const ALL_CHATS_FILTER_ID = 0; // Export this constant
-export const CLOUD_STORAGE_FILTER_ID = -100; // Special ID for our cloud storage tab
+export const ALL_CHATS_FILTER_ID = 0; 
+export const CLOUD_STORAGE_FILTER_ID = -100; 
 const CLOUDIFIER_APP_SIGNATURE_V1 = "TELEGRAM_CLOUDIFIER_V1.0";
 const MANAGED_CLOUD_CHANNEL_IDS_KEY = 'managed_cloud_channel_ids';
 
@@ -90,8 +90,6 @@ class API {
         api_id: this.apiId,
         api_hash: this.apiHash,
       });
-      console.log('MTProto client initialized in API class. Checking for crypto.getSRPParams:',
-                  typeof this.mtproto.crypto?.getSRPParams);
       this.initialized = true;
       console.log('MTProto client initialized successfully in API class for browser environment.');
 
@@ -140,7 +138,7 @@ class API {
   async call(method: string, params: any = {}, options: any = {}): Promise<any> {
     if (!this.initialized || !this.mtproto || typeof this.mtproto.call !== 'function') {
       const initErrorMsg = (typeof window !== 'undefined' && (window as any).telegramApiError) || CRITICAL_ERROR_MESSAGE_PREFIX + "MTProto not properly initialized.";
-      console.error(`API.call: MTProto not available. Call to '${method}' aborted. Params:`, params, "Options:", options);
+      // console.error(`API.call: MTProto not available. Call to '${method}' aborted. Params:`, params, "Options:", options);
       let err = new Error(initErrorMsg);
       (err as any).originalErrorObject = { error_message: initErrorMsg, error_code: -1 };
       return Promise.reject(err);
@@ -149,14 +147,10 @@ class API {
     let originalErrorObject: any = null;
 
     try {
-      // console.log(`API Call: ${method}`, params, options);
       const result = await this.mtproto.call(method, params, options);
       return result;
     } catch (error: any) {
       originalErrorObject = JSON.parse(JSON.stringify(error));
-      // console.log(`MTProto call '${method}' raw error object:`, originalErrorObject, error);
-
-
       const { error_code, error_message } = originalErrorObject || {};
 
       if (error_code === 420 && typeof error_message === 'string' && error_message.startsWith('FLOOD_WAIT_')) {
@@ -309,7 +303,6 @@ export async function sendCode(fullPhoneNumber: string): Promise<string> {
         throw new Error("Failed to send code: phone_code_hash not received from Telegram.");
     }
     userSession.phone_code_hash = result.phone_code_hash;
-    console.log('sendCode: phone_code_hash received and stored in session:', userSession.phone_code_hash);
     return userSession.phone_code_hash;
   } catch (error: any) {
     console.error('Error in sendCode function after api.call:', error.message, error.originalErrorObject || error);
@@ -329,7 +322,6 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
   if (!userSession.phone) userSession.phone = fullPhoneNumber;
 
   try {
-    console.log('signIn: Calling auth.signIn with phone_code_hash:', userSession.phone_code_hash);
     const result = await api.call('auth.signIn', {
       phone_number: userSession.phone,
       phone_code_hash: userSession.phone_code_hash,
@@ -354,10 +346,7 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
 
     if (errorMessage === 'SESSION_PASSWORD_NEEDED') {
       try {
-        console.log('signIn: SESSION_PASSWORD_NEEDED caught. Attempting to call account.getPassword.');
         const passwordData = await api.call('account.getPassword');
-        console.log('signIn: account.getPassword call completed. Response:', JSON.stringify(passwordData, null, 2));
-
         if (!passwordData || !passwordData.srp_id || !passwordData.current_algo || !passwordData.srp_B) {
              console.error("signIn: Failed to initialize 2FA: Missing critical SRP parameters from account.getPassword response.", passwordData);
              delete userSession.phone_code_hash;
@@ -372,11 +361,6 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
             salt2: passwordData.current_algo.salt2,
             srp_B: passwordData.srp_B
         };
-        console.log('signIn: 2FA required. SRP ID and Params successfully set in userSession:', {
-            srp_id: userSession.srp_id,
-            srp_params_exist: !!userSession.srp_params,
-        });
-
 
         delete userSession.phone_code_hash;
 
@@ -387,8 +371,6 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
       } catch (getPasswordError: any) {
         console.error('signIn: Error during account.getPassword call or subsequent SRP setup:', getPasswordError.message, getPasswordError.originalErrorObject || getPasswordError);
         delete userSession.phone_code_hash;
-
-
         if (getPasswordError.message === '2FA_REQUIRED' && getPasswordError.srp_id) {
           throw getPasswordError;
         }
@@ -407,12 +389,6 @@ export async function signIn(fullPhoneNumber: string, code: string): Promise<{ u
 
 
 export async function checkPassword(password: string): Promise<any> {
-  console.log('checkPassword: Entered. Current userSession state for 2FA:', {
-      srp_id: userSession.srp_id,
-      srp_params_exist: !!userSession.srp_params,
-      crypto_available: !!api.mtproto.crypto?.getSRPParams,
-  });
-
   if (!userSession.srp_id || !userSession.srp_params || !api.mtproto.crypto?.getSRPParams) {
     let missingDetail = "";
     if (!userSession.srp_id) missingDetail += "srp_id is missing. ";
@@ -426,14 +402,10 @@ export async function checkPassword(password: string): Promise<any> {
 
   try {
     const { g, p, salt1, salt2, srp_B } = userSession.srp_params;
-
     const { A, M1 } = await api.mtproto.crypto.getSRPParams({
         g, p, salt1, salt2, gB: srp_B, password,
     });
-
     const srp_id_as_string = String(userSession.srp_id);
-    console.log('checkPassword: Calling auth.checkPassword with srp_id:', srp_id_as_string);
-
     const checkResult = await api.call('auth.checkPassword', {
         password: {
             _: 'inputCheckPasswordSRP',
@@ -442,25 +414,18 @@ export async function checkPassword(password: string): Promise<any> {
             M1: M1,
         }
     });
-    console.log('checkPassword: auth.checkPassword successful:', checkResult);
-
     if (checkResult.user) {
         userSession.user = checkResult.user;
         saveUserDataToLocalStorage();
     }
-
     delete userSession.srp_params;
     delete userSession.srp_id;
     return checkResult.user;
-
   } catch (error: any) {
     const message = error.message || error.originalErrorObject?.error_message;
     console.error('checkPassword: Error during auth.checkPassword or SRP calculation:', message, error.originalErrorObject || error);
-
-
     delete userSession.srp_params;
     delete userSession.srp_id;
-
     if (message === 'PASSWORD_HASH_INVALID') {
         throw new Error('Invalid password. Please try again. (PASSWORD_HASH_INVALID)');
     }
@@ -468,11 +433,9 @@ export async function checkPassword(password: string): Promise<any> {
         console.warn('checkPassword: SRP_ID_INVALID or AUTH_RESTART scenario. Throwing AUTH_RESTART.');
         throw new Error('AUTH_RESTART');
     }
-
     if (error.originalErrorObject && Object.keys(error.originalErrorObject).length > 0 && error.message) {
       throw error;
     }
-
     console.warn('checkPassword: Unhandled error type, defaulting to AUTH_RESTART.');
     throw new Error('AUTH_RESTART');
   }
@@ -490,7 +453,7 @@ export async function signOut(): Promise<void> {
     if (typeof window !== 'undefined') {
       localStorage.removeItem(USER_SESSION_KEY);
       localStorage.removeItem(USER_PHONE_KEY);
-      localStorage.removeItem(MANAGED_CLOUD_CHANNEL_IDS_KEY); // Clear managed channel IDs on sign out
+      localStorage.removeItem(MANAGED_CLOUD_CHANNEL_IDS_KEY); 
       try {
         if (api && api.mtproto && typeof api.mtproto.clearStorage === 'function' && api.initialized) {
           await api.mtproto.clearStorage();
@@ -604,7 +567,7 @@ function transformDialogToCloudFolder(dialog: any, chats: any[], users: any[], i
       } else if (peer._ === 'peerChat' && peer.chat_id != null ) {
          inputPeerForApiCalls = { _: 'inputPeerChat', chat_id: peer.chat_id };
       } else {
-        console.warn("transformDialogToCloudFolder: Could not construct valid inputPeer for dialog from peer directly:", JSON.stringify(dialog.peer));
+        // console.warn("transformDialogToCloudFolder: Could not construct valid inputPeer for dialog from peer directly:", JSON.stringify(dialog.peer));
       }
     }
 
@@ -635,34 +598,39 @@ function transformDialogToCloudFolder(dialog: any, chats: any[], users: any[], i
 
 function transformDialogsToCloudFolders(dialogsResult: any): CloudFolder[] {
   const { dialogs, chats, users } = dialogsResult;
+  // console.log("[transformDialogsToCloudFolders] Input dialogsResult.dialogs:", dialogs);
 
   if (!dialogs || !Array.isArray(dialogs)) {
     return [];
   }
 
-  return dialogs.map((dialog: any) => transformDialogToCloudFolder(dialog, chats, users))
+  const transformed = dialogs.map((dialog: any) => transformDialogToCloudFolder(dialog, chats, users))
                 .filter(folder => folder !== null) as CloudFolder[];
+  // console.log("[transformDialogsToCloudFolders] Transformed folders:", transformed);
+  return transformed;
 }
 
 
 export async function getDialogFilters(): Promise<DialogFilter[]> {
+  console.log("[getDialogFilters] Service function called.");
   if (!(await isUserConnected())) {
+    console.log("[getDialogFilters] User not connected, returning empty array.");
     return [];
   }
   try {
     const result = await api.call('messages.getDialogFilters');
-
+    console.log("[getDialogFilters] API response:", result);
 
     if (Array.isArray(result)) {
       return result as DialogFilter[];
     } else if (result && Array.isArray(result.filters)) {
       return result.filters as DialogFilter[];
     } else {
-      console.warn("Unexpected structure for messages.getDialogFilters response:", result);
+      console.warn("[getDialogFilters] Unexpected structure for messages.getDialogFilters response:", result);
       return [];
     }
   } catch (error: any) {
-    console.error('Error fetching dialog filters:', error.message, error.originalErrorObject || error);
+    console.error('[getDialogFilters] Error fetching dialog filters:', error.message, error.originalErrorObject || error);
     return [];
   }
 }
@@ -675,7 +643,9 @@ export async function getTelegramChats(
   offsetPeer: any = { _: 'inputPeerEmpty' },
   folderId?: number
 ): Promise<GetChatsPaginatedResponse> {
+  console.log(`[getTelegramChats] Called. Limit: ${limit}, OffsetDate: ${offsetDate}, OffsetId: ${offsetId}, OffsetPeer:`, offsetPeer, `FolderId: ${folderId}`);
   if (!(await isUserConnected())) {
+    console.log("[getTelegramChats] User not connected, returning empty response.");
     return { folders: [], nextOffsetDate: 0, nextOffsetId: 0, nextOffsetPeer: { _: 'inputPeerEmpty' }, hasMore: false };
   }
 
@@ -684,7 +654,7 @@ export async function getTelegramChats(
       offset_id: offsetId,
       offset_peer: offsetPeer || { _: 'inputPeerEmpty' },
       limit: limit,
-      hash: 0,
+      hash: 0, // Using 0 as per documentation for pagination
   };
 
   if (folderId !== undefined && folderId !== ALL_CHATS_FILTER_ID) {
@@ -694,7 +664,9 @@ export async function getTelegramChats(
 
   try {
     const dialogsResult = await api.call('messages.getDialogs', params);
+    // console.log("[getTelegramChats] Raw API response (messages.getDialogs):", dialogsResult);
     const transformedFolders = transformDialogsToCloudFolders(dialogsResult);
+    // console.log("[getTelegramChats] Transformed folders:", transformedFolders);
 
     let newOffsetDate = offsetDate;
     let newOffsetId = offsetId;
@@ -702,7 +674,14 @@ export async function getTelegramChats(
     let hasMore = false;
 
     if (dialogsResult.messages && dialogsResult.messages.length > 0) {
-      hasMore = dialogsResult.messages.length >= limit;
+      // hasMore should be true if the number of messages fetched is equal to the limit,
+      // or if dialogsResult.count (if present, usually for 'messages.messagesSlice') suggests more.
+      if (dialogsResult._ === 'messages.messagesSlice' && dialogsResult.count) {
+          hasMore = dialogsResult.messages.length < dialogsResult.count && dialogsResult.messages.length > 0;
+      } else {
+          hasMore = dialogsResult.messages.length >= limit;
+      }
+
 
       if (dialogsResult.dialogs && dialogsResult.dialogs.length > 0) {
           const lastDialog = dialogsResult.dialogs[dialogsResult.dialogs.length - 1];
@@ -729,11 +708,10 @@ export async function getTelegramChats(
                       newOffsetPeerInput = { _: 'inputPeerEmpty' };
                   }
               } else {
-                console.warn("Last dialog peer is invalid, using inputPeerEmpty for next offset peer", lastDialog.peer);
+                console.warn("[getTelegramChats] Last dialog peer is invalid, using inputPeerEmpty for next offset peer", lastDialog.peer);
                 newOffsetPeerInput = { _: 'inputPeerEmpty' };
               }
           } else if (dialogsResult.messages.length > 0 && dialogsResult.dialogs.length < limit) {
-
              hasMore = false;
           }
       } else {
@@ -746,7 +724,7 @@ export async function getTelegramChats(
     if (!newOffsetPeerInput || !newOffsetPeerInput._ || newOffsetPeerInput._ === 'inputPeerSelf') {
         newOffsetPeerInput = { _: 'inputPeerEmpty' };
     }
-
+    console.log(`[getTelegramChats] Returning. Folders count: ${transformedFolders.length}, HasMore: ${hasMore}, NextOffsetId: ${newOffsetId}`);
 
     return {
       folders: transformedFolders,
@@ -1087,11 +1065,9 @@ export async function refreshFileReference(item: DownloadQueueItemType): Promise
 
 
       if (newFileReference && updatedMediaObject) {
-        console.log("File reference refreshed for:", item.name, "New reference (type):", typeof newFileReference, "Is Uint8Array:", newFileReference instanceof Uint8Array);
-
+        console.log("File reference refreshed for:", item.name);
         if (typeof newFileReference === 'object' && !(newFileReference instanceof Uint8Array)) {
            console.warn("refreshFileReference: newFileReference is an object but not Uint8Array. This is unusual.", newFileReference);
-
         }
         return updatedMediaObject;
       } else {
@@ -1108,11 +1084,7 @@ export async function refreshFileReference(item: DownloadQueueItemType): Promise
 
 
 export async function calculateSHA256(data: Uint8Array): Promise<Uint8Array> {
-
-
   try {
-
-
     const hash = cryptoSha256(data);
     return Promise.resolve(hash);
   } catch (error) {
@@ -1166,8 +1138,6 @@ export async function uploadFile(
 
     const offset = i * UPLOAD_PART_SIZE;
     const chunkBlob = fileToUpload.slice(offset, offset + UPLOAD_PART_SIZE);
-
-
     const chunkBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result as ArrayBuffer);
@@ -1179,7 +1149,6 @@ export async function uploadFile(
     try {
       let partUploadResult;
       if (isBigFile) {
-
         partUploadResult = await api.call('upload.saveBigFilePart', {
           file_id: client_file_id_str,
           file_part: i,
@@ -1187,7 +1156,6 @@ export async function uploadFile(
           bytes: chunkBytes,
         }, { signal });
       } else {
-
         partUploadResult = await api.call('upload.saveFilePart', {
           file_id: client_file_id_str,
           file_part: i,
@@ -1199,10 +1167,8 @@ export async function uploadFile(
           console.error(`Failed to save file part ${i} for ${fileToUpload.name}. Server response:`, partUploadResult);
           throw new Error(`Failed to save file part ${i}. Server response: ${JSON.stringify(partUploadResult)}`);
       }
-
       const progressPercent = Math.round(((i + 1) / totalChunks) * 90);
       onProgress(progressPercent);
-
     } catch (error: any) {
       console.error(`Error uploading part ${i} for ${fileToUpload.name}:`, error.message, error.originalErrorObject || error);
       throw error;
@@ -1211,8 +1177,6 @@ export async function uploadFile(
 
   onProgress(95);
   console.log(`All parts uploaded for ${fileToUpload.name}. Sending media...`);
-
-
   const inputFilePayload = isBigFile
     ? { _: 'inputFileBig', id: client_file_id_str, parts: totalChunks, name: fileToUpload.name }
     : { _: 'inputFile', id: client_file_id_str, parts: totalChunks, name: fileToUpload.name, md5_checksum: ''  };
@@ -1229,15 +1193,11 @@ export async function uploadFile(
         mime_type: fileToUpload.type || 'application/octet-stream',
         attributes: [
           { _: 'documentAttributeFilename', file_name: fileToUpload.name },
-
         ],
-
       },
       message: '',
       random_id: generateRandomLong(),
-
     }, { signal });
-
     console.log(`Media sent successfully for ${fileToUpload.name}:`, result);
     onProgress(100);
     return result;
@@ -1250,9 +1210,7 @@ export async function uploadFile(
 
 export async function updateDialogFiltersOrder(order: number[]): Promise<boolean> {
   try {
-    console.log("Attempting to update dialog filters order with:", order);
     const result = await api.call('messages.updateDialogFiltersOrder', { order });
-    console.log("Update dialog filters order result:", result);
     return result === true || (typeof result === 'object' && result._ === 'boolTrue');
   } catch (error: any) {
     console.error('Error updating dialog filters order:', error.message, error.originalErrorObject || error);
@@ -1262,25 +1220,18 @@ export async function updateDialogFiltersOrder(order: number[]): Promise<boolean
 
 export async function exportChatlistInvite(filterId: number): Promise<{ link: string } | null> {
   try {
-    console.log("Attempting to export chatlist invite for filter ID:", filterId);
-
-
     const inputChatlist = {
         _: 'inputChatlistDialogFilter',
         filter_id: filterId
     };
-
     const result = await api.call('chatlists.exportChatlistInvite', {
         chatlist: inputChatlist,
         title: '',
         peers: []
     });
-    console.log("Export chatlist invite result:", result);
-
     if (result && result.invite && result.invite.url) {
         return { link: result.invite.url };
     }
-
     if (result && result.url) {
         return { link: result.url };
     }
@@ -1300,23 +1251,15 @@ export async function updateDialogFilter(
   const params: any = {
     flags: 0,
   };
-
   if (filterIdToUpdate !== null) {
     params.id = filterIdToUpdate;
   } else {
-
-
-
-
     if (!filterData) {
         console.error("updateDialogFilter: For creation (filterIdToUpdate is null), filterData must be provided.");
         return false;
     }
-
-
     params.id = filterData.id;
   }
-
   if (filterData) {
     params.flags |= (1 << 0);
     params.filter = filterData;
@@ -1324,13 +1267,8 @@ export async function updateDialogFilter(
      console.error("updateDialogFilter: Cannot create a filter without filterData.");
      return false;
   }
-
-
-
   try {
-    console.log("Attempting to update/create/delete dialog filter with params:", JSON.stringify(params, null, 2));
     const result = await api.call('messages.updateDialogFilter', params);
-    console.log("Update/create/delete dialog filter result:", result);
     return result === true || (typeof result === 'object' && result._ === 'boolTrue');
   } catch (error: any) {
     console.error('Error updating/creating/deleting dialog filter:', error.message, error.originalErrorObject || error);
@@ -1338,27 +1276,35 @@ export async function updateDialogFilter(
   }
 }
 
-function getManagedCloudChannelIds(): number[] {
+function getManagedCloudChannelIdsFromStorage(): number[] {
+  console.log("[getManagedCloudChannelIdsFromStorage] Reading from localStorage.");
   if (typeof window === 'undefined') return [];
   const stored = localStorage.getItem(MANAGED_CLOUD_CHANNEL_IDS_KEY);
   if (stored) {
     try {
       const ids = JSON.parse(stored);
-      return Array.isArray(ids) ? ids.filter(id => typeof id === 'number') : [];
+      const numericIds = Array.isArray(ids) ? ids.filter(id => typeof id === 'number') : [];
+      console.log("[getManagedCloudChannelIdsFromStorage] Parsed IDs:", numericIds);
+      return numericIds;
     } catch (e) {
-      console.error("Error parsing managed cloud channel IDs from localStorage:", e);
+      console.error("[getManagedCloudChannelIdsFromStorage] Error parsing IDs:", e);
       return [];
     }
   }
+  console.log("[getManagedCloudChannelIdsFromStorage] No IDs found in localStorage.");
   return [];
 }
 
-function addManagedCloudChannelId(channelId: number) {
+function addManagedCloudChannelIdToStorage(channelId: number) {
+  console.log(`[addManagedCloudChannelIdToStorage] Adding ID: ${channelId}`);
   if (typeof window === 'undefined') return;
-  const ids = getManagedCloudChannelIds();
+  const ids = getManagedCloudChannelIdsFromStorage();
   if (!ids.includes(channelId)) {
     ids.push(channelId);
     localStorage.setItem(MANAGED_CLOUD_CHANNEL_IDS_KEY, JSON.stringify(ids));
+    console.log(`[addManagedCloudChannelIdToStorage] Stored updated IDs:`, ids);
+  } else {
+    console.log(`[addManagedCloudChannelIdToStorage] ID ${channelId} already exists.`);
   }
 }
 
@@ -1367,18 +1313,19 @@ export async function createManagedCloudChannel(
   title: string,
   type: CloudChannelType
 ): Promise<{ channelInfo: any; configMessageInfo: any } | null> {
+  console.log(`[createManagedCloudChannel] Called. Title: "${title}", Type: ${type}`);
   if (!(await isUserConnected())) {
     throw new Error("User not connected. Cannot create cloud channel.");
   }
 
   try {
-    console.log(`Attempting to create managed cloud storage: Title: "${title}", Type: ${type}`);
     const createChannelResult = await api.call('channels.createChannel', {
       title: title,
       about: `Managed by Telegram Cloudifier. Type: ${type}. Do not delete the first message. ${CLOUDIFIER_APP_SIGNATURE_V1}`,
       megagroup: type === 'supergroup',
       for_import: false,
     });
+    console.log("[createManagedCloudChannel] channels.createChannel result:", createChannelResult);
 
     if (!createChannelResult || !createChannelResult.chats || createChannelResult.chats.length === 0) {
       console.error("Failed to create channel: No channel data returned.", createChannelResult);
@@ -1391,8 +1338,7 @@ export async function createManagedCloudChannel(
       channel_id: newChannel.id,
       access_hash: newChannel.access_hash,
     };
-
-    console.log(`Channel "${title}" (ID: ${newChannel.id}) created successfully. Sending config message...`);
+    console.log(`[createManagedCloudChannel] Channel "${title}" (ID: ${newChannel.id}) created. Sending config message...`);
 
     const now = new Date().toISOString();
     const initialConfig: CloudChannelConfigV1 = {
@@ -1409,13 +1355,13 @@ export async function createManagedCloudChannel(
         throw new Error("Internal error: Initial configuration message is too large.");
     }
 
-
     const sendMessageResult = await api.call('messages.sendMessage', {
       peer: channelInputPeer,
       message: configJsonString,
       random_id: generateRandomLong(),
       no_webpage: true,
     });
+    console.log("[createManagedCloudChannel] messages.sendMessage result:", sendMessageResult);
 
     if (!sendMessageResult || !sendMessageResult.updates || sendMessageResult.updates.length === 0) {
         console.error("Failed to send config message or result format unexpected.", sendMessageResult);
@@ -1446,135 +1392,139 @@ export async function createManagedCloudChannel(
         sentMessageInfo = { id: (sendMessageResult as any).id || 1, note: "Config message sent, but full object not found in immediate response." };
     }
 
-    addManagedCloudChannelId(newChannel.id); // Store the ID of the successfully created and configured channel
-    console.log(`Config message sent to channel "${title}". Message ID (approx): ${sentMessageInfo.id}. Channel ID ${newChannel.id} stored locally.`);
+    addManagedCloudChannelIdToStorage(newChannel.id); 
+    console.log(`[createManagedCloudChannel] Config message sent. Channel ID ${newChannel.id} stored. Returning success.`);
     return { channelInfo: newChannel, configMessageInfo: sentMessageInfo };
 
   } catch (error: any) {
-    console.error(`Error in createManagedCloudChannel ("${title}", ${type}):`, error.message, error.originalErrorObject || error);
+    console.error(`[createManagedCloudChannel] Error ("${title}", ${type}):`, error.message, error.originalErrorObject || error);
     throw error;
   }
 }
 
 export async function fetchAndVerifyManagedCloudChannels(): Promise<CloudFolder[]> {
-  if (!(await isUserConnected())) return [];
+  console.log("[fetchAndVerifyManagedCloudChannels] Called.");
+  if (!(await isUserConnected())) {
+    console.log("[fetchAndVerifyManagedCloudChannels] User not connected, returning empty array.");
+    return [];
+  }
 
-  const ids = getManagedCloudChannelIds();
+  const ids = getManagedCloudChannelIdsFromStorage();
+  console.log("[fetchAndVerifyManagedCloudChannels] Retrieved IDs from storage:", ids);
   if (ids.length === 0) return [];
 
   const verifiedChannels: CloudFolder[] = [];
 
   try {
-    // Fetch basic info for all managed channels in one go if possible
-    const inputPeersForChannels = ids.map(id => ({ _: 'inputChannel', channel_id: id, access_hash: "0" })); // access_hash might not be needed or known here
+    const inputChannelObjects = ids.map(id => ({ _: 'inputChannel', channel_id: id, access_hash: "0" }));
+    // console.log("[fetchAndVerifyManagedCloudChannels] Input channels for channels.getChannels:", inputChannelObjects);
     
-    let channelObjects: any[] = [];
+    let channelDetailsFromApi: any[] = [];
     try {
-      // channels.getChannels might not work for all if access_hash is truly needed and unknown.
-      // This is an optimistic fetch.
-      const channelsResult = await api.call('channels.getChannels', { id: inputPeersForChannels });
-      if (channelsResult && channelsResult.chats) {
-        channelObjects = channelsResult.chats;
+      const channelsFullResult = await api.call('channels.getChannels', { id: inputChannelObjects });
+      // console.log("[fetchAndVerifyManagedCloudChannels] channels.getChannels raw result:", channelsFullResult);
+      if (channelsFullResult && channelsFullResult.chats) {
+        channelDetailsFromApi = channelsFullResult.chats;
       }
     } catch (getChannelsError: any) {
-      console.warn("Could not bulk fetch channel info via channels.getChannels, will try individually:", getChannelsError.message);
-      // Fallback to individual fetching if bulk fails or isn't suitable
+      console.warn("[fetchAndVerifyManagedCloudChannels] Could not bulk fetch channel info via channels.getChannels, will try individually if needed:", getChannelsError.message);
     }
 
 
     for (const channelId of ids) {
-      let channelInfo = channelObjects.find(c => c.id === channelId);
-      let inputPeer: any;
+      console.log(`[fetchAndVerifyManagedCloudChannels] Processing channel ID: ${channelId}`);
+      let channelInfo = channelDetailsFromApi.find(c => String(c.id) === String(channelId));
+      let inputPeerForHistory: any;
 
       if (channelInfo && channelInfo.access_hash) {
-        inputPeer = { _: 'inputPeerChannel', channel_id: channelInfo.id, access_hash: channelInfo.access_hash };
+        inputPeerForHistory = { _: 'inputPeerChannel', channel_id: channelInfo.id, access_hash: channelInfo.access_hash };
       } else {
-        // If not found in bulk or access_hash missing, try to get full peer info
-        // This might involve a more specific call or be tricky if access_hash is required.
-        // For now, we'll try to fetch history which might work if the user is a member.
-        // A truly robust way would be to ensure access_hash is stored when channel is added/created.
-        // As a placeholder for inputPeer if access_hash isn't available:
-        inputPeer = { _: 'inputPeerChannel', channel_id: channelId, access_hash: "0" }; // May fail for history
-        
-        // Attempt to get minimal channel info if not already fetched
-        if (!channelInfo) {
-             try {
-                const singleChannelResult = await api.call('messages.getPeerDialogs', {
-                    peers: [{ _: 'inputDialogPeer', peer: inputPeer }]
-                });
-                if (singleChannelResult.dialogs?.[0] && singleChannelResult.chats?.[0]) {
-                    channelInfo = singleChannelResult.chats[0];
-                    if (channelInfo.access_hash) {
-                        inputPeer.access_hash = channelInfo.access_hash; // Update access_hash
-                    }
+         // Attempt to get peer dialog info if channelInfo or access_hash is missing from bulk fetch
+        try {
+            const singlePeerDialog = await api.call('messages.getPeerDialogs', {
+                peers: [{ _: 'inputDialogPeer', peer: { _: 'inputPeerChannel', channel_id: channelId, access_hash: "0"} }]
+            });
+            // console.log(`[fetchAndVerifyManagedCloudChannels] messages.getPeerDialogs for ID ${channelId}:`, singlePeerDialog);
+            if (singlePeerDialog.dialogs?.[0] && singlePeerDialog.chats?.[0]) {
+                channelInfo = singlePeerDialog.chats[0];
+                if (channelInfo.access_hash) {
+                    inputPeerForHistory = { _: 'inputPeerChannel', channel_id: channelInfo.id, access_hash: channelInfo.access_hash };
+                } else {
+                     console.warn(`[fetchAndVerifyManagedCloudChannels] Access hash still missing for channel ${channelId} after getPeerDialogs.`);
+                     inputPeerForHistory = { _: 'inputPeerChannel', channel_id: channelId, access_hash: "0" }; // Fallback, might fail
                 }
-            } catch (peerDialogError) {
-                console.warn(`Could not get dialog info for channel ${channelId}`, peerDialogError);
+            } else {
+                console.warn(`[fetchAndVerifyManagedCloudChannels] Could not get dialog info for channel ${channelId}.`);
+                inputPeerForHistory = { _: 'inputPeerChannel', channel_id: channelId, access_hash: "0" }; // Fallback
             }
+        } catch (peerDialogError: any) {
+            console.warn(`[fetchAndVerifyManagedCloudChannels] Error calling messages.getPeerDialogs for channel ${channelId}:`, peerDialogError.message);
+            inputPeerForHistory = { _: 'inputPeerChannel', channel_id: channelId, access_hash: "0" }; // Fallback
         }
       }
       
       if (!channelInfo) {
-          console.warn(`Could not retrieve info for managed channel ID: ${channelId}. Skipping verification for this one.`);
+          console.warn(`[fetchAndVerifyManagedCloudChannels] Could not retrieve info for managed channel ID: ${channelId}. Skipping verification.`);
           continue;
       }
-
+      console.log(`[fetchAndVerifyManagedCloudChannels] Channel info for ID ${channelId}:`, channelInfo, `Using inputPeerForHistory:`, inputPeerForHistory);
 
       try {
-        // Fetch the first message (message ID 1 is usually the creation message or first user message)
         const historyResult = await api.call('messages.getHistory', {
-          peer: inputPeer,
-          offset_id: 0, // Start from latest
+          peer: inputPeerForHistory,
+          offset_id: 0, 
           add_offset: 0, 
           limit: 1, 
-          min_id: 0, // Get all up to message 1 (or earliest)
-          max_id: 2, // Try to get message ID 1
+          min_id: 0, 
+          max_id: 2, 
           hash: 0,
         });
+        // console.log(`[fetchAndVerifyManagedCloudChannels] History result for channel ID ${channelId}:`, historyResult);
         
         let firstMessageText = null;
         if (historyResult.messages && historyResult.messages.length > 0) {
-            // Look for message with id 1, or the earliest if id 1 not found
             const msgId1 = historyResult.messages.find((m:any) => m.id === 1);
             firstMessageText = msgId1 ? msgId1.message : historyResult.messages[historyResult.messages.length -1].message;
         }
-
+        // console.log(`[fetchAndVerifyManagedCloudChannels] First message text for channel ID ${channelId}:`, firstMessageText);
 
         if (firstMessageText) {
           try {
             const parsedConfig = JSON.parse(firstMessageText) as CloudChannelConfigV1;
             if (parsedConfig.app_signature === CLOUDIFIER_APP_SIGNATURE_V1) {
+              console.log(`[fetchAndVerifyManagedCloudChannels] Channel ID ${channelId} VERIFIED. Config:`, parsedConfig);
               const cloudFolder = transformDialogToCloudFolder(
-                { peer: { _: 'peerChannel', channel_id: channelInfo.id, access_hash: channelInfo.access_hash }, title: channelInfo.title }, // Mock dialog structure
-                [channelInfo], // Pass channelInfo as part of chats array
-                [],            // Empty users array
-                true,          // isAppManagedCloud
-                parsedConfig   // cloudConfig
+                { peer: { _: 'peerChannel', channel_id: channelInfo.id, access_hash: channelInfo.access_hash || "0" }, title: channelInfo.title },
+                [channelInfo], 
+                [],            
+                true,          
+                parsedConfig   
               );
               if (cloudFolder) {
-                  // Ensure inputPeer is correctly set on the cloudFolder
                   if (channelInfo.access_hash) {
                      cloudFolder.inputPeer = { _: 'inputPeerChannel', channel_id: channelInfo.id, access_hash: channelInfo.access_hash };
-                  } else if (cloudFolder.inputPeer && !cloudFolder.inputPeer.access_hash && inputPeer.access_hash !== "0") {
-                     cloudFolder.inputPeer.access_hash = inputPeer.access_hash;
+                  } else if (cloudFolder.inputPeer && !cloudFolder.inputPeer.access_hash && inputPeerForHistory.access_hash !== "0") {
+                     cloudFolder.inputPeer.access_hash = inputPeerForHistory.access_hash;
                   }
                  verifiedChannels.push(cloudFolder);
               }
+            } else {
+               console.warn(`[fetchAndVerifyManagedCloudChannels] Channel ID ${channelId} signature mismatch. Expected: ${CLOUDIFIER_APP_SIGNATURE_V1}, Got: ${parsedConfig.app_signature}`);
             }
           } catch (e) {
-            // JSON parse failed or signature mismatch, not a valid config message
-            console.warn(`Channel ID ${channelId} first message is not a valid Cloudifier config:`, e);
+            console.warn(`[fetchAndVerifyManagedCloudChannels] Channel ID ${channelId} first message is not a valid JSON config:`, e);
           }
         } else {
-            console.warn(`Channel ID ${channelId} does not have a first message or it could not be fetched.`);
+            console.warn(`[fetchAndVerifyManagedCloudChannels] Channel ID ${channelId} does not have a first message or it could not be fetched.`);
         }
       } catch (historyError: any) {
-        console.error(`Error fetching history for channel ID ${channelId}:`, historyError.message);
+        console.error(`[fetchAndVerifyManagedCloudChannels] Error fetching history for channel ID ${channelId}:`, historyError.message, historyError.originalErrorObject || historyError);
       }
     }
   } catch (error: any) {
-    console.error("Error in fetchAndVerifyManagedCloudChannels:", error.message);
+    console.error("[fetchAndVerifyManagedCloudChannels] Outer error:", error.message, error.originalErrorObject || error);
   }
+  console.log("[fetchAndVerifyManagedCloudChannels] Returning verified channels:", verifiedChannels);
   return verifiedChannels;
 }
 

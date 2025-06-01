@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { RefreshCw, Loader2, LayoutPanelLeft, MessageSquare, Cloud } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import * as telegramService from "@/services/telegramService";
-import { CLOUD_STORAGE_FILTER_ID, ALL_CHATS_FILTER_ID } from "@/services/telegramService";
+import { ALL_CHATS_FILTER_ID } from "@/services/telegramService";
 
 
 const INITIAL_MASTER_CHATS_LOAD_LIMIT = 30;
@@ -63,7 +63,7 @@ export default function Home() {
   const [dialogFilters, setDialogFilters] = useState<DialogFilter[]>([]);
   const [activeDialogFilterId, setActiveDialogFilterId] = useState<number>(ALL_CHATS_FILTER_ID);
   const [activeFilterDetails, setActiveFilterDetails] = useState<DialogFilter | null>(null);
-  const [isLoadingDialogFilters, setIsLoadingDialogFilters] = useState(true);
+  const [isLoadingDialogFilters, setIsLoadingDialogFilters] = useState(true); // Initial true
   const [hasFetchedDialogFiltersOnce, setHasFetchedDialogFiltersOnce] = useState(false);
   const [isReorderingFolders, setIsReorderingFolders] = useState(false);
 
@@ -101,7 +101,7 @@ export default function Home() {
   const [downloadQueue, setDownloadQueue] = useState<DownloadQueueItemType[]>([]);
 
   const [isChatSelectionDialogOpen, setIsChatSelectionDialogOpen] = useState(false);
-  const [isCloudStorageSelectorOpen, setIsCloudStorageSelectorOpen] = useState(false); // New state for cloud storage dialog
+  const [isCloudStorageSelectorOpen, setIsCloudStorageSelectorOpen] = useState(false);
 
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
   const [filesToUpload, setFilesToUpload] = useState<ExtendedFile[]>([]);
@@ -118,7 +118,7 @@ export default function Home() {
   const [isCreatingCloudChannel, setIsCreatingCloudChannel] = useState(false);
 
   const [appManagedCloudFolders, setAppManagedCloudFolders] = useState<CloudFolder[]>([]);
-  const [isLoadingAppManagedCloudFolders, setIsLoadingAppManagedCloudFolders] = useState(false);
+  const [isLoadingAppManagedCloudFolders, setIsLoadingAppManagedCloudFolders] = useState(true); // Initial true
 
 
   // --- Ref Declarations ---
@@ -136,6 +136,7 @@ export default function Home() {
   // --- useCallback Declarations (Reordered for initialization safety) ---
 
   const handleReset = useCallback(async (performServerLogout = true) => {
+    console.log("[handleReset] Called. Perform server logout:", performServerLogout);
     const currentIsConnected = isConnected;
 
     if (performServerLogout && currentIsConnected) {
@@ -176,12 +177,12 @@ export default function Home() {
     setDialogFilters(defaultFilters);
     setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
     setActiveFilterDetails(defaultFilters[0]);
-    setIsLoadingDialogFilters(true);
+    setIsLoadingDialogFilters(true); // Reset to true for next connection
     setHasFetchedDialogFiltersOnce(false);
     setLastFetchedFilterId(null);
 
     setAppManagedCloudFolders([]);
-    setIsLoadingAppManagedCloudFolders(false);
+    setIsLoadingAppManagedCloudFolders(true); // Reset to true
 
     downloadQueueRef.current.forEach(item => {
       if (item.abortController && !item.abortController.signal.aborted) {
@@ -204,7 +205,7 @@ export default function Home() {
     setPreparingVideoStreamForFileId(null);
 
     setIsChatSelectionDialogOpen(false);
-    setIsCloudStorageSelectorOpen(false); // Close cloud storage dialog
+    setIsCloudStorageSelectorOpen(false); 
     setIsUploadDialogOpen(false);
     setFilesToUpload([]);
     uploadAbortControllersRef.current.forEach((controller) => {
@@ -214,11 +215,12 @@ export default function Home() {
     setIsUploadingFiles(false);
     setIsCreateCloudChannelDialogOpen(false);
     setIsCreatingCloudChannel(false);
+    console.log("[handleReset] Completed.");
   }, [isConnected, toast, videoStreamUrl]);
 
 
   const handleApiError = useCallback((error: any, title: string, defaultMessage: string) => {
-    console.error(`${title} (handleApiError):`, error.message, error.originalErrorObject || error);
+    console.error(`[handleApiError] Title: ${title}, Error Message: ${error.message}, Original Error:`, error.originalErrorObject || error);
     let description = error.message || defaultMessage;
 
     if (error.message && error.message.includes("Invalid hash in mt_dh_gen_ok")) {
@@ -237,42 +239,52 @@ export default function Home() {
   }, [toast, handleReset]);
 
   const fetchAppManagedCloudChannels = useCallback(async (forceRefresh = false) => {
-    if (!isConnected) return;
+    console.log(`[fetchAppManagedCloudChannels] Called. Force refresh: ${forceRefresh}, IsConnected: ${isConnected}, Current count: ${appManagedCloudFolders.length}, IsLoading: ${isLoadingAppManagedCloudFolders}`);
+    if (!isConnected) {
+        console.log("[fetchAppManagedCloudChannels] Skipped: Not connected.");
+        setIsLoadingAppManagedCloudFolders(false); // Ensure loader is off if not connected
+        return;
+    }
     if (!forceRefresh && appManagedCloudFolders.length > 0 && !isLoadingAppManagedCloudFolders) {
-        console.log("fetchAppManagedCloudChannels: Skipped, already have data and not forcing refresh.");
+        console.log("[fetchAppManagedCloudChannels] Skipped: Already have data and not forcing refresh.");
         return;
     }
     setIsLoadingAppManagedCloudFolders(true);
     try {
       const channels = await telegramService.fetchAndVerifyManagedCloudChannels();
+      console.log("[fetchAppManagedCloudChannels] Service returned channels:", channels);
       setAppManagedCloudFolders(channels);
       if (channels.length === 0 && forceRefresh) {
         toast({ title: "No Cloud Storage", description: "No app-managed cloud storage channels found or verified." });
+      } else if (channels.length > 0 && forceRefresh) {
+        toast({ title: "Cloud Storage Refreshed", description: `Found ${channels.length} app-managed cloud channels.` });
       }
     } catch (error: any) {
       handleApiError(error, "Error Fetching Cloud Channels", "Could not load app-managed cloud channels.");
       setAppManagedCloudFolders([]);
     } finally {
       setIsLoadingAppManagedCloudFolders(false);
+      console.log("[fetchAppManagedCloudChannels] Finished.");
     }
   }, [isConnected, handleApiError, appManagedCloudFolders.length, isLoadingAppManagedCloudFolders, toast]);
 
 
   const fetchDialogFilters = useCallback(async () => {
+    console.log(`[fetchDialogFilters] Called. IsConnected: ${isConnected}, HasFetchedOnce: ${hasFetchedDialogFiltersOnce}, Current filters length: ${dialogFilters.length}`);
     if (!isConnected) {
-        console.warn("fetchDialogFilters: Skipped, not connected.");
+        console.warn("[fetchDialogFilters] Skipped, not connected.");
         setIsLoadingDialogFilters(false);
         return;
     }
-    if (hasFetchedDialogFiltersOnce && dialogFilters.length > 1) {
-      console.log("fetchDialogFilters: Skipped, already fetched and populated.");
+    if (hasFetchedDialogFiltersOnce && dialogFilters.length > 1) { // Allow re-fetch if only default "All Chats" is present
+      console.log("[fetchDialogFilters] Skipped, already fetched and populated sufficiently.");
       setIsLoadingDialogFilters(false);
       return;
     }
-    console.log("fetchDialogFilters: Called.");
     setIsLoadingDialogFilters(true);
     try {
       const filtersFromServer = await telegramService.getDialogFilters();
+      console.log("[fetchDialogFilters] Filters from server:", filtersFromServer);
       const processedFilters: DialogFilter[] = [];
       let allChatsFilterExists = false;
 
@@ -300,21 +312,26 @@ export default function Home() {
         processedFilters.unshift({ _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, pinned_peers: [], include_peers: [], exclude_peers: [] });
       }
       
-      // No longer add CLOUD_STORAGE_FILTER_ID tab here
-      // Cloud storage channels will be handled in their own dialog
+      const finalFilters = processedFilters.filter(f => f.id !== telegramService.CLOUD_STORAGE_FILTER_ID);
 
-      processedFilters.sort((a, b) => {
+      finalFilters.sort((a, b) => {
         if (a.id === ALL_CHATS_FILTER_ID) return -1;
         if (b.id === ALL_CHATS_FILTER_ID) return 1;
-        // Keep original server order for others
-        return (displayFilters.findIndex(df => df.id === a.id)) - (displayFilters.findIndex(df => df.id === b.id));
+        const originalFilters = filtersFromServer || [];
+        return (originalFilters.findIndex(df => df.id === a.id)) - (originalFilters.findIndex(df => df.id === b.id));
       });
-
-      setDialogFilters(processedFilters);
+      
+      console.log("[fetchDialogFilters] Processed and sorted filters:", finalFilters);
+      setDialogFilters(finalFilters);
       setHasFetchedDialogFiltersOnce(true);
-      const currentActiveStillExists = processedFilters.some(f => f.id === activeDialogFilterId);
-      if (!currentActiveStillExists) {
+      const currentActiveStillExists = finalFilters.some(f => f.id === activeDialogFilterId);
+      if (!currentActiveStillExists && finalFilters.length > 0) {
+        console.log("[fetchDialogFilters] Current active filter no longer exists or default needed, setting to ALL_CHATS_FILTER_ID.");
         setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
+      } else if (finalFilters.length === 0) {
+        console.warn("[fetchDialogFilters] No filters processed, setting active to ALL_CHATS_FILTER_ID with default.")
+        setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
+        setDialogFilters([{ _:'dialogFilterDefault', id: ALL_CHATS_FILTER_ID, title: "All Chats", flags:0, pinned_peers: [], include_peers: [], exclude_peers: [] }])
       }
     } catch (error: any) {
       handleApiError(error, "Error Fetching Folders", "Could not load your chat folders.");
@@ -324,6 +341,7 @@ export default function Home() {
       setHasFetchedDialogFiltersOnce(false);
     } finally {
       setIsLoadingDialogFilters(false);
+      console.log("[fetchDialogFilters] Finished.");
     }
   }, [isConnected, handleApiError, activeDialogFilterId, hasFetchedDialogFiltersOnce, dialogFilters.length]);
 
@@ -333,9 +351,10 @@ export default function Home() {
     isLoadingMore: boolean,
     folderIdForApiCall?: number
   ) => {
+    console.log(`[fetchAndCacheDialogs] Called. cacheKeyToFetch: ${cacheKeyToFetch}, isLoadingMore: ${isLoadingMore}, folderIdForApiCall: ${folderIdForApiCall}`);
     const existingCacheEntry = chatDataCache.get(cacheKeyToFetch);
     if (existingCacheEntry?.isLoading) {
-      console.log(`fetchAndCacheDialogs: Already loading for cacheKey ${cacheKeyToFetch}. Skipping.`);
+      console.log(`[fetchAndCacheDialogs] Skipped: Already loading for cacheKey ${cacheKeyToFetch}.`);
       return;
     }
 
@@ -353,7 +372,7 @@ export default function Home() {
     const limit = isLoadingMore
         ? (folderIdForApiCall === undefined ? SUBSEQUENT_MASTER_CHATS_LOAD_LIMIT : SUBSEQUENT_SPECIFIC_FOLDER_CHATS_LOAD_LIMIT)
         : (folderIdForApiCall === undefined ? INITIAL_MASTER_CHATS_LOAD_LIMIT : INITIAL_SPECIFIC_FOLDER_CHATS_LOAD_LIMIT);
-
+    console.log(`[fetchAndCacheDialogs] Limit set to: ${limit}`);
     try {
       const response = await telegramService.getTelegramChats(
         limit,
@@ -362,6 +381,7 @@ export default function Home() {
         currentPagination.offsetPeer,
         folderIdForApiCall
       );
+      console.log(`[fetchAndCacheDialogs] Response for cacheKey ${cacheKeyToFetch}:`, response);
 
       const newFoldersFromServer = response.folders;
       let combinedFolders;
@@ -375,6 +395,7 @@ export default function Home() {
       } else {
           combinedFolders = newFoldersFromServer;
       }
+      console.log(`[fetchAndCacheDialogs] Combined folders count for cacheKey ${cacheKeyToFetch}: ${combinedFolders.length}`);
 
       setChatDataCache(prev => {
         const updatedCache = new Map(prev);
@@ -400,23 +421,27 @@ export default function Home() {
             offsetPeer: response.nextOffsetPeer,
             hasMore: response.hasMore,
         });
+         console.log(`[fetchAndCacheDialogs] Updated masterChatList. Count: ${combinedFolders.length}, HasMore: ${response.hasMore}`);
       }
+      const currentFilterTitle = dialogFilters.find(f => f.id === folderIdForApiCall)?.title || (folderIdForApiCall === undefined ? 'All Chats' : `Folder ID ${folderIdForApiCall}`);
       if (response.folders.length > 0) {
-           toast({ title: `${isLoadingMore ? "More" : ""} Chats Loaded!`, description: `Loaded ${response.folders.length} chats for ${folderIdForApiCall !== undefined && folderIdForApiCall !== ALL_CHATS_FILTER_ID ? `folder ID ${folderIdForApiCall}` : 'All Chats'}.` });
+           toast({ title: `${isLoadingMore ? "More" : ""} Chats Loaded!`, description: `Loaded ${response.folders.length} chats for "${currentFilterTitle}".` });
       } else if (!response.hasMore && !isLoadingMore){
-           toast({ title: "No Chats Found", description: `Chat list for "${folderIdForApiCall !== undefined && folderIdForApiCall !== ALL_CHATS_FILTER_ID ? `folder ID ${folderIdForApiCall}` : 'All Chats'}" appears to be empty.`, variant: "default" });
+           toast({ title: "No Chats Found", description: `Chat list for "${currentFilterTitle}" appears to be empty.`, variant: "default" });
       }
 
     } catch (error: any) {
       let errorMsg = error.message || "Failed to load chats.";
       let errorTypeForCache = 'GENERAL_ERROR';
+      const currentFilterTitle = dialogFilters.find(f => f.id === folderIdForApiCall)?.title || (folderIdForApiCall === undefined ? 'All Chats' : `Folder ID ${folderIdForApiCall}`);
+      console.error(`[fetchAndCacheDialogs] Error for cacheKey ${cacheKeyToFetch}:`, errorMsg, error.originalErrorObject || error);
 
       if (error.message?.includes('FOLDER_ID_INVALID') && folderIdForApiCall !== undefined) {
-        errorMsg = `Folder (ID: ${folderIdForApiCall}) is invalid. Will attempt to show matching chats from 'All Chats' if applicable.`;
+        errorMsg = `Folder "${currentFilterTitle}" (ID: ${folderIdForApiCall}) is invalid. Will attempt to show matching chats from 'All Chats' if applicable.`;
         errorTypeForCache = 'FOLDER_ID_INVALID_FALLBACK';
-        toast({ title: `Folder Load Issue (ID: ${folderIdForApiCall})`, description: errorMsg, variant: "default", duration: 7000 });
+        toast({ title: `Folder Load Issue for "${currentFilterTitle}"`, description: errorMsg, variant: "default", duration: 7000 });
       } else {
-        handleApiError(error, `Error loading chats for ${folderIdForApiCall !== undefined && folderIdForApiCall !== ALL_CHATS_FILTER_ID ? `folder ID ${folderIdForApiCall}` : 'All Chats'}`, errorMsg);
+        handleApiError(error, `Error loading chats for "${currentFilterTitle}"`, errorMsg);
       }
 
       setChatDataCache(prev => new Map(prev).set(cacheKeyToFetch, {
@@ -430,22 +455,20 @@ export default function Home() {
         setMasterChatListForFiltering(isLoadingMore ? masterChatListForFiltering : []);
         setMasterChatListPaginationForFiltering(prev => ({ ...prev, hasMore: false }));
       }
+    } finally {
+       console.log(`[fetchAndCacheDialogs] Finished for cacheKey ${cacheKeyToFetch}.`);
     }
-  }, [chatDataCache, handleApiError, toast, masterChatListForFiltering]);
+  }, [chatDataCache, handleApiError, toast, masterChatListForFiltering, dialogFilters]);
 
 
   const fetchDataForActiveFilter = useCallback((isLoadingMore: boolean) => {
+    console.log(`[fetchDataForActiveFilter] Called. IsConnected: ${isConnected}, ActiveFilterDetails:`, activeFilterDetails, `IsLoadingMore: ${isLoadingMore}`);
     if (!isConnected || !activeFilterDetails) return;
 
     const currentFilterId = activeFilterDetails.id;
     const filterType = activeFilterDetails._;
     const cachedEntry = chatDataCache.get(currentFilterId);
-
-    // CLOUD_STORAGE_FILTER_ID is no longer a tab in the regular dialog, so this case is removed from here.
-    // Cloud storage fetching is handled by fetchAppManagedCloudChannels.
-
-    console.log(`fetchDataForActiveFilter called for ID: ${currentFilterId}, Type: ${filterType}, IsLoadingMore: ${isLoadingMore}`);
-
+    
     if (filterType === 'dialogFilterDefault') {
       fetchAndCacheDialogs(currentFilterId, isLoadingMore);
     } else if (filterType === 'dialogFilter') {
@@ -465,14 +488,13 @@ export default function Home() {
 
 
   const loadMoreDisplayedChats = useCallback(async () => {
+    console.log(`[loadMoreDisplayedChats] Called. ActiveFilterDetails:`, activeFilterDetails, `IsLoadingDisplayedChats: ${isLoadingDisplayedChats}`);
     if (!activeFilterDetails || isLoadingDisplayedChats) return;
 
     const filterType = activeFilterDetails._;
     const currentFilterId = activeFilterDetails.id;
     const cachedEntry = chatDataCache.get(currentFilterId);
     const masterCacheEntry = chatDataCache.get(ALL_CHATS_FILTER_ID);
-
-    // This function is now only for the regular chat dialog.
 
     if (filterType === 'dialogFilterDefault') {
         if (masterCacheEntry?.pagination.hasMore && !masterCacheEntry.isLoading) {
@@ -495,17 +517,21 @@ export default function Home() {
 
 
   const checkExistingConnection = useCallback(async () => {
-    setIsLoadingDialogFilters(true); // For regular dialog filters
-    setIsLoadingAppManagedCloudFolders(true); // For cloud channels, assume loading until checked
+    console.log("[checkExistingConnection] Called.");
+    setIsLoadingDialogFilters(true);
+    setIsLoadingAppManagedCloudFolders(true);
     try {
       const previouslyConnected = await telegramService.isUserConnected();
+      console.log("[checkExistingConnection] Previously connected:", previouslyConnected);
       if (previouslyConnected) {
         const storedUser = telegramService.getUserSessionDetails();
         if (storedUser && storedUser.phone) setPhoneNumber(storedUser.phone);
         setIsConnected(true);
         setAuthStep('initial');
         setAuthError(null);
+        console.log("[checkExistingConnection] Fetching app managed cloud channels...");
         await fetchAppManagedCloudChannels();
+        console.log("[checkExistingConnection] Done fetching cloud channels. Now checking/fetching dialog filters.");
         if (!hasFetchedDialogFiltersOnce || dialogFilters.length <= 1) {
             await fetchDialogFilters();
         } else {
@@ -522,6 +548,7 @@ export default function Home() {
       }
     } catch (error: any) {
       const errorMessage = error.message || (error.originalErrorObject?.error_message);
+      console.error("[checkExistingConnection] Error:", errorMessage, error);
       if (errorMessage?.includes("Invalid hash in mt_dh_gen_ok")) {
         toast({
           title: "Connection Handshake Failed",
@@ -542,13 +569,15 @@ export default function Home() {
       setHasFetchedDialogFiltersOnce(false);
       setIsLoadingDialogFilters(false);
     } finally {
-        setIsLoadingAppManagedCloudFolders(false); // Ensure this is set
+        setIsLoadingAppManagedCloudFolders(false); 
+        console.log("[checkExistingConnection] Finished.");
     }
   }, [toast, handleApiError, fetchDialogFilters, hasFetchedDialogFiltersOnce, dialogFilters.length, handleReset, fetchAppManagedCloudChannels]);
 
 
   const fetchInitialChatMedia = useCallback(async (folder: CloudFolder) => {
-    if (!folder.inputPeer) {
+    console.log(`[fetchInitialChatMedia] Called for folder: ${folder.name}, isCloud: ${folder.isAppManagedCloud}`);
+    if (!folder.inputPeer && !folder.isAppManagedCloud) {
       toast({ title: "Error", description: "Cannot load media: InputPeer data is missing for this chat.", variant: "destructive" });
       return;
     }
@@ -557,7 +586,6 @@ export default function Home() {
         setCurrentChatMedia([]);
         setIsLoadingChatMedia(false);
         setHasMoreChatMedia(false);
-        // Here you would eventually parse folder.cloudConfig and display virtual files/folders
         return;
     }
 
@@ -568,7 +596,8 @@ export default function Home() {
     toast({ title: `Loading Media for ${folder.name}`, description: "Fetching initial media items..." });
 
     try {
-      const response = await telegramService.getChatMediaHistory(folder.inputPeer, INITIAL_MEDIA_LOAD_LIMIT, 0);
+      const response = await telegramService.getChatMediaHistory(folder.inputPeer!, INITIAL_MEDIA_LOAD_LIMIT, 0);
+      console.log(`[fetchInitialChatMedia] Media response for ${folder.name}:`, response);
       setCurrentChatMedia(response.files);
       setCurrentMediaOffsetId(response.nextOffsetId || 0);
       setHasMoreChatMedia(response.hasMore);
@@ -582,11 +611,13 @@ export default function Home() {
       setHasMoreChatMedia(false);
     } finally {
       setIsLoadingChatMedia(false);
+      console.log(`[fetchInitialChatMedia] Finished for ${folder.name}.`);
     }
   },[toast, handleApiError]);
 
 
   const loadMoreChatMediaCallback = useCallback(async () => {
+    console.log(`[loadMoreChatMediaCallback] Called. isLoading: ${isLoadingChatMedia}, hasMore: ${hasMoreChatMedia}, selectedFolder:`, selectedFolder);
     if (isLoadingChatMedia || !hasMoreChatMedia || !selectedFolder?.inputPeer || selectedFolder?.isAppManagedCloud) return;
 
     setIsLoadingChatMedia(true);
@@ -618,28 +649,28 @@ export default function Home() {
   }, []);
 
   const handleSelectFolder = (folderId: string) => {
-    // This handler is for regular chats selected from the main chat dialog
+    console.log(`[handleSelectFolder] Regular chat folder selected: ${folderId}`);
     const folder = displayedChats.find(f => f.id === folderId);
     if (folder) {
       setSelectedFolder(folder);
       fetchInitialChatMedia(folder);
-      setIsChatSelectionDialogOpen(false); // Close regular chat dialog
+      setIsChatSelectionDialogOpen(false);
     } else {
-      console.warn(`Folder with ID ${folderId} not found in displayedChats for selection.`);
+      console.warn(`[handleSelectFolder] Folder with ID ${folderId} not found in displayedChats.`);
       setSelectedFolder(null);
       setCurrentChatMedia([]);
     }
   };
 
   const handleSelectCloudChannel = (channelId: string) => {
-    // This handler is for cloud channels selected from the cloud storage dialog
+    console.log(`[handleSelectCloudChannel] Cloud channel selected: ${channelId}`);
     const channel = appManagedCloudFolders.find(c => c.id === channelId);
     if (channel) {
-      setSelectedFolder(channel); // Sets it as the active folder for MainContentView
-      fetchInitialChatMedia(channel); // This will show the "Cloud Storage Selected" message
-      setIsCloudStorageSelectorOpen(false); // Close cloud storage dialog
+      setSelectedFolder(channel);
+      fetchInitialChatMedia(channel);
+      setIsCloudStorageSelectorOpen(false);
     } else {
-      console.warn(`Cloud channel with ID ${channelId} not found for selection.`);
+      console.warn(`[handleSelectCloudChannel] Cloud channel with ID ${channelId} not found.`);
       setSelectedFolder(null);
       setCurrentChatMedia([]);
     }
@@ -693,8 +724,8 @@ export default function Home() {
         setPhoneCode('');
         setPassword('');
         toast({ title: "Sign In Successful!", description: "Connected to Telegram." });
-        await fetchAppManagedCloudChannels();
-        if (!hasFetchedDialogFiltersOnce || dialogFilters.length <= 1) {
+        await fetchAppManagedCloudChannels(); 
+        if (!hasFetchedDialogFiltersOnce || dialogFilters.length <= 1) { 
             await fetchDialogFilters();
         }
       } else {
@@ -733,8 +764,8 @@ export default function Home() {
         setPhoneCode('');
         setPassword('');
         toast({ title: "2FA Successful!", description: "Connected to Telegram." });
-        await fetchAppManagedCloudChannels();
-         if (!hasFetchedDialogFiltersOnce || dialogFilters.length <= 1) {
+        await fetchAppManagedCloudChannels(); 
+         if (!hasFetchedDialogFiltersOnce || dialogFilters.length <= 1) { 
             await fetchDialogFilters();
         }
       } else {
@@ -1042,7 +1073,8 @@ export default function Home() {
   
   const handleOpenChatSelectionDialog = () => setIsChatSelectionDialogOpen(true);
   const handleOpenCloudStorageSelector = () => {
-    fetchAppManagedCloudChannels(true); // Force refresh when opening
+    console.log("[handleOpenCloudStorageSelector] Called.");
+    fetchAppManagedCloudChannels(true); 
     setIsCloudStorageSelectorOpen(true);
   };
 
@@ -1147,8 +1179,8 @@ export default function Home() {
         updateUiForFile(fileToUpload.id, 100, 'completed');
         toast({ title: "Upload Successful!", description: `${fileToUpload.name} uploaded to ${selectedFolder.name}.` });
 
-        if (selectedFolder && selectedFolder.id === selectedFolder?.id) { // Check if selectedFolder is still the same
-           fetchInitialChatMedia(selectedFolder); // Refresh media for the current folder
+        if (selectedFolder && selectedFolder.id === selectedFolder?.id) { 
+           fetchInitialChatMedia(selectedFolder); 
         }
       } catch (error: any) {
         if (controller.signal.aborted || error.name === 'AbortError' || error.message?.includes('aborted')) {
@@ -1167,6 +1199,7 @@ export default function Home() {
   };
 
   const handleSelectDialogFilter = (filterId: number) => {
+    console.log(`[handleSelectDialogFilter] Selected filter ID: ${filterId}`);
     if (activeDialogFilterId === filterId && !isReorderingFolders) return;
     setActiveDialogFilterId(filterId);
   };
@@ -1174,18 +1207,17 @@ export default function Home() {
   const handleToggleReorderFolders = async () => {
     if (isReorderingFolders) {
       const newOrder = dialogFilters
-        .filter(f => f.id !== ALL_CHATS_FILTER_ID) // Exclude special tabs
+        .filter(f => f.id !== ALL_CHATS_FILTER_ID) 
         .map(f => f.id);
 
-      console.log("Attempting to save new folder order:", newOrder);
+      console.log("[handleToggleReorderFolders] Attempting to save new folder order:", newOrder);
       try {
         await telegramService.updateDialogFiltersOrder(newOrder);
         toast({ title: "Folder Order Saved", description: "The new folder order has been saved to Telegram." });
       } catch (error: any) {
         handleApiError(error, "Error Saving Order", "Could not save the folder order.");
-        // Force re-fetch dialog filters from server on error to revert optimistic UI
-        setHasFetchedDialogFiltersOnce(false); // This will trigger a re-fetch in useEffect
-        await fetchDialogFilters(); // Explicitly call to ensure it happens
+        setHasFetchedDialogFiltersOnce(false); 
+        await fetchDialogFilters(); 
       }
     }
     setIsReorderingFolders(prev => !prev);
@@ -1193,7 +1225,6 @@ export default function Home() {
 
   const handleMoveFilter = (dragIndex: number, hoverIndex: number) => {
     const draggedFilter = dialogFilters[dragIndex];
-    // Prevent dragging All Chats or dropping onto it if it's fixed
     if (draggedFilter.id === ALL_CHATS_FILTER_ID ||
         (dialogFilters[hoverIndex] && dialogFilters[hoverIndex].id === ALL_CHATS_FILTER_ID)) {
         return;
@@ -1249,8 +1280,7 @@ export default function Home() {
           description: `Channel "${result.channelInfo.title}" (ID: ${result.channelInfo.id}) created and configured.`,
         });
         setIsCreateCloudChannelDialogOpen(false);
-        await fetchAppManagedCloudChannels(true); // Refresh cloud channels list (force refresh)
-        // Dialog filters don't need explicit re-fetch here as cloud tab is separate
+        await fetchAppManagedCloudChannels(true);
       } else {
         throw new Error("Channel creation did not return expected info.");
       }
@@ -1262,34 +1292,33 @@ export default function Home() {
   };
 
 
-  const handleRefreshCurrentFilter = () => { // For regular chat dialog
+  const handleRefreshCurrentFilter = () => { 
     if (activeFilterDetails) {
+        console.log(`[handleRefreshCurrentFilter] Refreshing filter: "${activeFilterDetails.title}" (ID: ${activeFilterDetails.id})`);
         toast({ title: `Refreshing "${activeFilterDetails.title}"...`});
-        setLastFetchedFilterId(null); // Allows re-fetch
+        setLastFetchedFilterId(null);
         const cacheKeyToReset = activeFilterDetails.id;
         const filterType = activeFilterDetails._;
 
-        if (filterType === 'dialogFilterDefault') { // All Chats
+        if (filterType === 'dialogFilterDefault') {
             setChatDataCache(prev => new Map(prev).set(ALL_CHATS_FILTER_ID, { folders: [], pagination: initialPaginationState, isLoading: false, error: null}));
             setMasterChatListForFiltering([]);
             setMasterChatListPaginationForFiltering(initialPaginationState);
         } else if (filterType === 'dialogFilter' || filterType === 'dialogFilterChatlist') {
-            // Reset specific cache if it exists (for direct-fetch dialogFilter)
             if (chatDataCache.has(cacheKeyToReset)) {
                  setChatDataCache(prev => new Map(prev).set(cacheKeyToReset, { folders: [], pagination: initialPaginationState, isLoading: false, error: null}));
             }
-            // If it's a chatlist or a dialogFilter that fell back, reset master as well
             if (filterType === 'dialogFilterChatlist' || (filterType === 'dialogFilter' && chatDataCache.get(cacheKeyToReset)?.error === 'FOLDER_ID_INVALID_FALLBACK')) {
                  setChatDataCache(prev => new Map(prev).set(ALL_CHATS_FILTER_ID, { folders: [], pagination: initialPaginationState, isLoading: false, error: null}));
                  setMasterChatListForFiltering([]);
                  setMasterChatListPaginationForFiltering(initialPaginationState);
             }
         }
-        // The useEffect watching activeFilterDetails will then trigger a fresh load.
     }
   };
 
   const handleRefreshCloudStorage = () => {
+    console.log("[handleRefreshCloudStorage] Called.");
     toast({ title: "Refreshing Cloud Storage..."});
     fetchAppManagedCloudChannels(true);
   };
@@ -1302,33 +1331,41 @@ export default function Home() {
   }, [downloadQueue]);
 
   useEffect(() => {
+    console.log("[useEffect] Initial connection check effect running.");
     checkExistingConnection();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
 
   useEffect(() => {
+    console.log(`[useEffect activeDialogFilterId/dialogFilters] activeDialogFilterId: ${activeDialogFilterId}, dialogFilters count: ${dialogFilters.length}, isLoadingDialogFilters: ${isLoadingDialogFilters}`);
     let newFilter: DialogFilter | null = dialogFilters.find(f => f.id === activeDialogFilterId) || null;
     if (!newFilter && dialogFilters.length > 0) {
         newFilter = dialogFilters.find(f => f.id === ALL_CHATS_FILTER_ID) || dialogFilters[0];
-        if(newFilter) setActiveDialogFilterId(newFilter.id); 
+        if(newFilter && newFilter.id !== activeDialogFilterId) { // Only set if different to avoid loop
+          console.log(`[useEffect activeDialogFilterId/dialogFilters] Active filter ${activeDialogFilterId} not found, defaulting to ${newFilter.id}`);
+          setActiveDialogFilterId(newFilter.id); 
+        }
     }
 
     if (newFilter) {
-      // Only update if truly different to prevent loops
       if (activeFilterDetails?.id !== newFilter.id || activeFilterDetails?._ !== newFilter._ || activeFilterDetails?.title !== newFilter.title) {
-        console.log(`Setting activeFilterDetails: ID ${newFilter.id}, Title: '${newFilter.title}', Type: ${newFilter._}`);
+        console.log(`[useEffect activeDialogFilterId/dialogFilters] Setting activeFilterDetails to: ID ${newFilter.id}, Title: '${newFilter.title}', Type: ${newFilter._}`);
         setActiveFilterDetails(newFilter);
       }
     } else if (activeFilterDetails !== null && dialogFilters.length === 0 && !isLoadingDialogFilters) {
-      // This case might happen if all filters are removed server-side, ensure activeFilterDetails is cleared
+      console.log("[useEffect activeDialogFilterId/dialogFilters] No dialog filters, clearing activeFilterDetails.");
       setActiveFilterDetails(null);
     }
   }, [activeDialogFilterId, dialogFilters, isLoadingDialogFilters, activeFilterDetails]);
 
 
   useEffect(() => {
-    if (!isConnected || !activeFilterDetails || isLoadingDialogFilters) return;
+    console.log(`[useEffect dataFetchOrchestrator] Dependencies changed. isConnected: ${isConnected}, activeFilterDetails:`, activeFilterDetails, `isLoadingDialogFilters: ${isLoadingDialogFilters}, lastFetchedFilterId: ${lastFetchedFilterId}`);
+    if (!isConnected || !activeFilterDetails || isLoadingDialogFilters) {
+      console.log("[useEffect dataFetchOrchestrator] Bailing: Not connected, no active filter details, or dialog filters are loading.");
+      return;
+    }
 
     const filterIdToFetch = activeFilterDetails.id;
     const isNewFilter = lastFetchedFilterId !== filterIdToFetch;
@@ -1337,62 +1374,62 @@ export default function Home() {
     const cachedEntryForCurrent = chatDataCache.get(filterIdToFetch);
     const cachedEntryForAllChats = chatDataCache.get(ALL_CHATS_FILTER_ID);
 
-    if (activeFilterDetails._ === 'dialogFilterDefault') { // All Chats
+    if (activeFilterDetails._ === 'dialogFilterDefault') {
         isCurrentFilterListEmptyAndNeedsLoad = (!cachedEntryForAllChats || cachedEntryForAllChats.folders.length === 0) &&
                                              (!cachedEntryForAllChats || cachedEntryForAllChats.pagination.hasMore) &&
                                              !cachedEntryForAllChats?.isLoading;
     } else if (activeFilterDetails._ === 'dialogFilterChatlist' || (activeFilterDetails._ === 'dialogFilter' && cachedEntryForCurrent?.error === 'FOLDER_ID_INVALID_FALLBACK')) {
-        // For chatlists or dialogFilters falling back to master list
         isCurrentFilterListEmptyAndNeedsLoad = (!cachedEntryForAllChats || cachedEntryForAllChats.folders.length === 0) &&
                                              masterChatListPaginationForFiltering.hasMore &&
                                              !cachedEntryForAllChats?.isLoading;
-    } else if (activeFilterDetails._ === 'dialogFilter') { // Direct fetch dialogFilter
+    } else if (activeFilterDetails._ === 'dialogFilter') { 
          isCurrentFilterListEmptyAndNeedsLoad = (!cachedEntryForCurrent || cachedEntryForCurrent.folders.length === 0) &&
                                              (!cachedEntryForCurrent || cachedEntryForCurrent.pagination.hasMore) &&
                                              !cachedEntryForCurrent?.isLoading;
     }
+    console.log(`[useEffect dataFetchOrchestrator] Filter ID to fetch: ${filterIdToFetch}, Title: '${activeFilterDetails.title}', isNewFilter: ${isNewFilter}, isCurrentFilterListEmptyAndNeedsLoad: ${isCurrentFilterListEmptyAndNeedsLoad}`);
     
 
     if (isNewFilter || isCurrentFilterListEmptyAndNeedsLoad) {
-        console.log(`useEffect for fetch: Conditions met for filter ID ${filterIdToFetch} ('${activeFilterDetails.title}'). Preparing to fetch data. NewFilter: ${isNewFilter}, EmptyAndNeedsLoad: ${isCurrentFilterListEmptyAndNeedsLoad}, LastFetched: ${lastFetchedFilterId}`);
+        console.log(`[useEffect dataFetchOrchestrator] Conditions MET for filter ID ${filterIdToFetch}. Preparing to fetch data.`);
         setLastFetchedFilterId(filterIdToFetch);
 
-        // Reset view-specific states when changing filter
         setSelectedFolder(null);
         setCurrentChatMedia([]);
-        setDisplayedChats([]); // Clear previous filter's chats
+        setDisplayedChats([]); 
         setCurrentErrorMessage(null);
 
-        // Reset cache/pagination for the new filter if it's a fresh selection
         if (isNewFilter) {
+            console.log(`[useEffect dataFetchOrchestrator] New filter selected. Resetting specific cache/pagination if needed for type: ${activeFilterDetails._}`);
             if (activeFilterDetails._ === 'dialogFilterDefault') {
                 if (!chatDataCache.has(ALL_CHATS_FILTER_ID) || chatDataCache.get(ALL_CHATS_FILTER_ID)?.folders.length === 0) {
                   setMasterChatListForFiltering([]);
                   setMasterChatListPaginationForFiltering(initialPaginationState);
                 }
             } else if (activeFilterDetails._ === 'dialogFilter' && cachedEntryForCurrent?.error !== 'FOLDER_ID_INVALID_FALLBACK') {
-               // For direct-fetch dialogFilters, reset its specific cache if empty
                if (!chatDataCache.has(filterIdToFetch) || chatDataCache.get(filterIdToFetch)?.folders.length === 0) {
                   setChatDataCache(prev => new Map(prev).set(filterIdToFetch, { folders: [], pagination: initialPaginationState, isLoading: false, error: null}));
                }
             }
-            // No specific reset needed for chatlist here, as it relies on master list
         }
-        fetchDataForActiveFilter(false); // Call directly
+        fetchDataForActiveFilter(false);
+    } else {
+        console.log(`[useEffect dataFetchOrchestrator] Conditions NOT met for filter ID ${filterIdToFetch}. No fetch triggered.`);
     }
   }, [
       isConnected, activeFilterDetails, isLoadingDialogFilters, lastFetchedFilterId,
-      chatDataCache, // Primary trigger for re-evaluation after cache updates
-      masterChatListForFiltering.length, masterChatListPaginationForFiltering.hasMore, // For 'isCurrentFilterListEmptyAndNeedsLoad'
-      // fetchDataForActiveFilter removed from here to break potential loops, called directly inside
+      chatDataCache, 
+      masterChatListForFiltering.length, masterChatListPaginationForFiltering.hasMore
+      // fetchDataForActiveFilter REMOVED from here to simplify and call directly
   ]);
 
 
   useEffect(() => {
-    // This effect updates `displayedChats` based on the active filter and cached data
+    console.log(`[useEffect displayedChatsUpdater] Dependencies changed. isConnected: ${isConnected}, activeFilterDetails:`, activeFilterDetails, `chatDataCache size: ${chatDataCache.size}`);
     if (!isConnected || !activeFilterDetails) {
       setIsLoadingDisplayedChats(isConnecting || isLoadingDialogFilters);
       setDisplayedChats([]);
+      console.log(`[useEffect displayedChatsUpdater] Bailing or clearing: Not connected or no active filter. isLoadingDisplayedChats: ${isConnecting || isLoadingDialogFilters}`);
       return;
     }
 
@@ -1400,25 +1437,29 @@ export default function Home() {
     const filterType = activeFilterDetails._;
     const cachedEntryForCurrentFilter = chatDataCache.get(currentFilterId);
     const cachedEntryForAllChats = chatDataCache.get(ALL_CHATS_FILTER_ID);
+    console.log(`[useEffect displayedChatsUpdater] Processing filter ID: ${currentFilterId}, Type: ${filterType}, Title: '${activeFilterDetails.title}'`);
+    console.log(`[useEffect displayedChatsUpdater] Cache for current (${currentFilterId}):`, cachedEntryForCurrentFilter);
+    console.log(`[useEffect displayedChatsUpdater] Cache for ALL_CHATS (${ALL_CHATS_FILTER_ID}):`, cachedEntryForAllChats);
 
-    setCurrentErrorMessage(null); // Reset error message for the view
 
-    // CLOUD_STORAGE_FILTER_ID is no longer used for regular dialog
+    setCurrentErrorMessage(null);
     
-    if (filterType === 'dialogFilterDefault') { // "All Chats"
+    if (filterType === 'dialogFilterDefault') { 
       if (cachedEntryForAllChats) {
         setDisplayedChats(cachedEntryForAllChats.folders);
         setHasMoreDisplayedChats(cachedEntryForAllChats.pagination.hasMore);
         if (cachedEntryForAllChats.error && cachedEntryForAllChats.error !== 'FOLDER_ID_INVALID_FALLBACK') setCurrentErrorMessage(`Error for "All Chats": ${cachedEntryForAllChats.error}`);
+        console.log(`[useEffect displayedChatsUpdater] dialogFilterDefault: Set displayedChats from ALL_CHATS. Count: ${cachedEntryForAllChats.folders.length}, HasMore: ${cachedEntryForAllChats.pagination.hasMore}`);
       } else {
-        setDisplayedChats([]); // No cache, display nothing
-        setHasMoreDisplayedChats(initialPaginationState.hasMore); // Assume has more if no cache
+        setDisplayedChats([]); 
+        setHasMoreDisplayedChats(initialPaginationState.hasMore); 
+        console.log(`[useEffect displayedChatsUpdater] dialogFilterDefault: No cache for ALL_CHATS. Displayed empty.`);
       }
       setIsLoadingDisplayedChats(cachedEntryForAllChats?.isLoading || false);
     } else if (filterType === 'dialogFilter') {
       if (cachedEntryForCurrentFilter?.error === 'FOLDER_ID_INVALID_FALLBACK') {
-        // Fallback: Filter from master list
         setCurrentErrorMessage(`"${activeFilterDetails.title}" couldn't be loaded directly. Showing matching chats from 'All Chats'. Some older chats might not appear until 'All Chats' is loaded further.`);
+        console.log(`[useEffect displayedChatsUpdater] dialogFilter (FALLBACK) for '${activeFilterDetails.title}'. Using ALL_CHATS.`);
         if (cachedEntryForAllChats) {
             const includePeerKeys = new Set((activeFilterDetails.include_peers || []).map(peerToKey).filter(Boolean));
             const pinnedPeerKeys = new Set((activeFilterDetails.pinned_peers || []).map(peerToKey).filter(Boolean));
@@ -1432,24 +1473,28 @@ export default function Home() {
                                                  (activeFilterDetails.pinned_peers?.findIndex(p => peerToKey(p) === peerToKey(b.inputPeer)) ?? 0));
             const nonPinned = filtered.filter(chat => { const key = peerToKey(chat.inputPeer); return key && includePeerKeys.has(key) && !pinnedPeerKeys.has(key); });
             setDisplayedChats([...pinned, ...nonPinned]);
-            setHasMoreDisplayedChats(cachedEntryForAllChats.pagination.hasMore); // Pagination based on master
+            setHasMoreDisplayedChats(cachedEntryForAllChats.pagination.hasMore); 
+            console.log(`[useEffect displayedChatsUpdater] dialogFilter (FALLBACK): Set displayedChats from filtered ALL_CHATS. Count: ${[...pinned, ...nonPinned].length}, HasMore: ${cachedEntryForAllChats.pagination.hasMore}`);
         } else {
             setDisplayedChats([]);
             setHasMoreDisplayedChats(initialPaginationState.hasMore);
+            console.log(`[useEffect displayedChatsUpdater] dialogFilter (FALLBACK): No cache for ALL_CHATS. Displayed empty.`);
         }
-        setIsLoadingDisplayedChats(cachedEntryForAllChats?.isLoading || false); // Loading based on master
-      } else if (cachedEntryForCurrentFilter) { // Direct fetch succeeded or pending
+        setIsLoadingDisplayedChats(cachedEntryForAllChats?.isLoading || false); 
+      } else if (cachedEntryForCurrentFilter) { 
         setDisplayedChats(cachedEntryForCurrentFilter.folders);
         setHasMoreDisplayedChats(cachedEntryForCurrentFilter.pagination.hasMore);
         if (cachedEntryForCurrentFilter.error && cachedEntryForCurrentFilter.error !== 'FOLDER_ID_INVALID_FALLBACK') setCurrentErrorMessage(`Error for "${activeFilterDetails.title}": ${cachedEntryForCurrentFilter.error}`);
         setIsLoadingDisplayedChats(cachedEntryForCurrentFilter.isLoading);
+        console.log(`[useEffect displayedChatsUpdater] dialogFilter (Direct): Set displayedChats from its own cache. Count: ${cachedEntryForCurrentFilter.folders.length}, HasMore: ${cachedEntryForCurrentFilter.pagination.hasMore}`);
       } else {
-         // Not cached yet, might be about to be fetched
          setDisplayedChats([]);
          setHasMoreDisplayedChats(initialPaginationState.hasMore);
-         setIsLoadingDisplayedChats(false); // Or true if we know a fetch is imminent
+         setIsLoadingDisplayedChats(false); 
+         console.log(`[useEffect displayedChatsUpdater] dialogFilter (Direct): No cache for current filter. Displayed empty.`);
       }
-    } else if (filterType === 'dialogFilterChatlist') { // User-defined folders (always filter from master)
+    } else if (filterType === 'dialogFilterChatlist') { 
+      console.log(`[useEffect displayedChatsUpdater] dialogFilterChatlist for '${activeFilterDetails.title}'. Using ALL_CHATS.`);
       if (cachedEntryForAllChats) {
           const includePeerKeys = new Set((activeFilterDetails.include_peers || []).map(peerToKey).filter(Boolean));
           const pinnedPeerKeys = new Set((activeFilterDetails.pinned_peers || []).map(peerToKey).filter(Boolean));
@@ -1462,12 +1507,14 @@ export default function Home() {
                                                (activeFilterDetails.pinned_peers?.findIndex(p => peerToKey(p) === peerToKey(b.inputPeer)) ?? 0));
           const nonPinned = filtered.filter(chat => { const key = peerToKey(chat.inputPeer); return key && includePeerKeys.has(key) && !pinnedPeerKeys.has(key); });
           setDisplayedChats([...pinned, ...nonPinned]);
-          setHasMoreDisplayedChats(cachedEntryForAllChats.pagination.hasMore); // Pagination based on master
+          setHasMoreDisplayedChats(cachedEntryForAllChats.pagination.hasMore); 
+          console.log(`[useEffect displayedChatsUpdater] dialogFilterChatlist: Set displayedChats from filtered ALL_CHATS. Count: ${[...pinned, ...nonPinned].length}, HasMore: ${cachedEntryForAllChats.pagination.hasMore}`);
       } else {
           setDisplayedChats([]);
           setHasMoreDisplayedChats(initialPaginationState.hasMore);
+          console.log(`[useEffect displayedChatsUpdater] dialogFilterChatlist: No cache for ALL_CHATS. Displayed empty.`);
       }
-      setIsLoadingDisplayedChats(cachedEntryForAllChats?.isLoading || false); // Loading based on master
+      setIsLoadingDisplayedChats(cachedEntryForAllChats?.isLoading || false); 
     }
   }, [
       isConnected, activeFilterDetails, chatDataCache, peerToKey, isConnecting, isLoadingDialogFilters
@@ -1638,10 +1685,10 @@ export default function Home() {
                         hash: fh_raw.hash,
                     })),
                     cdnCurrentFileHashIndex: 0,
-                    currentOffset: 0, // Reset offset for CDN download
-                    downloadedBytes: 0, // Reset downloaded bytes for CDN
-                    progress: 0, // Reset progress
-                    chunks: [], // Clear chunks
+                    currentOffset: 0, 
+                    downloadedBytes: 0, 
+                    progress: 0, 
+                    chunks: [], 
                 } : q_item));
             } else if (chunkResponse?.errorType === 'FILE_REFERENCE_EXPIRED') {
                 setDownloadQueue(prevQ => prevQ.map(q_item => q_item.id === upToDateItem.id ? { ...q_item, status: 'refreshing_reference' } : q_item));
@@ -1659,13 +1706,9 @@ export default function Home() {
                     let nextCdnProcessingIndex = q_item.cdnCurrentFileHashIndex;
 
                     if(q_item.cdnFileToken && q_item.cdnFileHashes) {
-                      // For CDN, offset is managed by cdnCurrentFileHashIndex pointing to the next block's offset
                       nextCdnProcessingIndex = (q_item.cdnCurrentFileHashIndex || 0) + 1;
-                      // nextReqOffset would be cdnFileHashes[nextCdnProcessingIndex].offset if that block exists
-                      // For simplicity, currentOffset here reflects total bytes processed for CDN logic.
                       nextReqOffset = newDownloadedBytes; 
                     } else {
-                      // For direct download, currentOffset advances by chunk size
                       nextReqOffset = q_item.currentOffset + chunkSize;
                     }
 
@@ -1688,8 +1731,8 @@ export default function Home() {
                         progress: 100,
                         downloadedBytes: q_item.totalSizeInBytes!,
                         chunks: [],
-                        cdnCurrentFileHashIndex: undefined, // Clear CDN specific index
-                        currentOffset: q_item.totalSizeInBytes! // Final offset is total size
+                        cdnCurrentFileHashIndex: undefined, 
+                        currentOffset: q_item.totalSizeInBytes! 
                       };
                     }
                     return {
@@ -1706,14 +1749,12 @@ export default function Home() {
                 })
               );
             } else {
-              // Handle cases where chunkResponse is empty or has an unhandled structure
               const errorMessage = chunkResponse?.errorType || (chunkResponse && Object.keys(chunkResponse).length === 0 ? 'Empty response object from service' : 'Unknown error or no data returned from service');
               console.error(`Failed to download chunk for ${upToDateItem.name} or no data returned. Response:`, chunkResponse, "Error Message:", errorMessage);
               setDownloadQueue(prevQ => prevQ.map(q_item => q_item.id === upToDateItem.id ? { ...q_item, status: 'failed', error_message: `Download error: ${errorMessage}` } : q_item));
             }
           } catch (error: any) {
              if (error.name === 'AbortError' || (error.message && error.message.toLowerCase().includes('aborted'))) {
-                // Ensure status is set to cancelled if abort happens
                 if(upToDateItem.status !== 'cancelled' && upToDateItem.status !== 'failed' && upToDateItem.status !== 'completed' ) {
                     setDownloadQueue(prevQ => prevQ.map(q_item => q_item.id === upToDateItem.id ? { ...q_item, status: 'cancelled', error_message: "Aborted by user or system." } : q_item));
                 }
@@ -1722,7 +1763,7 @@ export default function Home() {
                 setDownloadQueue(prevQ => prevQ.map(q_item => q_item.id === upToDateItem.id ? { ...q_item, status: 'failed', error_message: error.message || 'Processing error during chunk download' } : q_item));
              }
           } finally {
-             activeDownloadsRef.current.delete(upToDateItem.id); // Ensure active download is cleared
+             activeDownloadsRef.current.delete(upToDateItem.id); 
           }
         } else if (upToDateItem.status === 'refreshing_reference' && !activeDownloadsRef.current.has(upToDateItem.id)) {
             activeDownloadsRef.current.add(upToDateItem.id);
@@ -1730,12 +1771,11 @@ export default function Home() {
                 if (upToDateItem.abortController?.signal.aborted) {
                     activeDownloadsRef.current.delete(upToDateItem.id);
                      if(upToDateItem.status !== 'cancelled') setDownloadQueue(prevQ => prevQ.map(q => q.id === upToDateItem.id ? { ...q, status: 'cancelled', error_message: "Aborted" } : q));
-                    continue; // Skip to next item in queue
+                    continue; 
                 }
 
                 const updatedMediaObject = await telegramService.refreshFileReference(upToDateItem);
                 if (updatedMediaObject && updatedMediaObject.file_reference) {
-                    // Construct new location based on the type of updatedMediaObject
                     let newLocation;
                     if (updatedMediaObject._ === 'photo' && updatedMediaObject.id && updatedMediaObject.access_hash && updatedMediaObject.file_reference) {
                         const largestSize = updatedMediaObject.sizes?.find((s: any) => s.type === 'y') || updatedMediaObject.sizes?.sort((a: any, b: any) => (b.w * b.h) - (a.w * a.h))[0];
@@ -1744,7 +1784,7 @@ export default function Home() {
                             id: updatedMediaObject.id,
                             access_hash: updatedMediaObject.access_hash,
                             file_reference: updatedMediaObject.file_reference,
-                            thumb_size: largestSize?.type || '', // Ensure thumb_size is a string
+                            thumb_size: largestSize?.type || '', 
                         };
                     } else if (updatedMediaObject._ === 'document' && updatedMediaObject.id && updatedMediaObject.access_hash && updatedMediaObject.file_reference) {
                          newLocation = {
@@ -1752,17 +1792,16 @@ export default function Home() {
                             id: updatedMediaObject.id,
                             access_hash: updatedMediaObject.access_hash,
                             file_reference: updatedMediaObject.file_reference,
-                            thumb_size: '', // For documents, thumb_size is often empty
+                            thumb_size: '', 
                         };
                     }
-                    // Potentially add other types like 'webDocument' if needed
 
                     if (newLocation) {
                         setDownloadQueue(prevQ => prevQ.map(q_item => q_item.id === upToDateItem.id ? {
                             ...q_item,
-                            status: 'downloading', // Set back to downloading
-                            location: newLocation, // Update location with new reference
-                            telegramMessage: { ...(q_item.telegramMessage || {}), ...updatedMediaObject } // Update telegramMessage if needed
+                            status: 'downloading', 
+                            location: newLocation, 
+                            telegramMessage: { ...(q_item.telegramMessage || {}), ...updatedMediaObject } 
                         } : q_item));
                     } else {
                          console.error("Failed to construct new location after refreshing reference for", upToDateItem.name, "Updated Media:", updatedMediaObject);
@@ -1779,7 +1818,6 @@ export default function Home() {
                 activeDownloadsRef.current.delete(upToDateItem.id);
             }
         } else if (['paused', 'completed', 'failed', 'cancelled'].includes(upToDateItem.status) ) {
-            // Ensure active download is cleared if it somehow remained for these terminal states
             if(activeDownloadsRef.current.has(upToDateItem.id)){
                 activeDownloadsRef.current.delete(upToDateItem.id);
             }
@@ -1787,24 +1825,22 @@ export default function Home() {
       }
     };
 
-    const intervalId = setInterval(processQueue, 750); // Process queue periodically
+    const intervalId = setInterval(processQueue, 750); 
 
     return () => {
         clearInterval(intervalId);
-        // Abort any ongoing downloads when component unmounts or effect re-runs
         downloadQueueRef.current.forEach(item => {
             if (item.abortController && !item.abortController.signal.aborted &&
                 (item.status === 'downloading' || item.status === 'refreshing_reference' || item.status === 'queued' || item.status === 'paused')) {
                 item.abortController.abort("Component cleanup or effect re-run");
             }
         });
-        activeDownloadsRef.current.clear(); // Clear active downloads set
+        activeDownloadsRef.current.clear(); 
     };
-  }, []); // Empty dependency array means this runs once on mount and cleans up on unmount
+  }, []); 
 
 
   useEffect(() => {
-    // Cleanup for video stream URL
     return () => {
         if (videoStreamUrl) {
             URL.revokeObjectURL(videoStreamUrl);
@@ -1854,12 +1890,12 @@ export default function Home() {
             isLoading={isConnecting}
             error={authError}
             phoneNumber={phoneNumber}
-            setPhoneNumber={setPhoneNumber} // Though not directly used by inputs, kept for consistency
+            setPhoneNumber={setPhoneNumber} 
             phoneCode={phoneCode}
             setPhoneCode={setPhoneCode}
             password={password}
             setPassword={setPassword}
-            onReset={() => handleReset(authStep !== 'initial')} // Pass a flag to handleReset
+            onReset={() => handleReset(authStep !== 'initial')} 
           />
         </main>
         <footer ref={footerRef} className="py-4 px-4 sm:px-6 lg:px-8 text-center border-t">
@@ -1882,8 +1918,8 @@ export default function Home() {
         onOpenChatSelectionDialog={handleOpenChatSelectionDialog}
         onOpenCloudStorageSelector={handleOpenCloudStorageSelector}
       />
-      <div className="flex-1 flex overflow-hidden min-h-0"> {/* Ensure parent has min-h-0 for overflow-y-auto */}
-        <main className="flex-1 overflow-y-auto bg-background"> {/* This main area scrolls */}
+      <div className="flex-1 flex overflow-hidden min-h-0"> 
+        <main className="flex-1 overflow-y-auto bg-background"> 
            <div className="container mx-auto h-full px-4 sm:px-6 lg:px-8 py-4 md:py-6 lg:py-8">
             {selectedFolder ? (
                  selectedFolder.isAppManagedCloud ? (
@@ -1891,7 +1927,6 @@ export default function Home() {
                         <Cloud className="w-16 h-16 mb-4 opacity-50" />
                         <p className="text-lg mb-2">Cloud Storage: {selectedFolder.name}</p>
                         <p className="text-sm mb-4">Virtual file system browsing will be implemented here.</p>
-                        {/* Placeholder for future virtual file/folder creation and upload buttons specific to cloud channels */}
                     </div>
                  ) : (
                     <MainContentView
@@ -1929,7 +1964,7 @@ export default function Home() {
                       <span>Loading initial chat list for "{activeFilterDetails?.title || 'current folder'}"...</span>
                     </div>
                   )}
-                   { !isLoadingDisplayedChats && displayedChats.length === 0 && !currentErrorMessage && isConnected && activeFilterDetails && (
+                   { !isLoadingDisplayedChats && displayedChats.length === 0 && !currentErrorMessage && isConnected && activeFilterDetails && !cachedDataForActiveFilterIsLoading(activeFilterDetails, chatDataCache) && (
                      <div className="mt-4 flex items-center text-sm">
                         <MessageSquare className="mr-2 h-5 w-5 text-muted-foreground" />
                         <span>Chat list for "{activeFilterDetails.title}" appears to be empty.</span>
@@ -1951,7 +1986,6 @@ export default function Home() {
         </p>
       </footer>
 
-      {/* Regular Chat Selection Dialog */}
       <ChatSelectionDialog
         isOpen={isChatSelectionDialogOpen}
         onOpenChange={setIsChatSelectionDialogOpen}
@@ -1959,7 +1993,7 @@ export default function Home() {
         dialogFilters={dialogFilters}
         activeDialogFilterId={activeDialogFilterId}
         onSelectDialogFilter={handleSelectDialogFilter}
-        isLoadingDialogFilters={isLoadingDialogFilters && dialogFilters.length <=1 && !hasFetchedDialogFiltersOnce && !isLoadingAppManagedCloudFolders}
+        isLoadingDialogFilters={isLoadingDialogFilters}
         isReorderingFolders={isReorderingFolders}
         onToggleReorderFolders={handleToggleReorderFolders}
         onMoveFilter={handleMoveFilter}
@@ -1977,20 +2011,19 @@ export default function Home() {
         currentErrorMessage={currentErrorMessage}
       />
 
-      {/* Cloud Storage Selector Dialog */}
       <ChatSelectionDialog
         isOpen={isCloudStorageSelectorOpen}
         onOpenChange={setIsCloudStorageSelectorOpen}
         viewMode="cloudStorage"
         folders={appManagedCloudFolders}
         isLoading={isLoadingAppManagedCloudFolders && appManagedCloudFolders.length === 0}
-        isLoadingMore={isLoadingAppManagedCloudFolders && appManagedCloudFolders.length > 0} // Or false if no pagination for cloud
-        hasMore={false} // Assuming no pagination for cloud channels list for now
-        selectedFolderId={selectedFolder?.id || null}
-        onSelectFolder={handleSelectCloudChannel} // Use specific handler
-        onLoadMore={() => {}} // No "load more" for cloud channels list yet
+        isLoadingMore={false} 
+        hasMore={false} 
+        selectedFolderId={selectedFolder?.isAppManagedCloud ? selectedFolder.id : null}
+        onSelectFolder={handleSelectCloudChannel}
+        onLoadMore={() => {}} 
         onRefresh={handleRefreshCloudStorage}
-        // No dialogFilters, activeDialogFilterId etc. for this simple list mode
+        onOpenCreateCloudChannelDialog={handleOpenCreateCloudChannelDialog}
       />
 
       <CreateCloudChannelDialog
@@ -2038,3 +2071,21 @@ export default function Home() {
     </div>
   );
 }
+
+// Helper function to check loading state of active filter's cache
+// This is used for the "empty list" message condition
+function cachedDataForActiveFilterIsLoading(activeFilterDetails: DialogFilter | null, chatDataCache: Map<number, CachedFolderData>): boolean {
+    if (!activeFilterDetails) return false;
+    const filterId = activeFilterDetails.id;
+    const filterType = activeFilterDetails._;
+    
+    if (filterType === 'dialogFilterDefault') {
+        return chatDataCache.get(ALL_CHATS_FILTER_ID)?.isLoading || false;
+    }
+    const cachedEntry = chatDataCache.get(filterId);
+    if (filterType === 'dialogFilter' && cachedEntry?.error === 'FOLDER_ID_INVALID_FALLBACK') {
+        return chatDataCache.get(ALL_CHATS_FILTER_ID)?.isLoading || false;
+    }
+    return cachedEntry?.isLoading || false;
+}
+    
