@@ -1,5 +1,4 @@
 
-
 export interface CloudFile {
   id: string;
   name: string;
@@ -8,25 +7,28 @@ export interface CloudFile {
   timestamp: number; // Unix timestamp (seconds)
   url?: string;
   dataAiHint?: string;
-  messageId: number; 
-  telegramMessage?: any; 
+  messageId: number;
+  telegramMessage?: any;
   totalSizeInBytes?: number;
-  inputPeer?: any; 
+  inputPeer?: any;
+  caption?: string; // Caption from Telegram message, may contain VFS path
+  vfsPath?: string; // Derived VFS path for easier filtering
 }
 
-export interface CloudFolder { 
-  id: string; 
+export interface CloudFolder {
+  id: string;
   name: string;
-  folders: CloudFolder[];
-  files: CloudFile[];
+  folders: CloudFolder[]; // For UI representation if needed, primary truth is cloudConfig
+  files: CloudFile[];   // For UI representation if needed, primary truth is file messages
   isChatFolder?: boolean;
-  inputPeer?: any; 
-  isAppManagedCloud?: boolean; // Added to distinguish app-managed cloud channels
-  cloudConfig?: CloudChannelConfigV1; // To store parsed config later
+  inputPeer?: any;
+  isAppManagedCloud?: boolean;
+  cloudConfig?: CloudChannelConfigV1;
+  vfsPath?: string; // Virtual path for this folder in UI representation
 }
 
 export interface GetChatsPaginatedResponse {
-  folders: CloudFolder[]; 
+  folders: CloudFolder[];
   nextOffsetDate: number;
   nextOffsetId: number;
   nextOffsetPeer: any;
@@ -59,7 +61,7 @@ export interface DownloadQueueItemType extends CloudFile {
   status: DownloadStatus;
   progress: number;
   downloadedBytes: number;
-  location?: any; 
+  location?: any;
   chunks?: Uint8Array[];
   currentOffset: number;
   abortController?: AbortController;
@@ -73,14 +75,14 @@ export interface DownloadQueueItemType extends CloudFile {
 }
 
 export interface FileDownloadInfo {
-    location: any; 
+    location: any;
     totalSize: number;
     mimeType: string;
 }
 
-export interface InputPeer { 
-    _: string; 
-    user_id?: string | number; 
+export interface InputPeer {
+    _: string;
+    user_id?: string | number;
     chat_id?: string | number;
     channel_id?: string | number;
     access_hash?: string;
@@ -91,57 +93,57 @@ export interface DialogFilter {
     flags: number;
     id: number;
     title: string;
-    emoticon?: string; 
-    color?: number;    
+    emoticon?: string;
+    color?: number;
     pinned_peers?: InputPeer[];
-    include_peers: InputPeer[]; 
+    include_peers: InputPeer[];
     exclude_peers?: InputPeer[];
 
-    contacts?: boolean;          
-    non_contacts?: boolean;      
-    groups?: boolean;            
-    broadcasts?: boolean;        
-    bots?: boolean;              
-    exclude_muted?: boolean;     
-    exclude_read?: boolean;      
-    exclude_archived?: boolean;  
+    contacts?: boolean;
+    non_contacts?: boolean;
+    groups?: boolean;
+    broadcasts?: boolean;
+    bots?: boolean;
+    exclude_muted?: boolean;
+    exclude_read?: boolean;
+    exclude_archived?: boolean;
 
-    has_my_invites?: boolean;   
+    has_my_invites?: boolean;
 
-    isReordering?: boolean; 
-    isLoading?: boolean; 
-    inviteLink?: string; 
+    isReordering?: boolean;
+    isLoading?: boolean;
+    inviteLink?: string;
 }
 
 export interface MessagesDialogFilters {
     _: 'messages.dialogFilters';
     flags: number;
-    tags_enabled?: boolean; 
+    tags_enabled?: boolean;
     filters: DialogFilter[];
 }
 
 
 export interface ExtendedFile {
-  id: string; 
-  originalFile: File; 
+  id: string;
+  originalFile: File;
   name: string;
   size: number;
   type: string;
   lastModified: number;
-  uploadProgress: number; 
-  uploadStatus: 'pending' | 'uploading' | 'processing' | 'completed' | 'failed' | 'cancelled'; 
+  uploadProgress: number;
+  uploadStatus: 'pending' | 'uploading' | 'processing' | 'completed' | 'failed' | 'cancelled';
 }
 
 
 type SuccessfulFileChunk_Bytes = {
   bytes: Uint8Array;
-  type: string; 
+  type: string;
   isCdnRedirect?: never;
   cdnRedirectData?: never;
   errorType?: never;
 };
 
-export type CdnRedirectDataType = { 
+export type CdnRedirectDataType = {
     dc_id: number;
     file_token: Uint8Array;
     encryption_key: Uint8Array;
@@ -162,19 +164,20 @@ type ErrorFileChunk = {
   type?: never;
   isCdnRedirect?: never;
   cdnRedirectData?: never;
-  errorType: 'FILE_REFERENCE_EXPIRED' | 'OTHER'; 
+  errorType: 'FILE_REFERENCE_EXPIRED' | 'OTHER';
 };
 
 export type FileChunkResponse = SuccessfulFileChunk_Bytes | SuccessfulFileChunk_CdnRedirect | ErrorFileChunk;
-export type { FileHash as AppFileHash }; 
+export type { FileHash as AppFileHash };
 
 // Configuration for app-managed cloud channels
 export interface CloudChannelConfigEntry {
-  type: 'file' | 'folder';
+  type: 'file' | 'folder'; // 'file' type might not be directly stored in config this way, but good for modeling
   name: string; // Original name, path is derived from structure
-  tg_message_id?: number; // For files, the Telegram message ID of the actual file
-  mime_type?: string; // For files
-  size_bytes?: number; // For files
+  // For files, details are in the message itself + caption, not typically duplicated in config
+  // tg_message_id?: number;
+  // mime_type?: string;
+  // size_bytes?: number;
   created_at: string; // ISO timestamp for the entry
   modified_at: string; // ISO timestamp for the entry
   entries?: { [name: string]: CloudChannelConfigEntry }; // For folders
@@ -186,9 +189,8 @@ export interface CloudChannelConfigV1 {
   created_timestamp_utc: string; // ISO timestamp for the channel creation by app
   last_updated_timestamp_utc: string; // ISO timestamp for last config update
   root_entries: { // Represents the root "/"
-    [name: string]: CloudChannelConfigEntry;
+    [name: string]: CloudChannelConfigEntry; // Key is folder/file name
   };
 }
 
 export type CloudChannelType = 'channel' | 'supergroup';
-    

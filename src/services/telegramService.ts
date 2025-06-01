@@ -2,13 +2,14 @@
 'use client';
 
 import MTProto from '@mtproto/core/envs/browser';
-import type { CloudFolder, CloudFile, GetChatsPaginatedResponse, MediaHistoryResponse, FileDownloadInfo, FileChunkResponse, DownloadQueueItemType, FileHash as AppFileHash, DialogFilter, MessagesDialogFilters, ExtendedFile, CdnRedirectDataType, CloudChannelConfigV1, CloudChannelType } from '@/types';
+import type { CloudFolder, CloudFile, GetChatsPaginatedResponse, MediaHistoryResponse, FileDownloadInfo, FileChunkResponse, DownloadQueueItemType, FileHash as AppFileHash, DialogFilter, MessagesDialogFilters, ExtendedFile, CdnRedirectDataType, CloudChannelConfigV1, CloudChannelType, CloudChannelConfigEntry, InputPeer } from '@/types';
 import { formatFileSize } from '@/lib/utils';
 import cryptoSha256 from '@cryptography/sha256';
 
 export { formatFileSize };
 export const ALL_CHATS_FILTER_ID = 0;
 const CLOUDIFIER_APP_SIGNATURE_V1 = "TELEGRAM_CLOUDIFIER_V1.0";
+const CONFIG_MESSAGE_ID = 2;
 
 
 const API_ID_STRING = process.env.NEXT_PUBLIC_TELEGRAM_API_ID;
@@ -24,7 +25,7 @@ if (API_ID_STRING) {
     const errorMessage = CRITICAL_ERROR_MESSAGE_PREFIX + "NEXT_PUBLIC_TELEGRAM_API_ID is not a valid number. Real connection will fail. \n" +
                          "Please ensure it is a number in your .env.local file and you have restarted your development server. \n" +
                          "Example: NEXT_PUBLIC_TELEGRAM_API_ID=123456";
-    console.error(errorMessage);
+    // console.error(errorMessage);
     if (typeof window !== 'undefined') (window as any).telegramApiError = errorMessage;
     API_ID = undefined;
   }
@@ -34,7 +35,7 @@ if (API_ID_STRING) {
                       "NEXT_PUBLIC_TELEGRAM_API_ID=YOUR_API_ID_HERE \n" +
                       "NEXT_PUBLIC_TELEGRAM_API_HASH=YOUR_API_HASH_HERE \n" +
                       "You MUST restart your development server after creating or modifying the .env.local file.";
-  console.warn(envErrorMsg);
+  // console.warn(envErrorMsg);
   if (typeof window !== 'undefined') (window as any).telegramApiError = envErrorMsg;
 }
 
@@ -42,7 +43,7 @@ if (!API_HASH && API_ID !== undefined) {
   const envErrorMsg = CRITICAL_ERROR_MESSAGE_PREFIX + "NEXT_PUBLIC_TELEGRAM_API_HASH is not set in environment variables. Real connection will fail. \n" +
                       "Please ensure it is set in your .env.local file and you have restarted your development server. \n" +
                       "Example: NEXT_PUBLIC_TELEGRAM_API_HASH=your_actual_api_hash";
-  console.warn(envErrorMsg);
+  // console.warn(envErrorMsg);
    if (typeof window !== 'undefined' && !(window as any).telegramApiError) (window as any).telegramApiError = envErrorMsg;
 }
 
@@ -97,7 +98,7 @@ class API {
 
     } catch (initError: any) {
         const errorMessage = CRITICAL_ERROR_MESSAGE_PREFIX + `Failed to initialize MTProto client in API class: ${initError.message || JSON.stringify(initError)}`;
-        console.error(errorMessage, initError);
+        // console.error(errorMessage, initError);
         if (typeof window !== 'undefined' && !(window as any).telegramApiError) (window as any).telegramApiError = errorMessage;
         this.mtproto = {
             call: async (method: string, params?: any, options?: any) => {
@@ -763,10 +764,11 @@ export async function getChatMediaHistory(
               size: fileSize,
               totalSizeInBytes: totalSizeInBytes,
               timestamp: msg.date,
-              url: undefined,
+              url: undefined, // URL will be set if a preview blob is created
               dataAiHint: dataAiHint,
-              telegramMessage: mediaObjectForFile,
-              inputPeer: inputPeer,
+              telegramMessage: mediaObjectForFile, // Store the full media object for later use (e.g. download)
+              inputPeer: inputPeer, // Store the inputPeer for this chat
+              caption: msg.message, // Store message text as potential VFS caption
             });
           }
         }
@@ -1030,7 +1032,7 @@ export async function uploadFile(
   fileToUpload: File,
   onProgress: (percent: number) => void,
   signal?: AbortSignal,
-  caption?: string // Added optional caption
+  caption?: string
 ): Promise<any> {
   const client_file_id_str = generateRandomLong();
   const isBigFile = fileToUpload.size > TEN_MB;
@@ -1099,7 +1101,7 @@ export async function uploadFile(
           { _: 'documentAttributeFilename', file_name: fileToUpload.name },
         ],
       },
-      message: caption || '', // Use the caption here
+      message: caption || '',
       random_id: generateRandomLong(),
     }, { signal });
     onProgress(100);
@@ -1202,27 +1204,7 @@ export async function createManagedCloudChannel(
       access_hash: newChannel.access_hash,
     };
 
-    const now = new Date().toISOString();
-    const initialConfig: CloudChannelConfigV1 = {
-      app_signature: CLOUDIFIER_APP_SIGNATURE_V1,
-      channel_title_at_creation: title,
-      created_timestamp_utc: now,
-      last_updated_timestamp_utc: now,
-      root_entries: {},
-    };
-    const configJsonString = JSON.stringify(initialConfig, null, 2);
-
-    if (new TextEncoder().encode(configJsonString).length >= 4000) {
-        throw new Error("Internal error: Initial configuration message is too large.");
-    }
-
-    // Send config as message ID 2 (assuming ID 1 is service message)
-    // This involves sending a dummy message first if needed, or relying on sendMedia to be ID 2.
-    // For simplicity now, we'll target sending the config as the *second* message.
-    // A more robust way might be to send a placeholder, then edit it, or send and pin.
-
-    // Send a benign first message if the channel is brand new and has no messages.
-    // This is a heuristic; Telegram might automatically create a service message as ID 1.
+    // Send a placeholder message as message ID 1
     try {
         await api.call('messages.sendMessage', {
             peer: channelInputPeer,
@@ -1231,9 +1213,23 @@ export async function createManagedCloudChannel(
             no_webpage: true,
         });
     } catch (initMsgError) {
-        // Ignore if this fails, might be due to existing service message
+      // Best effort, continue even if this fails.
     }
 
+
+    const now = new Date().toISOString();
+    const initialConfig: CloudChannelConfigV1 = {
+      app_signature: CLOUDIFIER_APP_SIGNATURE_V1,
+      channel_title_at_creation: title,
+      created_timestamp_utc: now,
+      last_updated_timestamp_utc: now,
+      root_entries: {}, // Initially empty root
+    };
+    const configJsonString = JSON.stringify(initialConfig, null, 2);
+
+    if (new TextEncoder().encode(configJsonString).length >= 4000) {
+        throw new Error("Internal error: Initial configuration message is too large.");
+    }
 
     const sendMessageResult = await api.call('messages.sendMessage', {
       peer: channelInputPeer,
@@ -1262,7 +1258,7 @@ export async function createManagedCloudChannel(
     }
 
     if (!sentMessageInfo) {
-        sentMessageInfo = { id: (sendMessageResult as any).id || 2, note: "Config message sent, but full object not found in immediate response." };
+        sentMessageInfo = { id: (sendMessageResult as any).id || CONFIG_MESSAGE_ID, note: "Config message sent, but full object not found in immediate response." };
     }
 
     return { channelInfo: newChannel, configMessageInfo: sentMessageInfo };
@@ -1287,7 +1283,7 @@ export async function fetchAndVerifyManagedCloudChannels(): Promise<CloudFolder[
       offset_date: 0,
       offset_id: 0,
       offset_peer: { _: 'inputPeerEmpty' },
-      limit: 200,
+      limit: 200, // Fetch a good number of dialogs to scan
       hash: 0,
     });
 
@@ -1318,34 +1314,136 @@ export async function fetchAndVerifyManagedCloudChannels(): Promise<CloudFolder[
       access_hash: channelInfo.access_hash,
     };
 
+    let channelIsVerified = false;
+    let parsedConfig: CloudChannelConfigV1 | null = null;
+
     try {
       const messagesResult = await api.call('channels.getMessages', {
         channel: channelInputPeer,
-        id: [{ _: 'inputMessageID', id: 2 }], // Check only message ID 2
+        id: [{ _: 'inputMessageID', id: CONFIG_MESSAGE_ID }],
       });
 
       if (messagesResult && messagesResult.messages && Array.isArray(messagesResult.messages)) {
-        const messageTwo = messagesResult.messages.find((m: any) => m.id === 2);
+        const configMessage = messagesResult.messages.find((m:any) => m.id === CONFIG_MESSAGE_ID);
 
-        if (messageTwo && typeof messageTwo.message === 'string' && messageTwo.message.trim() !== '' && messageTwo._ === 'message') {
+        if (configMessage && typeof configMessage.message === 'string' && configMessage.message.trim() !== '' && configMessage._ === 'message') {
           try {
-            const config = JSON.parse(messageTwo.message);
-            if (config && config.app_signature === CLOUDIFIER_APP_SIGNATURE_V1) {
-              const cloudFolder = transformDialogToCloudFolder(dialog, allChatsFromDialogs, allUsersFromDialogs, true, config);
-              if (cloudFolder) {
-                verifiedCloudChannels.push(cloudFolder);
-              }
+            const tempConfig = JSON.parse(configMessage.message);
+            if (tempConfig && tempConfig.app_signature === CLOUDIFIER_APP_SIGNATURE_V1) {
+              channelIsVerified = true;
+              parsedConfig = tempConfig as CloudChannelConfigV1;
             }
-          } catch (parseError: any) {
-            // Not a JSON or not our config, ignore.
+          } catch (parseError) {
+            // Not a valid JSON or doesn't match our signature, ignore.
           }
         }
       }
     } catch (error: any) {
-      // Gracefully handle errors like MESSAGE_ID_INVALID if message ID 2 doesn't exist.
+      // Gracefully handle errors (e.g., MESSAGE_ID_INVALID if message ID 2 doesn't exist for this channel)
+    }
+
+    if (channelIsVerified && parsedConfig) {
+      const cloudFolder = transformDialogToCloudFolder(dialog, allChatsFromDialogs, allUsersFromDialogs, true, parsedConfig);
+      if (cloudFolder) {
+        verifiedCloudChannels.push(cloudFolder);
+      }
     }
   }
   return verifiedCloudChannels;
+}
+
+async function getCloudChannelConfig(channelInputPeer: InputPeer): Promise<CloudChannelConfigV1 | null> {
+  try {
+    const messagesResult = await api.call('channels.getMessages', {
+      channel: channelInputPeer,
+      id: [{ _: 'inputMessageID', id: CONFIG_MESSAGE_ID }],
+    });
+
+    if (messagesResult && messagesResult.messages && Array.isArray(messagesResult.messages)) {
+      const configMessage = messagesResult.messages.find((m:any) => m.id === CONFIG_MESSAGE_ID);
+      if (configMessage && typeof configMessage.message === 'string' && configMessage.message.trim() !== '' && configMessage._ === 'message') {
+        try {
+          const tempConfig = JSON.parse(configMessage.message);
+          if (tempConfig && tempConfig.app_signature === CLOUDIFIER_APP_SIGNATURE_V1) {
+            return tempConfig as CloudChannelConfigV1;
+          }
+        } catch (parseError) {
+          // console.error("Error parsing config message JSON:", parseError);
+          return null;
+        }
+      }
+    }
+  } catch (error: any) {
+    // console.error("Error fetching config message:", error);
+  }
+  return null;
+}
+
+async function updateCloudChannelConfig(channelInputPeer: InputPeer, newConfig: CloudChannelConfigV1): Promise<boolean> {
+  try {
+    const newConfigJson = JSON.stringify(newConfig, null, 2);
+    if (new TextEncoder().encode(newConfigJson).length >= 4000) {
+      throw new Error("Updated configuration message is too large.");
+    }
+    await api.call('messages.editMessage', {
+      peer: channelInputPeer,
+      id: CONFIG_MESSAGE_ID,
+      message: newConfigJson,
+    });
+    return true;
+  } catch (error: any) {
+    // console.error("Error updating config message:", error);
+    return false;
+  }
+}
+
+export async function addVirtualFolderToCloudChannel(
+  channelInputPeer: InputPeer,
+  parentVirtualPath: string,
+  newFolderName: string
+): Promise<CloudChannelConfigV1 | null> {
+  if (!channelInputPeer) {
+    throw new Error("Channel inputPeer is required.");
+  }
+  if (!newFolderName || newFolderName.includes('/') || newFolderName === '.' || newFolderName === '..') {
+    throw new Error("Invalid folder name.");
+  }
+
+  const currentConfig = await getCloudChannelConfig(channelInputPeer);
+  if (!currentConfig) {
+    // console.error("Could not retrieve or validate current cloud channel configuration.");
+    return null;
+  }
+
+  let targetEntries = currentConfig.root_entries;
+  const pathSegments = parentVirtualPath.split('/').filter(segment => segment.length > 0);
+
+  for (const segment of pathSegments) {
+    if (!targetEntries[segment] || targetEntries[segment].type !== 'folder' || !targetEntries[segment].entries) {
+      // console.error(`Path segment "${segment}" not found or not a folder in config for path "${parentVirtualPath}".`);
+      return null; // Path is invalid
+    }
+    targetEntries = targetEntries[segment].entries!;
+  }
+
+  if (targetEntries[newFolderName]) {
+    // console.warn(`Folder "${newFolderName}" already exists at path "${parentVirtualPath}".`);
+    throw new Error(`Folder "${newFolderName}" already exists.`);
+  }
+
+  const now = new Date().toISOString();
+  targetEntries[newFolderName] = {
+    type: 'folder',
+    name: newFolderName,
+    created_at: now,
+    modified_at: now,
+    entries: {},
+  };
+
+  currentConfig.last_updated_timestamp_utc = now;
+
+  const success = await updateCloudChannelConfig(channelInputPeer, currentConfig);
+  return success ? currentConfig : null;
 }
 
 
@@ -1353,5 +1451,3 @@ if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
   (window as any).telegramServiceApi = api;
   (window as any).telegramUserSession = userSession;
 }
-
-    
