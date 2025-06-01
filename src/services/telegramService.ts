@@ -7,7 +7,7 @@ import { formatFileSize } from '@/lib/utils';
 import cryptoSha256 from '@cryptography/sha256';
 
 export { formatFileSize };
-export const ALL_CHATS_FILTER_ID = 0; 
+export const ALL_CHATS_FILTER_ID = 0;
 const CLOUDIFIER_APP_SIGNATURE_V1 = "TELEGRAM_CLOUDIFIER_V1.0";
 
 
@@ -480,7 +480,7 @@ export async function isUserConnected(): Promise<boolean> {
   console.log("[isUserConnected] Checking connection status.");
   if (API_ID === undefined || !API_HASH || !api.initialized) {
       console.log("[isUserConnected] API not configured or not initialized. Returning false.");
-      if (userSession.user) await signOut(); 
+      if (userSession.user) await signOut();
       return false;
   }
 
@@ -504,7 +504,7 @@ export async function isUserConnected(): Promise<boolean> {
             return false;
         }
          console.warn(`[isUserConnected] users.getUsers check failed with non-critical auth error, but user object exists. Error: ${errorMessage}. Treating as connected for now.`);
-        return true; 
+        return true;
     }
   }
   console.log("[isUserConnected] No user object in session. User is not connected.");
@@ -559,7 +559,7 @@ function transformDialogToCloudFolder(dialog: any, chats: any[], users: any[], i
             const userAssociated = users?.find((u:any) => String(u.id) === peerUserId);
             if (userAssociated && userAssociated.access_hash !== undefined) {
                 inputPeerForApiCalls = { _: 'inputPeerUser', user_id: userAssociated.id, access_hash: userAssociated.access_hash };
-            } else if (dialog.peer.access_hash !== undefined) { 
+            } else if (dialog.peer.access_hash !== undefined) {
                  inputPeerForApiCalls = { _: 'inputPeerUser', user_id: peer.user_id, access_hash: dialog.peer.access_hash };
             }
         } else if (peer._ === 'peerChat' && peerChatId) {
@@ -568,7 +568,7 @@ function transformDialogToCloudFolder(dialog: any, chats: any[], users: any[], i
             const chatAssociated = chats?.find((c:any) => String(c.id) === peerChannelId);
             if (chatAssociated && chatAssociated.access_hash !== undefined) {
                 inputPeerForApiCalls = { _: 'inputPeerChannel', channel_id: chatAssociated.id, access_hash: chatAssociated.access_hash };
-            } else if (dialog.peer.access_hash !== undefined) { 
+            } else if (dialog.peer.access_hash !== undefined) {
                 inputPeerForApiCalls = { _: 'inputPeerChannel', channel_id: peer.channel_id, access_hash: dialog.peer.access_hash };
             }
         }
@@ -636,9 +636,9 @@ export async function getDialogFilters(): Promise<DialogFilter[]> {
     const result = await api.call('messages.getDialogFilters');
     console.log("[getDialogFilters] API response:", result);
 
-    if (Array.isArray(result)) { 
+    if (Array.isArray(result)) {
       return result as DialogFilter[];
-    } else if (result && Array.isArray(result.filters)) { 
+    } else if (result && Array.isArray(result.filters)) {
       return result.filters as DialogFilter[];
     } else {
       console.warn("[getDialogFilters] Unexpected structure for messages.getDialogFilters response:", result);
@@ -669,7 +669,7 @@ export async function getTelegramChats(
       offset_id: offsetId,
       offset_peer: offsetPeer || { _: 'inputPeerEmpty' },
       limit: limit,
-      hash: 0, 
+      hash: 0,
   };
 
   if (folderId !== undefined && folderId !== ALL_CHATS_FILTER_ID) {
@@ -687,11 +687,11 @@ export async function getTelegramChats(
     let hasMore = false;
 
     if (dialogsResult.messages && dialogsResult.messages.length > 0) {
-      if (dialogsResult._ === 'messages.dialogsSlice' && dialogsResult.count) { 
+      if (dialogsResult._ === 'messages.dialogsSlice' && dialogsResult.count) {
           hasMore = dialogsResult.dialogs.length < dialogsResult.count && dialogsResult.dialogs.length > 0;
-      } else if (dialogsResult._ === 'messages.dialogs') { 
+      } else if (dialogsResult._ === 'messages.dialogs') {
           hasMore = false;
-      } else { 
+      } else {
           hasMore = dialogsResult.dialogs.length >= limit;
       }
 
@@ -1255,13 +1255,13 @@ export async function exportChatlistInvite(filterId: number): Promise<{ link: st
     };
     const result = await api.call('chatlists.exportChatlistInvite', {
         chatlist: inputChatlist,
-        title: '', 
-        peers: []  
+        title: '',
+        peers: []
     });
     if (result && result.invite && result.invite.url) {
         return { link: result.invite.url };
     }
-    if (result && result.url) { 
+    if (result && result.url) {
         return { link: result.url };
     }
     console.warn("[exportChatlistInvite] Could not find URL in response:", result);
@@ -1274,11 +1274,11 @@ export async function exportChatlistInvite(filterId: number): Promise<{ link: st
 
 
 export async function updateDialogFilter(
-  filterIdToUpdate: number | null, 
-  filterData?: DialogFilter 
+  filterIdToUpdate: number | null,
+  filterData?: DialogFilter
 ): Promise<boolean> {
   const params: any = {
-    flags: 0, 
+    flags: 0,
   };
 
   if (filterIdToUpdate !== null) {
@@ -1291,10 +1291,10 @@ export async function updateDialogFilter(
   }
 
   if (filterData) {
-    params.flags |= (1 << 0); 
+    params.flags |= (1 << 0);
     params.filter = filterData;
   }
-  
+
   try {
     const result = await api.call('messages.updateDialogFilter', params);
     return result === true || (typeof result === 'object' && result._ === 'boolTrue');
@@ -1319,9 +1319,9 @@ export async function createManagedCloudChannel(
   try {
     const createChannelResult = await api.call('channels.createChannel', {
       title: title,
-      about: channelAbout, 
+      about: channelAbout,
       megagroup: type === 'supergroup',
-      for_import: false, 
+      for_import: false,
     });
     console.log("[createManagedCloudChannel] channels.createChannel result:", createChannelResult);
 
@@ -1348,7 +1348,7 @@ export async function createManagedCloudChannel(
     };
     const configJsonString = JSON.stringify(initialConfig, null, 2);
 
-    if (new TextEncoder().encode(configJsonString).length >= 4000) { 
+    if (new TextEncoder().encode(configJsonString).length >= 4000) {
         console.error("Initial config JSON is too long. This is a bug.", configJsonString);
         throw new Error("Internal error: Initial configuration message is too large.");
     }
@@ -1356,7 +1356,7 @@ export async function createManagedCloudChannel(
     const sendMessageResult = await api.call('messages.sendMessage', {
       peer: channelInputPeer,
       message: configJsonString,
-      random_id: generateRandomLong(), 
+      random_id: generateRandomLong(),
       no_webpage: true,
     });
     console.log("[createManagedCloudChannel] messages.sendMessage result:", sendMessageResult);
@@ -1371,12 +1371,12 @@ export async function createManagedCloudChannel(
         }
         if (update._ === 'updateMessageID' && sendMessageResult.id === update.id) {
              if(sendMessageResult.id && sendMessageResult.date && sendMessageResult.message === configJsonString){
-                sentMessageInfo = sendMessageResult; 
+                sentMessageInfo = sendMessageResult;
              }
              break;
         }
     }
-     if (!sentMessageInfo && sendMessageResult.id && sendMessageResult.message === configJsonString) { 
+     if (!sentMessageInfo && sendMessageResult.id && sendMessageResult.message === configJsonString) {
         sentMessageInfo = sendMessageResult;
     }
 
@@ -1395,7 +1395,7 @@ export async function createManagedCloudChannel(
 }
 
 export async function fetchAndVerifyManagedCloudChannels(): Promise<CloudFolder[]> {
-  console.log("[FVC] Service: Scanning for Cloudifier Cloud Channels by checking message ID 1.");
+  console.log("[FVC] Service: Scanning for Cloudifier Cloud Channels by checking first 4 messages.");
   if (!(await isUserConnected())) {
     console.log("[FVC] Service: User not connected, returning empty array.");
     return [];
@@ -1411,7 +1411,7 @@ export async function fetchAndVerifyManagedCloudChannels(): Promise<CloudFolder[
       offset_date: 0,
       offset_id: 0,
       offset_peer: { _: 'inputPeerEmpty' },
-      limit: 200, // Fetch a decent batch for scanning
+      limit: 200,
       hash: 0,
     });
 
@@ -1419,29 +1419,29 @@ export async function fetchAndVerifyManagedCloudChannels(): Promise<CloudFolder[
       allDialogs = dialogsResult.dialogs;
       allChatsFromDialogs = dialogsResult.chats || [];
       allUsersFromDialogs = dialogsResult.users || [];
-      console.log(`[FVC] Service: Fetched ${allDialogs.length} dialogs, ${allChatsFromDialogs.length} chats, ${allUsersFromDialogs.length} users for scanning.`);
+      console.log(`[FVC] Service: Fetched ${allDialogs.length} dialogs for scanning.`);
     } else {
       console.warn("[FVC] Service: No dialogs found in messages.getDialogs response.");
       return [];
     }
   } catch (error: any) {
     console.error("[FVC] Service: Error fetching dialogs for scanning:", error.message);
-    return []; 
+    return [];
   }
 
   for (const dialog of allDialogs) {
     if (dialog.peer?._ !== 'peerChannel') {
-      continue; 
+      continue;
     }
 
     const channelInfo = allChatsFromDialogs.find(c => String(c.id) === String(dialog.peer.channel_id));
     if (!channelInfo || !channelInfo.access_hash) {
-      console.log(`[FVC] Service: Skipping channel ID ${dialog.peer.channel_id} ("${dialog.title || 'N/A'}"). Full info or access_hash missing from getDialogs result.`);
+      console.log(`[FVC] Service: Skipping channel ID ${dialog.peer.channel_id} ("${getPeerTitle(dialog.peer, allChatsFromDialogs, allUsersFromDialogs) || 'N/A'}"). Full info or access_hash missing.`);
       continue;
     }
-    
+
     const entityType = channelInfo.megagroup ? "Supergroup" : (channelInfo.gigagroup ? "Gigagroup" : "Channel");
-    console.log(`[FVC] Service: Scanning ${entityType}: "${channelInfo.title}" (ID: ${channelInfo.id}). Attempting to fetch message ID 1.`);
+    console.log(`[FVC] Service: Scanning ${entityType}: "${channelInfo.title}" (ID: ${channelInfo.id}). IsMegagroup: ${!!channelInfo.megagroup}. About (preview): ${(channelInfo.about || "").substring(0,50)}`);
 
     const channelInputPeer = {
       _: 'inputPeerChannel',
@@ -1449,41 +1449,58 @@ export async function fetchAndVerifyManagedCloudChannels(): Promise<CloudFolder[
       access_hash: channelInfo.access_hash,
     };
 
+    let channelIsVerified = false;
     try {
+      console.log(`[FVC] Attempting to fetch messages [1,2,3,4] for channel "${channelInfo.title}" (ID: ${channelInfo.id})`);
       const messagesResult = await api.call('channels.getMessages', {
         channel: channelInputPeer,
-        id: [{ _: 'inputMessageID', id: 1 }], // Fetch specifically message ID 1
+        id: [
+          { _: 'inputMessageID', id: 1 },
+          { _: 'inputMessageID', id: 2 },
+          { _: 'inputMessageID', id: 3 },
+          { _: 'inputMessageID', id: 4 },
+        ],
       });
 
-      console.log(`[FVC] Service: channels.getMessages response for "${channelInfo.title}" (ID: ${channelInfo.id}):`, messagesResult);
+      // console.log(`[FVC] messages.getMessages response for "${channelInfo.title}" (ID: ${channelInfo.id}):`, messagesResult);
 
-      if (messagesResult && messagesResult.messages && messagesResult.messages.length > 0) {
-        const firstMessage = messagesResult.messages.find((m: any) => m.id === 1);
-        
-        if (firstMessage && firstMessage.message) {
-          console.log(`[FVC] Service: Found message ID 1 for "${channelInfo.title}". Content (preview):`, firstMessage.message.substring(0,100));
-          try {
-            const config = JSON.parse(firstMessage.message);
-            if (config && config.app_signature === CLOUDIFIER_APP_SIGNATURE_V1) {
-              console.log(`[FVC] Service: VERIFIED Cloud Channel: "${channelInfo.title}" (ID: ${channelInfo.id}) via config message signature.`);
-              const cloudFolder = transformDialogToCloudFolder(dialog, allChatsFromDialogs, allUsersFromDialogs, true, config);
-              if (cloudFolder) {
-                verifiedCloudChannels.push(cloudFolder);
+      if (messagesResult && messagesResult.messages && Array.isArray(messagesResult.messages)) {
+        for (const messageInBatch of messagesResult.messages) {
+          if (messageInBatch && typeof messageInBatch.message === 'string' && messageInBatch.message.trim() !== '' && messageInBatch._ === 'message') {
+            console.log(`[FVC] Checking message ID ${messageInBatch.id} from "${channelInfo.title}". Content preview: ${(messageInBatch.message || "").substring(0,100)}`);
+            try {
+              const config = JSON.parse(messageInBatch.message);
+              if (config && config.app_signature === CLOUDIFIER_APP_SIGNATURE_V1) {
+                console.log(`[FVC] VERIFIED Cloud Channel: "${channelInfo.title}" (ID: ${channelInfo.id}) via config in message ID ${messageInBatch.id}.`);
+                const cloudFolder = transformDialogToCloudFolder(dialog, allChatsFromDialogs, allUsersFromDialogs, true, config);
+                if (cloudFolder) {
+                  verifiedCloudChannels.push(cloudFolder);
+                  channelIsVerified = true;
+                  break; // Found config for this channel, no need to check other messages
+                }
+              } else {
+                 // console.log(`[FVC] Message ID ${messageInBatch.id} from "${channelInfo.title}" parsed, but app_signature mismatch or missing. Parsed:`, config ? {app_signature: config.app_signature} : "undefined/null");
               }
-            } else {
-              console.log(`[FVC] Service: Message ID 1 for "${channelInfo.title}" parsed, but app_signature did not match or was missing. Parsed:`, config);
+            } catch (parseError: any) {
+              // console.log(`[FVC] Message ID ${messageInBatch.id} from "${channelInfo.title}" is not valid JSON: ${parseError.message}.`);
             }
-          } catch (parseError: any) {
-            console.log(`[FVC] Service: Message ID 1 for "${channelInfo.title}" is not valid JSON or parsing failed: ${parseError.message}. Content:`, firstMessage.message);
+          } else {
+            // console.log(`[FVC] Skipping message ID ${messageInBatch.id} from "${channelInfo.title}" - not a text message or empty. Type: ${messageInBatch ? messageInBatch._ : 'undefined'}`);
           }
-        } else {
-          console.log(`[FVC] Service: No message with ID 1 found for "${channelInfo.title}", or message content empty.`);
         }
+         if (!channelIsVerified) {
+             console.log(`[FVC] No valid config message found in first 4 text messages for channel "${channelInfo.title}".`);
+         }
       } else {
-        console.log(`[FVC] Service: channels.getMessages returned no messages for ID 1 in "${channelInfo.title}".`);
+        console.log(`[FVC] channels.getMessages returned no messages (or unexpected structure) for first 4 IDs in "${channelInfo.title}".`);
       }
     } catch (error: any) {
-      console.log(`[FVC] Service: Error fetching message ID 1 for channel "${channelInfo.title}" (ID: ${channelInfo.id}): ${error.message}. This channel will not be listed as a cloud channel.`);
+      const errorMessage = error.message || error.originalErrorObject?.error_message;
+      if (errorMessage && (errorMessage.includes("MESSAGE_ID_INVALID") || errorMessage.includes("MSG_ID_INVALID"))) {
+          console.log(`[FVC] Service: Error fetching first 4 messages for channel "${channelInfo.title}" (ID: ${channelInfo.id}): Some message IDs (1-4) likely don't exist. This is expected for some channels.`);
+      } else {
+          console.log(`[FVC] Service: Error fetching first 4 messages for channel "${channelInfo.title}" (ID: ${channelInfo.id}): ${errorMessage}.`);
+      }
     }
   }
 
@@ -1496,5 +1513,3 @@ if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
   (window as any).telegramServiceApi = api;
   (window as any).telegramUserSession = userSession;
 }
-    
-
