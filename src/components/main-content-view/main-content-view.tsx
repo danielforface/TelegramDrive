@@ -2,10 +2,10 @@
 "use client";
 
 import * as React from "react";
-import type { CloudFile } from "@/types";
+import type { CloudFile, CloudFolder } from "@/types"; // Added CloudFolder
 import { ContentFileItem } from "./content-file-item";
 import { Button } from "@/components/ui/button";
-import { Search, FolderOpen, Loader2, CalendarDays, XCircle as ClearIcon, UploadCloud } from "lucide-react";
+import { Search, FolderOpen, Loader2, CalendarDays, XCircle as ClearIcon, UploadCloud, Cloud } from "lucide-react"; // Added Cloud
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
@@ -14,18 +14,23 @@ import { format, isToday, isYesterday, startOfDay, isSameDay, isSameMonth } from
 
 interface MainContentViewProps {
   folderName: string | null;
-  files: CloudFile[];
-  isLoading: boolean; // For initial load or when files array is empty
-  isLoadingMoreMedia?: boolean; // Specifically for the "load more" button state
+  files: CloudFile[]; // For regular chats, this is media. For cloud, it will be virtual items.
+  isLoading: boolean;
+  isLoadingMoreMedia?: boolean;
   hasMore: boolean;
   onFileDetailsClick: (file: CloudFile) => void;
   onQueueDownloadClick: (file: CloudFile) => void;
   onFileViewImageClick: (file: CloudFile) => void;
   onFilePlayVideoClick: (file: CloudFile) => void;
-  onOpenUploadDialog: () => void; 
+  onOpenUploadDialog: () => void;
   isPreparingStream?: boolean;
   preparingStreamForFileId?: string | null;
-  onLoadMoreMedia?: () => void; // Callback for the "Load More" button
+  onLoadMoreMedia?: () => void;
+  isCloudChannel: boolean; // New prop
+  // TODO: Add props for virtual folder navigation and creation later
+  // currentVirtualPath?: string;
+  // onNavigateVirtualFolder?: (path: string) => void;
+  // onCreateVirtualFolder?: (name: string, parentPath: string) => void;
 }
 
 const TABS_CONFIG = [
@@ -52,7 +57,8 @@ export function MainContentView({
   onOpenUploadDialog,
   isPreparingStream,
   preparingStreamForFileId,
-  onLoadMoreMedia, 
+  onLoadMoreMedia,
+  isCloudChannel, // New prop
 }: MainContentViewProps) {
   const [activeTab, setActiveTab] = useState("all");
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
@@ -63,14 +69,20 @@ export function MainContentView({
   useEffect(() => {
     setActiveTab("all");
     setSelectedDate(undefined);
-    setSearchTerm(""); 
+    setSearchTerm("");
   }, [folderName]);
 
   const handleSearchButtonClick = () => {
-    console.log("Search button clicked. Dialog to be implemented.");
+    // Search functionality to be implemented
   };
 
   const filteredByTypeFiles = useMemo(() => {
+    if (isCloudChannel) {
+      // For cloud channels, file filtering will be based on virtual file system data
+      // and not directly on the `files` prop in this initial version.
+      // This will be expanded when virtual FS browsing is implemented.
+      return []; // Placeholder for now
+    }
     if (!files) return [];
     switch (activeTab) {
       case "images":
@@ -93,9 +105,13 @@ export function MainContentView({
       default:
         return files;
     }
-  }, [files, activeTab]);
+  }, [files, activeTab, isCloudChannel]);
 
   const displayedAndPossiblyFilteredFiles = useMemo(() => {
+    if (isCloudChannel) {
+        // Placeholder - will use virtual file system data later
+        return [];
+    }
     let processedFiles = filteredByTypeFiles;
 
     if (selectedDate) {
@@ -103,12 +119,12 @@ export function MainContentView({
         file.timestamp && isSameDay(new Date(file.timestamp * 1000), selectedDate)
       );
     }
-    
-    if (!selectedDate) { 
+
+    if (!selectedDate) {
         return processedFiles.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
     }
-    return processedFiles; 
-  }, [filteredByTypeFiles, selectedDate]);
+    return processedFiles;
+  }, [filteredByTypeFiles, selectedDate, isCloudChannel]);
 
 
   if (!folderName) {
@@ -128,6 +144,21 @@ export function MainContentView({
   let lastDisplayedDay: Date | null = null;
   let lastDisplayedMonth: Date | null = null;
 
+  if (isCloudChannel) {
+    return (
+      <div className="space-y-4 h-full flex flex-col p-1 md:p-2 lg:p-4 items-center justify-center text-center">
+        <Cloud className="w-24 h-24 text-primary opacity-70 mb-4" />
+        <h1 className="text-3xl font-bold text-primary mb-2">{folderName}</h1>
+        <p className="text-muted-foreground mb-4">
+          This is a Cloud Storage Channel. Virtual file system browsing will be implemented here.
+        </p>
+        {/* TODO: Add button to create virtual folder */}
+        <Button onClick={onOpenUploadDialog} variant="outline" size="lg">
+          <UploadCloud className="mr-2 h-5 w-5" /> Upload File to Cloud Storage
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4 h-full flex flex-col p-1 md:p-2 lg:p-4">
@@ -206,12 +237,12 @@ export function MainContentView({
           {displayFiles.length > 0 ? (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
               {displayFiles.map((file, index) => {
-                if (!file.timestamp) return null; 
+                if (!file.timestamp) return null;
                 const fileDate = new Date(file.timestamp * 1000);
                 let dayHeader = null;
                 let monthHeader = null;
 
-                if (!selectedDate) { 
+                if (!selectedDate) {
                   if (!lastDisplayedMonth || !isSameMonth(fileDate, lastDisplayedMonth)) {
                     monthHeader = (
                       <div key={`month-${file.id}`} className="col-span-full text-lg font-semibold text-primary py-3 mt-4 mb-2 border-b-2 border-primary/30">
@@ -219,7 +250,7 @@ export function MainContentView({
                       </div>
                     );
                     lastDisplayedMonth = fileDate;
-                    lastDisplayedDay = null; 
+                    lastDisplayedDay = null;
                   }
 
                   if (!lastDisplayedDay || !isSameDay(fileDate, lastDisplayedDay)) {
@@ -236,13 +267,13 @@ export function MainContentView({
                     lastDisplayedDay = fileDate;
                   }
                 }
-                
+
                 const itemContent = (
                   <ContentFileItem
                     key={`${file.id}-${activeTab}-${selectedDate ? format(selectedDate, "yyyy-MM-dd") : 'all'}-${index}`}
                     file={file}
                     style={{ animationDelay: `${index * 30}ms` }}
-                    onDetailsClick={onFileDetailsClick} 
+                    onDetailsClick={onFileDetailsClick}
                     onQueueDownloadClick={onQueueDownloadClick}
                     onViewImageClick={onFileViewImageClick}
                     onPlayVideoClick={onFilePlayVideoClick}
@@ -250,12 +281,11 @@ export function MainContentView({
                     preparingStreamForFileId={preparingStreamForFileId}
                   />
                 );
-                
+
                 return (
                   <React.Fragment key={`fragment-${file.id}`}>
                     {monthHeader}
                     {dayHeader}
-                    {/* Wrapper div for ref is removed, button handles load more */}
                     {itemContent}
                   </React.Fragment>
                 );
@@ -267,7 +297,7 @@ export function MainContentView({
                 <p className="text-lg">No media items to display for the current selection.</p>
              </div>
           )}
-          {isLoadingMoreMedia && displayFiles.length > 0 && ( // Use isLoadingMoreMedia for button spinner
+          {isLoadingMoreMedia && displayFiles.length > 0 && (
             <div className="flex justify-center items-center p-4 mt-4">
               <Loader2 className="animate-spin h-8 w-8 text-primary" />
               <p className="ml-3 text-muted-foreground">Loading more media...</p>
@@ -295,6 +325,5 @@ export function MainContentView({
     </div>
   );
 }
-
 
     
