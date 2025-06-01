@@ -6,10 +6,11 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Loader2, ListFilter, Edit3, Share2, PlusSquare, Check, GripVertical, CloudCog, Cloud } from "lucide-react";
+import { Loader2, ListFilter, Edit3, Share2, Check, GripVertical, Cloud } from "lucide-react"; // Removed PlusSquare, CloudCog
 import { cn } from "@/lib/utils";
 import React from "react";
-import { ALL_CHATS_FILTER_ID, CLOUD_STORAGE_FILTER_ID } from "@/services/telegramService";
+import { ALL_CHATS_FILTER_ID } from "@/services/telegramService";
+// CLOUD_STORAGE_FILTER_ID import removed as it's no longer handled as a special tab here.
 
 
 interface FolderTabsBarProps {
@@ -21,8 +22,8 @@ interface FolderTabsBarProps {
   onToggleReorderMode: () => void;
   onMoveFilter: (dragIndex: number, hoverIndex: number) => void;
   onShareFilter: (filterId: number) => void;
-  onAddFilterPlaceholder: () => void;
-  onOpenCreateCloudChannelDialog: () => void;
+  // onAddFilterPlaceholder?: () => void; // Removed
+  // onOpenCreateCloudChannelDialog?: () => void; // Removed
   className?: string;
 }
 
@@ -36,12 +37,12 @@ export function FolderTabsBar({
   onToggleReorderMode,
   onMoveFilter,
   onShareFilter,
-  onAddFilterPlaceholder,
-  onOpenCreateCloudChannelDialog,
+  // onAddFilterPlaceholder, // Removed
+  // onOpenCreateCloudChannelDialog, // Removed
   className,
 }: FolderTabsBarProps) {
 
-  if (isLoading && filters.length === 0) { // Changed condition slightly
+  if (isLoading && filters.length === 0) { 
     return (
       <div className={cn("flex items-center justify-center h-14 border-b px-4 bg-background shadow-sm", className)}>
         <Loader2 className="h-5 w-5 animate-spin text-primary" />
@@ -51,7 +52,6 @@ export function FolderTabsBar({
   }
 
   const displayFilters = [...filters];
-  // Ensure "All Chats" is present if not already
   if (!displayFilters.some(f => f.id === ALL_CHATS_FILTER_ID)) {
       const allChatsDefault: DialogFilter = {
           _:'dialogFilterDefault',
@@ -62,8 +62,6 @@ export function FolderTabsBar({
       };
       displayFilters.unshift(allChatsDefault);
   }
-  // Ensure "Cloud Storage" is present if not already, and has a unique ID
-  // This is now handled in page.tsx by adding it to dialogFilters directly.
 
 
   const currentTabValue = (activeFilterId !== null && displayFilters.some(f => f.id === activeFilterId))
@@ -73,7 +71,7 @@ export function FolderTabsBar({
   const [draggedItemIndex, setDraggedItemIndex] = React.useState<number | null>(null);
 
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>, index: number) => {
-    if (!isReorderingMode || filters[index].id === ALL_CHATS_FILTER_ID || filters[index].id === CLOUD_STORAGE_FILTER_ID) {
+    if (!isReorderingMode || filters[index].id === ALL_CHATS_FILTER_ID) { // CLOUD_STORAGE_FILTER_ID check removed
         e.preventDefault();
         return;
     }
@@ -89,7 +87,7 @@ export function FolderTabsBar({
   const handleDrop = (e: React.DragEvent<HTMLDivElement>, dropIndex: number) => {
     e.preventDefault();
     if (!isReorderingMode || draggedItemIndex === null ||
-        (filters[dropIndex] && (filters[dropIndex].id === ALL_CHATS_FILTER_ID || filters[dropIndex].id === CLOUD_STORAGE_FILTER_ID))) {
+        (filters[dropIndex] && (filters[dropIndex].id === ALL_CHATS_FILTER_ID))) { // CLOUD_STORAGE_FILTER_ID check removed
       setDraggedItemIndex(null);
       return;
     }
@@ -97,7 +95,7 @@ export function FolderTabsBar({
     if (dragIndexStr) {
       const dragIndex = parseInt(dragIndexStr, 10);
       if (!isNaN(dragIndex) && dragIndex !== dropIndex &&
-          (!filters[dropIndex] || (filters[dropIndex].id !== ALL_CHATS_FILTER_ID && filters[dropIndex].id !== CLOUD_STORAGE_FILTER_ID))) {
+          (!filters[dropIndex] || (filters[dropIndex].id !== ALL_CHATS_FILTER_ID ))) { // CLOUD_STORAGE_FILTER_ID check removed
         onMoveFilter(dragIndex, dropIndex);
       }
     }
@@ -125,12 +123,12 @@ export function FolderTabsBar({
                   key={filter.id}
                   className={cn(
                     "flex items-center rounded-md",
-                    isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && filter.id !== CLOUD_STORAGE_FILTER_ID && "tab-shake cursor-move",
-                    isReorderingMode && (filter.id === ALL_CHATS_FILTER_ID || filter.id === CLOUD_STORAGE_FILTER_ID) && "cursor-not-allowed opacity-70",
+                    isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && "tab-shake cursor-move", // CLOUD_STORAGE_FILTER_ID check removed
+                    isReorderingMode && (filter.id === ALL_CHATS_FILTER_ID) && "cursor-not-allowed opacity-70", // CLOUD_STORAGE_FILTER_ID check removed
                     draggedItemIndex === index && "opacity-50 border-2 border-dashed border-primary",
                     activeFilterId === filter.id && !isReorderingMode && "bg-primary/10"
                   )}
-                  draggable={isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && filter.id !== CLOUD_STORAGE_FILTER_ID}
+                  draggable={isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID} // CLOUD_STORAGE_FILTER_ID check removed
                   onDragStart={(e) => handleDragStart(e, index)}
                   onDragOver={handleDragOver}
                   onDrop={(e) => handleDrop(e, index)}
@@ -141,16 +139,16 @@ export function FolderTabsBar({
                       <TooltipTrigger asChild>
                         <TabsTrigger
                           value={filter.id.toString()}
-                          disabled={isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && filter.id !== CLOUD_STORAGE_FILTER_ID && draggedItemIndex === index}
+                          disabled={isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && draggedItemIndex === index} // CLOUD_STORAGE_FILTER_ID check removed
                           className={cn(
                             "h-10 relative px-2 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-sm hover:bg-muted/50 flex items-center gap-1.5",
                             activeFilterId === filter.id && !isReorderingMode ? "data-[state=active]:bg-transparent data-[state=active]:shadow-none" : "data-[state=active]:bg-primary/10"
                           )}
                         >
-                          {isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && filter.id !== CLOUD_STORAGE_FILTER_ID && <GripVertical className="h-4 w-4 mr-1 text-muted-foreground" />}
+                          {isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && <GripVertical className="h-4 w-4 mr-1 text-muted-foreground" />} {/* CLOUD_STORAGE_FILTER_ID check removed */}
                           {filter.id === ALL_CHATS_FILTER_ID && !filter.emoticon && <ListFilter className="h-4 w-4" />}
-                          {filter.id === CLOUD_STORAGE_FILTER_ID && <Cloud className="h-4 w-4" />}
-                          {filter.emoticon && filter.id !== CLOUD_STORAGE_FILTER_ID && <span className="text-lg">{filter.emoticon}</span>}
+                          {/* CLOUD_STORAGE_FILTER_ID icon logic removed */}
+                          {filter.emoticon && filter.id !== ALL_CHATS_FILTER_ID && <span className="text-lg">{filter.emoticon}</span>} {/* CLOUD_STORAGE_FILTER_ID check removed */}
                           <span className="truncate max-w-[100px] sm:max-w-[180px]">{filter.title}</span>
                         </TabsTrigger>
                       </TooltipTrigger>
@@ -161,7 +159,7 @@ export function FolderTabsBar({
                     </Tooltip>
                   </TooltipProvider>
 
-                  {!isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && filter.id !== CLOUD_STORAGE_FILTER_ID && (
+                  {!isReorderingMode && filter.id !== ALL_CHATS_FILTER_ID && ( // CLOUD_STORAGE_FILTER_ID check removed
                     <TooltipProvider delayDuration={100}>
                         <Tooltip>
                             <TooltipTrigger asChild>
@@ -192,28 +190,7 @@ export function FolderTabsBar({
           <ScrollBar orientation="horizontal" className="h-2"/>
         </ScrollArea>
         <div className="flex items-center pl-2 space-x-1 flex-shrink-0">
-          <TooltipProvider delayDuration={100}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-9 w-9" onClick={onOpenCreateCloudChannelDialog} title="New Cloud Storage">
-                  <CloudCog className="h-5 w-5" />
-                  <span className="sr-only">New Cloud Storage</span>
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>New Cloud Storage</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-          <TooltipProvider delayDuration={100}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-9 w-9" onClick={onAddFilterPlaceholder} title="Add Folder (Filter)">
-                  <PlusSquare className="h-5 w-5" />
-                  <span className="sr-only">Add Folder (Filter)</span>
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Add Folder (Filter)</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          {/* Removed "New Cloud Storage" and "Add Folder" buttons */}
           <Button variant="outline" size="sm" onClick={onToggleReorderMode} className="h-9">
             {isReorderingMode ? <Check className="mr-1.5 h-4 w-4" /> : <Edit3 className="mr-1.5 h-4 w-4" />}
             {isReorderingMode ? "Done" : "Reorder"}
@@ -223,3 +200,4 @@ export function FolderTabsBar({
     </div>
   );
 }
+

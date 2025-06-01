@@ -12,15 +12,14 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { Loader2, RefreshCw, MessageSquare, Cloud } from "lucide-react";
+import { Loader2, RefreshCw, MessageSquare, Cloud, CloudCog } from "lucide-react"; // Added CloudCog
 import { ChatListItem } from "./chat-list-item";
 import { FolderTabsBar } from "./folder-tabs-bar";
-// CLOUD_STORAGE_FILTER_ID is no longer needed here as a special tab ID
 
 interface ChatSelectionDialogProps {
   isOpen: boolean;
   onOpenChange: (isOpen: boolean) => void;
-  viewMode?: 'default' | 'cloudStorage'; // New prop to control mode
+  viewMode?: 'default' | 'cloudStorage'; 
 
   // Props for 'default' viewMode (regular chats & folders)
   dialogFilters?: DialogFilter[];
@@ -31,26 +30,26 @@ interface ChatSelectionDialogProps {
   onToggleReorderFolders?: () => void;
   onMoveFilter?: (dragIndex: number, hoverIndex: number) => void;
   onShareFilter?: (filterId: number) => void;
-  onAddFilterPlaceholder?: () => void;
-  onOpenCreateCloudChannelDialog?: () => void; // Can still be triggered from default view
+  // onAddFilterPlaceholder?: () => void; // Removed
 
   // Props for both viewModes
   folders: CloudFolder[];
   selectedFolderId: string | null;
-  onSelectFolder: (folderId: string) => void; // Renamed from onSelectCloudChannel for generic use
+  onSelectFolder: (folderId: string) => void; 
   isLoading: boolean;
   isLoadingMore: boolean;
   hasMore: boolean;
   onLoadMore: () => void;
   onRefresh: () => void;
+  onOpenCreateCloudChannelDialog?: () => void; // Now used by cloudStorage viewMode
   currentErrorMessage?: string | null;
 }
 
 export function ChatSelectionDialog({
   isOpen,
   onOpenChange,
-  viewMode = 'default', // Default to 'default'
-  dialogFilters = [], // Default to empty array
+  viewMode = 'default', 
+  dialogFilters = [], 
   activeDialogFilterId = null,
   onSelectDialogFilter,
   isLoadingDialogFilters = false,
@@ -58,7 +57,7 @@ export function ChatSelectionDialog({
   onToggleReorderFolders,
   onMoveFilter,
   onShareFilter,
-  onAddFilterPlaceholder,
+  // onAddFilterPlaceholder, // Removed
   onOpenCreateCloudChannelDialog,
   folders,
   selectedFolderId,
@@ -75,8 +74,8 @@ export function ChatSelectionDialog({
 
   const dialogTitle = isCloudStorageView ? "Select Cloud Storage" : "Select a Chat";
   const dialogDescription = isCloudStorageView
-    ? "Choose an app-managed cloud storage channel."
-    : "First, select a folder tab, then choose a conversation. Or, create new cloud storage.";
+    ? "Choose an app-managed cloud storage channel, or create a new one."
+    : "First, select a folder tab, then choose a conversation.";
   const loadMoreButtonText = isCloudStorageView ? "Load More Channels" : "Load More Chats";
   const noItemsMessage = currentErrorMessage || 
                         (isCloudStorageView ? "No cloud storage channels found." : "No chats found in this folder.");
@@ -92,7 +91,7 @@ export function ChatSelectionDialog({
           <DialogDescription>{dialogDescription}</DialogDescription>
         </DialogHeader>
 
-        {!isCloudStorageView && onSelectDialogFilter && onToggleReorderFolders && onMoveFilter && onShareFilter && onAddFilterPlaceholder && onOpenCreateCloudChannelDialog && (
+        {!isCloudStorageView && onSelectDialogFilter && onToggleReorderFolders && onMoveFilter && onShareFilter && (
           <FolderTabsBar
             filters={dialogFilters}
             activeFilterId={activeDialogFilterId}
@@ -102,18 +101,27 @@ export function ChatSelectionDialog({
             onToggleReorderMode={onToggleReorderFolders}
             onMoveFilter={onMoveFilter}
             onShareFilter={onShareFilter}
-            onAddFilterPlaceholder={onAddFilterPlaceholder}
-            onOpenCreateCloudChannelDialog={onOpenCreateCloudChannelDialog}
+            // onAddFilterPlaceholder={undefined} // Explicitly undefined as it's removed
+            // onOpenCreateCloudChannelDialog={undefined} // Explicitly undefined as it's moved
             className="flex-shrink-0 sticky top-0 z-10"
           />
         )}
+
+        {isCloudStorageView && onOpenCreateCloudChannelDialog && (
+            <div className="px-6 pt-4 pb-2 border-b">
+                <Button onClick={onOpenCreateCloudChannelDialog} className="w-full" variant="outline">
+                    <CloudCog className="mr-2 h-5 w-5" /> Create New Cloud Storage
+                </Button>
+            </div>
+        )}
+
 
         <ScrollArea className="flex-grow overflow-y-auto px-6 py-4">
           {isLoading && folders.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full py-10">
               <Loader2 className="animate-spin h-8 w-8 text-primary mb-3" />
               <p className="text-muted-foreground">
-                {isCloudStorageView ? "Loading cloud storage channels..." : "Loading chats..."}
+                {isCloudStorageView ? "Scanning for cloud storage channels..." : "Loading chats..."}
               </p>
             </div>
           ) : folders.length === 0 && !isLoadingMore ? (
@@ -176,3 +184,4 @@ export function ChatSelectionDialog({
     </Dialog>
   );
 }
+

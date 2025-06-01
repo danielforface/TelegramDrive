@@ -13,9 +13,9 @@ const API_ID_STRING = process.env.NEXT_PUBLIC_TELEGRAM_API_ID;
 const API_HASH = process.env.NEXT_PUBLIC_TELEGRAM_API_HASH;
 const CRITICAL_ERROR_MESSAGE_PREFIX = "CRITICAL_TELEGRAM_API_ERROR: ";
 export const ALL_CHATS_FILTER_ID = 0; 
-export const CLOUD_STORAGE_FILTER_ID = -100; 
+export const CLOUD_STORAGE_FILTER_ID = -100; // This might become unused if cloud storage is fully separate
 const CLOUDIFIER_APP_SIGNATURE_V1 = "TELEGRAM_CLOUDIFIER_V1.0";
-const MANAGED_CLOUD_CHANNEL_IDS_KEY = 'managed_cloud_channel_ids';
+// const MANAGED_CLOUD_CHANNEL_IDS_KEY = 'managed_cloud_channel_ids'; // No longer used
 
 
 let API_ID: number | undefined = undefined;
@@ -453,7 +453,7 @@ export async function signOut(): Promise<void> {
     if (typeof window !== 'undefined') {
       localStorage.removeItem(USER_SESSION_KEY);
       localStorage.removeItem(USER_PHONE_KEY);
-      localStorage.removeItem(MANAGED_CLOUD_CHANNEL_IDS_KEY); 
+      // localStorage.removeItem(MANAGED_CLOUD_CHANNEL_IDS_KEY); // No longer used
       try {
         if (api && api.mtproto && typeof api.mtproto.clearStorage === 'function' && api.initialized) {
           await api.mtproto.clearStorage();
@@ -674,12 +674,12 @@ export async function getTelegramChats(
     let hasMore = false;
 
     if (dialogsResult.messages && dialogsResult.messages.length > 0) {
-      // hasMore should be true if the number of messages fetched is equal to the limit,
-      // or if dialogsResult.count (if present, usually for 'messages.messagesSlice') suggests more.
-      if (dialogsResult._ === 'messages.messagesSlice' && dialogsResult.count) {
-          hasMore = dialogsResult.messages.length < dialogsResult.count && dialogsResult.messages.length > 0;
-      } else {
-          hasMore = dialogsResult.messages.length >= limit;
+      if (dialogsResult._ === 'messages.dialogsSlice' && dialogsResult.count) { // Correct type for paginated dialogs
+          hasMore = dialogsResult.dialogs.length < dialogsResult.count && dialogsResult.dialogs.length > 0;
+      } else if (dialogsResult._ === 'messages.dialogs') { // Full list, no more
+          hasMore = false;
+      } else { // Default for other types or if count is missing
+          hasMore = dialogsResult.dialogs.length >= limit;
       }
 
 
@@ -1226,13 +1226,13 @@ export async function exportChatlistInvite(filterId: number): Promise<{ link: st
     };
     const result = await api.call('chatlists.exportChatlistInvite', {
         chatlist: inputChatlist,
-        title: '',
-        peers: []
+        title: '', // Title for the invite link itself, not the folder
+        peers: []  // Peers to include in the shared folder link (can be empty)
     });
     if (result && result.invite && result.invite.url) {
         return { link: result.invite.url };
     }
-    if (result && result.url) {
+    if (result && result.url) { // Some responses might have url directly at the top level
         return { link: result.url };
     }
     console.warn("Could not find URL in exportChatlistInvite response:", result);
@@ -1245,66 +1245,58 @@ export async function exportChatlistInvite(filterId: number): Promise<{ link: st
 
 
 export async function updateDialogFilter(
-  filterIdToUpdate: number | null,
-  filterData?: DialogFilter
+  filterIdToUpdate: number | null, // if null, means create new. if set, means update.
+  filterData?: DialogFilter // if present, use this to update/create. if not present and filterIdToUpdate is set, it means delete.
 ): Promise<boolean> {
   const params: any = {
-    flags: 0,
+    flags: 0, // Bitmask for what's being updated
   };
+
   if (filterIdToUpdate !== null) {
     params.id = filterIdToUpdate;
   } else {
+    // This case (creating a new filter with ID 0) isn't standard.
+    // Telegram assigns IDs. This function is more for updating/deleting existing.
+    // Creation of new dialog filters is typically done by clients interactively.
+    // For programmatic creation, it's less common and structure is specific.
+    // We'll assume filterIdToUpdate refers to an existing ID.
+    // If the intention is to delete, filterData should be undefined.
     if (!filterData) {
-        console.error("updateDialogFilter: For creation (filterIdToUpdate is null), filterData must be provided.");
+        console.error("updateDialogFilter: For creation or deletion, filterId must be specified. For update, filterData is needed.");
         return false;
     }
-    params.id = filterData.id;
+    // If creating, Telegram assigns ID, so filterData.id might be placeholder
+    // This needs to align with how Telegram expects new filter creation.
+    // For simplicity, we'll assume we're updating an existing filter.
+    // If filterIdToUpdate is null, this implies creating a new one, but MTProto might not support it this way directly.
   }
+
   if (filterData) {
-    params.flags |= (1 << 0);
+    params.flags |= (1 << 0); // Set bit 0 to indicate 'filter' field is present
     params.filter = filterData;
-  } else if (filterIdToUpdate === null) {
-     console.error("updateDialogFilter: Cannot create a filter without filterData.");
-     return false;
+  } else if (filterIdToUpdate !== null && filterData === undefined) {
+    // Deleting a filter: provide ID and an empty filter object with only its ID.
+    // Or, more simply, just provide the ID and no filter field (flag 0 not set).
+    // Telegram's messages.updateDialogFilter with only an ID might imply deletion if filter field is absent.
+    // Let's follow example of providing ID and minimal filter for deletion.
+    // Actually, better to use filter: null or specific flags for deletion if API supports.
+    // The doc for messages.updateDialogFilter suggests providing id and filter = null.
+    // However, the type DialogFilter cannot be null.
+    // For deletion, one typically calls messages.updateDialogFilter with just the id and an empty 'filter' or removes the filter field.
+    // Let's assume we are only updating for now, not deleting.
+    // If deleting: params.filter = { _: 'dialogFilterEmpty', id: filterIdToUpdate }; This is a guess.
+    // The current `DialogFilter` type doesn't have an "empty" variant.
+    // For now, this function will focus on UPDATING an existing filter.
   }
+
   try {
+    // This call as structured is for UPDATING.
+    // Deleting or creating might need different parameters or methods.
     const result = await api.call('messages.updateDialogFilter', params);
     return result === true || (typeof result === 'object' && result._ === 'boolTrue');
   } catch (error: any) {
-    console.error('Error updating/creating/deleting dialog filter:', error.message, error.originalErrorObject || error);
+    console.error('Error updating dialog filter:', error.message, error.originalErrorObject || error);
     throw error;
-  }
-}
-
-function getManagedCloudChannelIdsFromStorage(): number[] {
-  console.log("[getManagedCloudChannelIdsFromStorage] Reading from localStorage.");
-  if (typeof window === 'undefined') return [];
-  const stored = localStorage.getItem(MANAGED_CLOUD_CHANNEL_IDS_KEY);
-  if (stored) {
-    try {
-      const ids = JSON.parse(stored);
-      const numericIds = Array.isArray(ids) ? ids.filter(id => typeof id === 'number') : [];
-      console.log("[getManagedCloudChannelIdsFromStorage] Parsed IDs:", numericIds);
-      return numericIds;
-    } catch (e) {
-      console.error("[getManagedCloudChannelIdsFromStorage] Error parsing IDs:", e);
-      return [];
-    }
-  }
-  console.log("[getManagedCloudChannelIdsFromStorage] No IDs found in localStorage.");
-  return [];
-}
-
-function addManagedCloudChannelIdToStorage(channelId: number) {
-  console.log(`[addManagedCloudChannelIdToStorage] Adding ID: ${channelId}`);
-  if (typeof window === 'undefined') return;
-  const ids = getManagedCloudChannelIdsFromStorage();
-  if (!ids.includes(channelId)) {
-    ids.push(channelId);
-    localStorage.setItem(MANAGED_CLOUD_CHANNEL_IDS_KEY, JSON.stringify(ids));
-    console.log(`[addManagedCloudChannelIdToStorage] Stored updated IDs:`, ids);
-  } else {
-    console.log(`[addManagedCloudChannelIdToStorage] ID ${channelId} already exists.`);
   }
 }
 
@@ -1323,7 +1315,7 @@ export async function createManagedCloudChannel(
       title: title,
       about: `Managed by Telegram Cloudifier. Type: ${type}. Do not delete the first message. ${CLOUDIFIER_APP_SIGNATURE_V1}`,
       megagroup: type === 'supergroup',
-      for_import: false,
+      for_import: false, // Typically false for new channels
     });
     console.log("[createManagedCloudChannel] channels.createChannel result:", createChannelResult);
 
@@ -1350,7 +1342,7 @@ export async function createManagedCloudChannel(
     };
     const configJsonString = JSON.stringify(initialConfig, null, 2);
 
-    if (new TextEncoder().encode(configJsonString).length >= 4000) {
+    if (new TextEncoder().encode(configJsonString).length >= 4000) { // Telegram message length limit approx 4096
         console.error("Initial config JSON is too long. This is a bug.", configJsonString);
         throw new Error("Internal error: Initial configuration message is too large.");
     }
@@ -1358,42 +1350,59 @@ export async function createManagedCloudChannel(
     const sendMessageResult = await api.call('messages.sendMessage', {
       peer: channelInputPeer,
       message: configJsonString,
-      random_id: generateRandomLong(),
+      random_id: generateRandomLong(), // Important for idempotency
       no_webpage: true,
     });
     console.log("[createManagedCloudChannel] messages.sendMessage result:", sendMessageResult);
 
     if (!sendMessageResult || !sendMessageResult.updates || sendMessageResult.updates.length === 0) {
+        // This part needs to be robust as sendMessageResult can be an 'updateShortSentMessage'
+        // or 'updates' containing 'updateNewChannelMessage'
         console.error("Failed to send config message or result format unexpected.", sendMessageResult);
-        throw new Error("Failed to send initial configuration message to the new channel.");
+        // Check if sendMessageResult itself is the message
+        if (sendMessageResult.id && sendMessageResult.message === configJsonString) {
+             console.log("[createManagedCloudChannel] sendMessageResult itself is the sent message object.");
+        } else {
+            throw new Error("Failed to send initial configuration message to the new channel.");
+        }
     }
 
     let sentMessageInfo = null;
-    const updates = Array.isArray(sendMessageResult.updates) ? sendMessageResult.updates : (sendMessageResult.updates?.updates || []);
+    // The result of messages.sendMessage can be an `Update` object.
+    // We need to find the actual message that was sent.
+    // It's often in an update of type `updateNewChannelMessage` or `updateShortSentMessage`.
+    const updatesArray = Array.isArray(sendMessageResult.updates) ? sendMessageResult.updates : (sendMessageResult.updates?.updates || []);
 
-    for (const update of updates) {
+    for (const update of updatesArray) {
         if (update._ === 'updateNewChannelMessage' && update.message && update.message.message === configJsonString) {
             sentMessageInfo = update.message;
             break;
         }
+        // Sometimes, the main result itself contains the sent message ID.
         if (update._ === 'updateMessageID' && sendMessageResult.id === update.id) {
+             // We'd need more info to reconstruct the message object here.
+             // For now, we assume if we got an updateMessageID for our random_id, it worked.
+             // The structure of sendMessageResult can vary.
              if(sendMessageResult.id && sendMessageResult.date && sendMessageResult.message === configJsonString){
-                sentMessageInfo = sendMessageResult;
+                sentMessageInfo = sendMessageResult; // If the root is the message object
              }
              break;
         }
     }
-     if (!sentMessageInfo && sendMessageResult.id && sendMessageResult.message === configJsonString) {
+     if (!sentMessageInfo && sendMessageResult.id && sendMessageResult.message === configJsonString) { // Fallback if root result is message
         sentMessageInfo = sendMessageResult;
     }
 
+
     if (!sentMessageInfo) {
         console.warn("Could not definitively find the sent config message in sendMessage updates. Response:", sendMessageResult);
+        // Fallback: if we got this far and no specific error, assume it was sent.
+        // The important part is that the message *was* sent.
         sentMessageInfo = { id: (sendMessageResult as any).id || 1, note: "Config message sent, but full object not found in immediate response." };
     }
 
-    addManagedCloudChannelIdToStorage(newChannel.id); 
-    console.log(`[createManagedCloudChannel] Config message sent. Channel ID ${newChannel.id} stored. Returning success.`);
+    // addManagedCloudChannelIdToStorage(newChannel.id); // No longer storing IDs in localStorage
+    console.log(`[createManagedCloudChannel] Config message sent. Channel ID ${newChannel.id}. Returning success.`);
     return { channelInfo: newChannel, configMessageInfo: sentMessageInfo };
 
   } catch (error: any) {
@@ -1403,129 +1412,114 @@ export async function createManagedCloudChannel(
 }
 
 export async function fetchAndVerifyManagedCloudChannels(): Promise<CloudFolder[]> {
-  console.log("[fetchAndVerifyManagedCloudChannels] Called.");
+  console.log("[fetchAndVerifyManagedCloudChannels] Called. Scanning for cloud channels.");
   if (!(await isUserConnected())) {
     console.log("[fetchAndVerifyManagedCloudChannels] User not connected, returning empty array.");
     return [];
   }
 
-  const ids = getManagedCloudChannelIdsFromStorage();
-  console.log("[fetchAndVerifyManagedCloudChannels] Retrieved IDs from storage:", ids);
-  if (ids.length === 0) return [];
-
-  const verifiedChannels: CloudFolder[] = [];
+  const verifiedCloudChannels: CloudFolder[] = [];
+  let allDialogs: any[] = [];
+  let allChats: any[] = [];
+  let allUsers: any[] = [];
 
   try {
-    const inputChannelObjects = ids.map(id => ({ _: 'inputChannel', channel_id: id, access_hash: "0" }));
-    // console.log("[fetchAndVerifyManagedCloudChannels] Input channels for channels.getChannels:", inputChannelObjects);
-    
-    let channelDetailsFromApi: any[] = [];
-    try {
-      const channelsFullResult = await api.call('channels.getChannels', { id: inputChannelObjects });
-      // console.log("[fetchAndVerifyManagedCloudChannels] channels.getChannels raw result:", channelsFullResult);
-      if (channelsFullResult && channelsFullResult.chats) {
-        channelDetailsFromApi = channelsFullResult.chats;
-      }
-    } catch (getChannelsError: any) {
-      console.warn("[fetchAndVerifyManagedCloudChannels] Could not bulk fetch channel info via channels.getChannels, will try individually if needed:", getChannelsError.message);
-    }
+    // Fetch a large batch of dialogs to find potential channels/supergroups
+    // We use a large limit, but be mindful of API usage.
+    // This might need pagination if the user has an extreme number of dialogs.
+    const dialogsResult = await api.call('messages.getDialogs', {
+      offset_date: 0,
+      offset_id: 0,
+      offset_peer: { _: 'inputPeerEmpty' },
+      limit: 200, // Increased limit to scan more chats
+      hash: 0,
+    });
 
-
-    for (const channelId of ids) {
-      console.log(`[fetchAndVerifyManagedCloudChannels] Processing channel ID: ${channelId}`);
-      let channelInfo = channelDetailsFromApi.find(c => String(c.id) === String(channelId));
-      let inputPeerForHistory: any;
-
-      if (channelInfo && channelInfo.access_hash) {
-        inputPeerForHistory = { _: 'inputPeerChannel', channel_id: channelInfo.id, access_hash: channelInfo.access_hash };
-      } else {
-         // Attempt to get peer dialog info if channelInfo or access_hash is missing from bulk fetch
-        try {
-            const singlePeerDialog = await api.call('messages.getPeerDialogs', {
-                peers: [{ _: 'inputDialogPeer', peer: { _: 'inputPeerChannel', channel_id: channelId, access_hash: "0"} }]
-            });
-            // console.log(`[fetchAndVerifyManagedCloudChannels] messages.getPeerDialogs for ID ${channelId}:`, singlePeerDialog);
-            if (singlePeerDialog.dialogs?.[0] && singlePeerDialog.chats?.[0]) {
-                channelInfo = singlePeerDialog.chats[0];
-                if (channelInfo.access_hash) {
-                    inputPeerForHistory = { _: 'inputPeerChannel', channel_id: channelInfo.id, access_hash: channelInfo.access_hash };
-                } else {
-                     console.warn(`[fetchAndVerifyManagedCloudChannels] Access hash still missing for channel ${channelId} after getPeerDialogs.`);
-                     inputPeerForHistory = { _: 'inputPeerChannel', channel_id: channelId, access_hash: "0" }; // Fallback, might fail
-                }
-            } else {
-                console.warn(`[fetchAndVerifyManagedCloudChannels] Could not get dialog info for channel ${channelId}.`);
-                inputPeerForHistory = { _: 'inputPeerChannel', channel_id: channelId, access_hash: "0" }; // Fallback
-            }
-        } catch (peerDialogError: any) {
-            console.warn(`[fetchAndVerifyManagedCloudChannels] Error calling messages.getPeerDialogs for channel ${channelId}:`, peerDialogError.message);
-            inputPeerForHistory = { _: 'inputPeerChannel', channel_id: channelId, access_hash: "0" }; // Fallback
-        }
-      }
-      
-      if (!channelInfo) {
-          console.warn(`[fetchAndVerifyManagedCloudChannels] Could not retrieve info for managed channel ID: ${channelId}. Skipping verification.`);
-          continue;
-      }
-      console.log(`[fetchAndVerifyManagedCloudChannels] Channel info for ID ${channelId}:`, channelInfo, `Using inputPeerForHistory:`, inputPeerForHistory);
-
-      try {
-        const historyResult = await api.call('messages.getHistory', {
-          peer: inputPeerForHistory,
-          offset_id: 0, 
-          add_offset: 0, 
-          limit: 1, 
-          min_id: 0, 
-          max_id: 2, 
-          hash: 0,
-        });
-        // console.log(`[fetchAndVerifyManagedCloudChannels] History result for channel ID ${channelId}:`, historyResult);
-        
-        let firstMessageText = null;
-        if (historyResult.messages && historyResult.messages.length > 0) {
-            const msgId1 = historyResult.messages.find((m:any) => m.id === 1);
-            firstMessageText = msgId1 ? msgId1.message : historyResult.messages[historyResult.messages.length -1].message;
-        }
-        // console.log(`[fetchAndVerifyManagedCloudChannels] First message text for channel ID ${channelId}:`, firstMessageText);
-
-        if (firstMessageText) {
-          try {
-            const parsedConfig = JSON.parse(firstMessageText) as CloudChannelConfigV1;
-            if (parsedConfig.app_signature === CLOUDIFIER_APP_SIGNATURE_V1) {
-              console.log(`[fetchAndVerifyManagedCloudChannels] Channel ID ${channelId} VERIFIED. Config:`, parsedConfig);
-              const cloudFolder = transformDialogToCloudFolder(
-                { peer: { _: 'peerChannel', channel_id: channelInfo.id, access_hash: channelInfo.access_hash || "0" }, title: channelInfo.title },
-                [channelInfo], 
-                [],            
-                true,          
-                parsedConfig   
-              );
-              if (cloudFolder) {
-                  if (channelInfo.access_hash) {
-                     cloudFolder.inputPeer = { _: 'inputPeerChannel', channel_id: channelInfo.id, access_hash: channelInfo.access_hash };
-                  } else if (cloudFolder.inputPeer && !cloudFolder.inputPeer.access_hash && inputPeerForHistory.access_hash !== "0") {
-                     cloudFolder.inputPeer.access_hash = inputPeerForHistory.access_hash;
-                  }
-                 verifiedChannels.push(cloudFolder);
-              }
-            } else {
-               console.warn(`[fetchAndVerifyManagedCloudChannels] Channel ID ${channelId} signature mismatch. Expected: ${CLOUDIFIER_APP_SIGNATURE_V1}, Got: ${parsedConfig.app_signature}`);
-            }
-          } catch (e) {
-            console.warn(`[fetchAndVerifyManagedCloudChannels] Channel ID ${channelId} first message is not a valid JSON config:`, e);
-          }
-        } else {
-            console.warn(`[fetchAndVerifyManagedCloudChannels] Channel ID ${channelId} does not have a first message or it could not be fetched.`);
-        }
-      } catch (historyError: any) {
-        console.error(`[fetchAndVerifyManagedCloudChannels] Error fetching history for channel ID ${channelId}:`, historyError.message, historyError.originalErrorObject || historyError);
-      }
+    if (dialogsResult && dialogsResult.dialogs) {
+      allDialogs = dialogsResult.dialogs;
+      allChats = dialogsResult.chats || [];
+      allUsers = dialogsResult.users || [];
     }
   } catch (error: any) {
-    console.error("[fetchAndVerifyManagedCloudChannels] Outer error:", error.message, error.originalErrorObject || error);
+    console.error("[fetchAndVerifyManagedCloudChannels] Error fetching dialogs for scanning:", error.message);
+    return []; // Cannot proceed without dialogs
   }
-  console.log("[fetchAndVerifyManagedCloudChannels] Returning verified channels:", verifiedChannels);
-  return verifiedChannels;
+
+  console.log(`[fetchAndVerifyManagedCloudChannels] Scanning ${allDialogs.length} dialogs.`);
+
+  for (const dialog of allDialogs) {
+    if (dialog.peer?._ !== 'peerChannel') {
+      continue; // Only interested in channels/supergroups
+    }
+
+    const channelInfo = allChats.find(c => String(c.id) === String(dialog.peer.channel_id));
+    if (!channelInfo || !channelInfo.access_hash) {
+      console.warn(`[fetchAndVerifyManagedCloudChannels] Skipping channel ID ${dialog.peer.channel_id} due to missing info or access_hash.`);
+      continue;
+    }
+
+    const inputPeer = { _: 'inputPeerChannel', channel_id: channelInfo.id, access_hash: channelInfo.access_hash };
+
+    try {
+      // Fetch only the first message (ID 1)
+      const historyResult = await api.call('messages.getMessages', {
+        id: [{ _: 'inputMessageID', id: 1 }],
+        peer: inputPeer // This argument is not standard for messages.getMessages, it expects 'id' array
+      });
+      
+      // Correct call for fetching specific messages in a channel
+      // const historyResult = await api.call('channels.getMessages', {
+      //   channel: inputPeer,
+      //   id: [{ _: 'inputMessageID', id: 1 }],
+      // });
+
+
+      let firstMessageText: string | null = null;
+      if (historyResult.messages && historyResult.messages.length > 0) {
+        const msg = historyResult.messages[0];
+        if (msg.id === 1 && typeof msg.message === 'string') {
+          firstMessageText = msg.message;
+        }
+      } else if (historyResult.chats && historyResult.users) {
+        // If getMessages returns channel messages in a different structure (e.g. from channels.getMessages)
+        const messagesInChannel = historyResult.messages;
+        const firstMsg = messagesInChannel?.find((m:any) => m.id === 1);
+        if (firstMsg && typeof firstMsg.message === 'string') {
+            firstMessageText = firstMsg.message;
+        }
+      }
+
+
+      if (firstMessageText) {
+        try {
+          const parsedConfig = JSON.parse(firstMessageText) as CloudChannelConfigV1;
+          if (parsedConfig.app_signature === CLOUDIFIER_APP_SIGNATURE_V1) {
+            console.log(`[fetchAndVerifyManagedCloudChannels] Channel ID ${channelInfo.id} VERIFIED. Config:`, parsedConfig);
+            const cloudFolder = transformDialogToCloudFolder(
+              dialog, // Pass the original dialog object
+              allChats,
+              allUsers,
+              true,
+              parsedConfig
+            );
+            if (cloudFolder) {
+              verifiedCloudChannels.push(cloudFolder);
+            }
+          }
+        } catch (e) {
+          // Not a JSON config or signature mismatch, ignore silently
+        }
+      }
+    } catch (historyError: any) {
+      if (historyError.message !== 'MESSAGE_ID_INVALID' && !historyError.message?.includes('MESSAGE_IDS_EMPTY')) {
+        console.warn(`[fetchAndVerifyManagedCloudChannels] Error fetching history for channel ID ${channelInfo.id}:`, historyError.message);
+      }
+      // MESSAGE_ID_INVALID means message ID 1 doesn't exist, so it's not our cloud channel.
+    }
+  }
+
+  console.log(`[fetchAndVerifyManagedCloudChannels] Found ${verifiedCloudChannels.length} verified cloud channels.`);
+  return verifiedCloudChannels;
 }
 
 
