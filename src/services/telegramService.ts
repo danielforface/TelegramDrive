@@ -8,11 +8,12 @@ import cryptoSha256 from '@cryptography/sha256';
 
 export { formatFileSize };
 export const ALL_CHATS_FILTER_ID = 0; 
+const CLOUDIFIER_APP_SIGNATURE_V1 = "TELEGRAM_CLOUDIFIER_V1.0";
+
 
 const API_ID_STRING = process.env.NEXT_PUBLIC_TELEGRAM_API_ID;
 const API_HASH = process.env.NEXT_PUBLIC_TELEGRAM_API_HASH;
 const CRITICAL_ERROR_MESSAGE_PREFIX = "CRITICAL_TELEGRAM_API_ERROR: ";
-const CLOUDIFIER_APP_SIGNATURE_V1 = "TELEGRAM_CLOUDIFIER_V1.0";
 
 
 let API_ID: number | undefined = undefined;
@@ -1313,7 +1314,7 @@ export async function createManagedCloudChannel(
     throw new Error("User not connected. Cannot create cloud channel.");
   }
 
-  const channelAbout = `Managed by Telegram Cloudifier. Type: ${type}. Config: ${CLOUDIFIER_APP_SIGNATURE_V1}. Do not delete the first message.`;
+  const channelAbout = `Managed by Telegram Cloudifier. Type: ${type}. Config: ${CLOUDIFIER_APP_SIGNATURE_V1}. Do not delete the first message or alter this 'about' text.`;
 
   try {
     const createChannelResult = await api.call('channels.createChannel', {
@@ -1394,23 +1395,23 @@ export async function createManagedCloudChannel(
 }
 
 export async function fetchAndVerifyManagedCloudChannels(): Promise<CloudFolder[]> {
-  console.log("[FVC] Called. Scanning for cloud channels by checking 'about' field.");
+  console.log("[FVC] Service: Scanning for Cloudifier Cloud Channels by checking message ID 1.");
   if (!(await isUserConnected())) {
-    console.log("[FVC] User not connected, returning empty array.");
+    console.log("[FVC] Service: User not connected, returning empty array.");
     return [];
   }
 
   const verifiedCloudChannels: CloudFolder[] = [];
   let allDialogs: any[] = [];
-  let allChatsFromDialogs: any[] = []; // Renamed to avoid confusion with the local 'chats' in transformDialogToCloudFolder scope
-  let allUsersFromDialogs: any[] = []; // Renamed
+  let allChatsFromDialogs: any[] = [];
+  let allUsersFromDialogs: any[] = [];
 
   try {
     const dialogsResult = await api.call('messages.getDialogs', {
       offset_date: 0,
       offset_id: 0,
       offset_peer: { _: 'inputPeerEmpty' },
-      limit: 200, // Fetch a decent batch to scan
+      limit: 200, // Fetch a decent batch for scanning
       hash: 0,
     });
 
@@ -1418,56 +1419,75 @@ export async function fetchAndVerifyManagedCloudChannels(): Promise<CloudFolder[
       allDialogs = dialogsResult.dialogs;
       allChatsFromDialogs = dialogsResult.chats || [];
       allUsersFromDialogs = dialogsResult.users || [];
-      console.log(`[FVC] Fetched ${allDialogs.length} dialogs, ${allChatsFromDialogs.length} chats, ${allUsersFromDialogs.length} users.`);
+      console.log(`[FVC] Service: Fetched ${allDialogs.length} dialogs, ${allChatsFromDialogs.length} chats, ${allUsersFromDialogs.length} users for scanning.`);
     } else {
-      console.warn("[FVC] No dialogs found in messages.getDialogs response.");
+      console.warn("[FVC] Service: No dialogs found in messages.getDialogs response.");
       return [];
     }
   } catch (error: any) {
-    console.error("[FVC] Error fetching dialogs for scanning:", error.message);
+    console.error("[FVC] Service: Error fetching dialogs for scanning:", error.message);
     return []; 
   }
 
-  console.log(`[FVC] Scanning ${allDialogs.length} dialogs for cloud signature in 'about' field.`);
-
   for (const dialog of allDialogs) {
-    if (dialog.peer?._ !== 'peerChannel') { // This condition is for entities that *are* channels/supergroups
+    if (dialog.peer?._ !== 'peerChannel') {
       continue; 
     }
 
-    // Find the corresponding full chat object from the 'chats' array in dialogsResult
     const channelInfo = allChatsFromDialogs.find(c => String(c.id) === String(dialog.peer.channel_id));
-    
-    if (!channelInfo) {
-      console.warn(`[FVC] Skipping peerChannel ID ${dialog.peer.channel_id}: Full channel info not found in 'chats' array from getDialogs. Dialog peer:`, dialog.peer);
+    if (!channelInfo || !channelInfo.access_hash) {
+      console.log(`[FVC] Service: Skipping channel ID ${dialog.peer.channel_id} ("${dialog.title || 'N/A'}"). Full info or access_hash missing from getDialogs result.`);
       continue;
     }
     
-    // Determine if it's a channel or supergroup for logging
     const entityType = channelInfo.megagroup ? "Supergroup" : (channelInfo.gigagroup ? "Gigagroup" : "Channel");
-    const aboutFieldPreview = channelInfo.about ? channelInfo.about.substring(0, 100) + (channelInfo.about.length > 100 ? '...' : '') : 'N/A';
+    console.log(`[FVC] Service: Scanning ${entityType}: "${channelInfo.title}" (ID: ${channelInfo.id}). Attempting to fetch message ID 1.`);
 
-    console.log(`[FVC] Checking ${entityType}: "${channelInfo.title}" (ID: ${channelInfo.id}). IsMegagroup: ${!!channelInfo.megagroup}. About: "${aboutFieldPreview}"`);
+    const channelInputPeer = {
+      _: 'inputPeerChannel',
+      channel_id: channelInfo.id,
+      access_hash: channelInfo.access_hash,
+    };
 
-    if (channelInfo.about && typeof channelInfo.about === 'string' && channelInfo.about.includes(CLOUDIFIER_APP_SIGNATURE_V1)) {
-        console.log(`[FVC] VERIFIED (via 'about' field) ${entityType} ID ${channelInfo.id} ("${channelInfo.title}") as Cloud Storage.`);
+    try {
+      const messagesResult = await api.call('channels.getMessages', {
+        channel: channelInputPeer,
+        id: [{ _: 'inputMessageID', id: 1 }], // Fetch specifically message ID 1
+      });
+
+      console.log(`[FVC] Service: channels.getMessages response for "${channelInfo.title}" (ID: ${channelInfo.id}):`, messagesResult);
+
+      if (messagesResult && messagesResult.messages && messagesResult.messages.length > 0) {
+        const firstMessage = messagesResult.messages.find((m: any) => m.id === 1);
         
-        const cloudFolder = transformDialogToCloudFolder(
-            dialog, 
-            allChatsFromDialogs, // Pass the correct chats array
-            allUsersFromDialogs,   // Pass the correct users array
-            true, // isAppManagedCloud
-            undefined // cloudConfig initially undefined, will be fetched on demand
-        );
-        if (cloudFolder) {
-            verifiedCloudChannels.push(cloudFolder);
+        if (firstMessage && firstMessage.message) {
+          console.log(`[FVC] Service: Found message ID 1 for "${channelInfo.title}". Content (preview):`, firstMessage.message.substring(0,100));
+          try {
+            const config = JSON.parse(firstMessage.message);
+            if (config && config.app_signature === CLOUDIFIER_APP_SIGNATURE_V1) {
+              console.log(`[FVC] Service: VERIFIED Cloud Channel: "${channelInfo.title}" (ID: ${channelInfo.id}) via config message signature.`);
+              const cloudFolder = transformDialogToCloudFolder(dialog, allChatsFromDialogs, allUsersFromDialogs, true, config);
+              if (cloudFolder) {
+                verifiedCloudChannels.push(cloudFolder);
+              }
+            } else {
+              console.log(`[FVC] Service: Message ID 1 for "${channelInfo.title}" parsed, but app_signature did not match or was missing. Parsed:`, config);
+            }
+          } catch (parseError: any) {
+            console.log(`[FVC] Service: Message ID 1 for "${channelInfo.title}" is not valid JSON or parsing failed: ${parseError.message}. Content:`, firstMessage.message);
+          }
+        } else {
+          console.log(`[FVC] Service: No message with ID 1 found for "${channelInfo.title}", or message content empty.`);
         }
-    } else {
-        // console.log(`[FVC] ${entityType} ID ${channelInfo.id} ("${channelInfo.title}") - 'about' field did not match signature or was empty.`);
+      } else {
+        console.log(`[FVC] Service: channels.getMessages returned no messages for ID 1 in "${channelInfo.title}".`);
+      }
+    } catch (error: any) {
+      console.log(`[FVC] Service: Error fetching message ID 1 for channel "${channelInfo.title}" (ID: ${channelInfo.id}): ${error.message}. This channel will not be listed as a cloud channel.`);
     }
   }
 
-  console.log(`[fetchAndVerifyManagedCloudChannels] Found ${verifiedCloudChannels.length} verified cloud channels by checking 'about' field.`);
+  console.log(`[FVC] Service: Scan complete. Found ${verifiedCloudChannels.length} verified Cloudifier Cloud Channels.`);
   return verifiedCloudChannels;
 }
 
