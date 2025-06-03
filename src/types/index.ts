@@ -11,8 +11,8 @@ export interface CloudFile {
   telegramMessage?: any;
   totalSizeInBytes?: number;
   inputPeer?: any;
-  caption?: string; // Caption from Telegram message, may contain VFS path
-  vfsPath?: string; // Derived VFS path for easier filtering
+  caption?: string; // Caption from Telegram message, may contain VFS path or regular text
+  vfsPath?: string; // Derived VFS path for easier filtering (populated by UI if needed)
 }
 
 export interface CloudFolder {
@@ -23,8 +23,8 @@ export interface CloudFolder {
   isChatFolder?: boolean;
   inputPeer?: any;
   isAppManagedCloud?: boolean;
-  cloudConfig?: CloudChannelConfigV1;
-  vfsPath?: string; // Virtual path for this folder in UI representation
+  cloudConfig?: CloudChannelConfigV1 | null; // Allow null for loading/error states
+  vfsPath?: string; // Virtual path for this folder in UI representation (primarily for virtual folders from config)
 }
 
 export interface GetChatsPaginatedResponse {
@@ -39,6 +39,7 @@ export interface MediaHistoryResponse {
   files: CloudFile[];
   nextOffsetId?: number;
   hasMore: boolean;
+  isCloudChannelFetch?: boolean; // Hint for processing in page.tsx
 }
 
 export type DownloadStatus =
@@ -172,12 +173,9 @@ export type { FileHash as AppFileHash };
 
 // Configuration for app-managed cloud channels
 export interface CloudChannelConfigEntry {
-  type: 'file' | 'folder'; // 'file' type might not be directly stored in config this way, but good for modeling
+  type: 'file' | 'folder'; // 'file' entries are not directly stored in config, but helps model structure
   name: string; // Original name, path is derived from structure
   // For files, details are in the message itself + caption, not typically duplicated in config
-  // tg_message_id?: number;
-  // mime_type?: string;
-  // size_bytes?: number;
   created_at: string; // ISO timestamp for the entry
   modified_at: string; // ISO timestamp for the entry
   entries?: { [name: string]: CloudChannelConfigEntry }; // For folders

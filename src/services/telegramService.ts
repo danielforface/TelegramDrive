@@ -25,7 +25,6 @@ if (API_ID_STRING) {
     const errorMessage = CRITICAL_ERROR_MESSAGE_PREFIX + "NEXT_PUBLIC_TELEGRAM_API_ID is not a valid number. Real connection will fail. \n" +
                          "Please ensure it is a number in your .env.local file and you have restarted your development server. \n" +
                          "Example: NEXT_PUBLIC_TELEGRAM_API_ID=123456";
-    // console.error(errorMessage);
     if (typeof window !== 'undefined') (window as any).telegramApiError = errorMessage;
     API_ID = undefined;
   }
@@ -35,7 +34,6 @@ if (API_ID_STRING) {
                       "NEXT_PUBLIC_TELEGRAM_API_ID=YOUR_API_ID_HERE \n" +
                       "NEXT_PUBLIC_TELEGRAM_API_HASH=YOUR_API_HASH_HERE \n" +
                       "You MUST restart your development server after creating or modifying the .env.local file.";
-  // console.warn(envErrorMsg);
   if (typeof window !== 'undefined') (window as any).telegramApiError = envErrorMsg;
 }
 
@@ -43,7 +41,6 @@ if (!API_HASH && API_ID !== undefined) {
   const envErrorMsg = CRITICAL_ERROR_MESSAGE_PREFIX + "NEXT_PUBLIC_TELEGRAM_API_HASH is not set in environment variables. Real connection will fail. \n" +
                       "Please ensure it is set in your .env.local file and you have restarted your development server. \n" +
                       "Example: NEXT_PUBLIC_TELEGRAM_API_HASH=your_actual_api_hash";
-  // console.warn(envErrorMsg);
    if (typeof window !== 'undefined' && !(window as any).telegramApiError) (window as any).telegramApiError = envErrorMsg;
 }
 
@@ -98,7 +95,6 @@ class API {
 
     } catch (initError: any) {
         const errorMessage = CRITICAL_ERROR_MESSAGE_PREFIX + `Failed to initialize MTProto client in API class: ${initError.message || JSON.stringify(initError)}`;
-        // console.error(errorMessage, initError);
         if (typeof window !== 'undefined' && !(window as any).telegramApiError) (window as any).telegramApiError = errorMessage;
         this.mtproto = {
             call: async (method: string, params?: any, options?: any) => {
@@ -678,13 +674,14 @@ export async function getTelegramChats(
 export async function getChatMediaHistory(
   inputPeer: any,
   limit: number,
-  offsetId: number = 0
+  offsetId: number = 0,
+  isCloudChannelFetch: boolean = false
 ): Promise<MediaHistoryResponse> {
   if (!(await isUserConnected())) {
-    return { files: [], hasMore: false, nextOffsetId: offsetId };
+    return { files: [], hasMore: false, nextOffsetId: offsetId, isCloudChannelFetch };
   }
   if (!inputPeer) {
-    return { files: [], hasMore: false, nextOffsetId: offsetId };
+    return { files: [], hasMore: false, nextOffsetId: offsetId, isCloudChannelFetch };
   }
 
   try {
@@ -699,7 +696,7 @@ export async function getChatMediaHistory(
       hash: 0,
     });
 
-    const mediaFiles: CloudFile[] = [];
+    const cloudFiles: CloudFile[] = [];
     let newOffsetId: number = offsetId;
     let hasMoreMessages = false;
 
@@ -707,7 +704,12 @@ export async function getChatMediaHistory(
 
     if (messagesArray && messagesArray.length > 0) {
       messagesArray.forEach((msg: any) => {
-         if (msg.media && (msg.media._ === 'messageMediaPhoto' || msg.media._ === 'messageMediaDocument')) {
+        // For cloud channels, we process all messages that have a 'message' field (caption) or 'media'.
+        // For regular chats, we stick to media messages.
+        const shouldProcessForCloud = isCloudChannelFetch && (msg.message || msg.media);
+        const shouldProcessForRegular = !isCloudChannelFetch && msg.media && (msg.media._ === 'messageMediaPhoto' || msg.media._ === 'messageMediaDocument');
+        
+        if (shouldProcessForCloud || shouldProcessForRegular) {
           let fileType: CloudFile['type'] = 'unknown';
           let fileName = `file_${msg.id}`;
           let fileSize: string | undefined;
@@ -715,19 +717,18 @@ export async function getChatMediaHistory(
           let totalSizeInBytes: number | undefined;
           let mediaObjectForFile: any = null;
 
-          if (msg.media.photo && msg.media.photo.id) {
+          if (msg.media?.photo && msg.media.photo.id) {
             mediaObjectForFile = historyResult.photos?.find((p:any) => String(p.id) === String(msg.media.photo.id)) || msg.media.photo;
-          } else if (msg.media.document && msg.media.document.id) {
+          } else if (msg.media?.document && msg.media.document.id) {
             mediaObjectForFile = historyResult.documents?.find((d:any) => String(d.id) === String(msg.media.document.id)) || msg.media.document;
-          } else if (msg.media.photo) {
+          } else if (msg.media?.photo) {
              mediaObjectForFile = msg.media.photo;
-          } else if (msg.media.document) {
+          } else if (msg.media?.document) {
              mediaObjectForFile = msg.media.document;
-          } else {
-             return;
           }
+          // Note: For cloud channels, mediaObjectForFile can remain null if it's a text-only message with a VFS caption.
 
-          if (msg.media._ === 'messageMediaPhoto' && mediaObjectForFile) {
+          if (msg.media?._ === 'messageMediaPhoto' && mediaObjectForFile) {
             fileType = 'image';
             fileName = `photo_${mediaObjectForFile.id?.toString() || msg.id}_${msg.date}.jpg`;
             const largestSize = mediaObjectForFile.sizes?.find((s:any) => s.type === 'y') ||
@@ -737,7 +738,7 @@ export async function getChatMediaHistory(
               fileSize = formatFileSize(totalSizeInBytes);
             }
             dataAiHint = "photograph image";
-          } else if (msg.media._ === 'messageMediaDocument' && mediaObjectForFile) {
+          } else if (msg.media?._ === 'messageMediaDocument' && mediaObjectForFile) {
               fileName = mediaObjectForFile.attributes?.find((attr: any) => attr._ === 'documentAttributeFilename')?.file_name || `document_${mediaObjectForFile.id?.toString() || msg.id}`;
               if(mediaObjectForFile.size !== undefined) {
                 totalSizeInBytes = Number(mediaObjectForFile.size);
@@ -753,10 +754,20 @@ export async function getChatMediaHistory(
               } else {
                   fileType = 'document'; dataAiHint = "document file";
               }
+          } else if (isCloudChannelFetch && msg.message && !msg.media) {
+            // This could be a text-only message, potentially with a VFS path if used for pure virtual structuring
+            // For Phase 1 of VFS, we assume files in VFS have associated media.
+            // If we want to support "virtual files" represented only by caption, this part would need adjustment.
+            // For now, we only create CloudFile entries if there's media or if it's a known VFS file.
+            // Let's ensure a filename is still generated for potential VFS parsing
+            fileName = `vfs_entry_${msg.id}`;
+            fileType = 'unknown'; // Or a new 'virtual' type
           }
 
-          if (fileType !== 'unknown' && mediaObjectForFile && totalSizeInBytes !== undefined && totalSizeInBytes > 0) {
-             mediaFiles.push({
+
+          // Only add if it's a media file or if it's a cloud channel fetch (where text messages also matter for VFS)
+          if (mediaObjectForFile || (isCloudChannelFetch && msg.message)) {
+             cloudFiles.push({
               id: String(msg.id),
               messageId: msg.id,
               name: fileName,
@@ -764,11 +775,11 @@ export async function getChatMediaHistory(
               size: fileSize,
               totalSizeInBytes: totalSizeInBytes,
               timestamp: msg.date,
-              url: undefined, // URL will be set if a preview blob is created
+              url: undefined,
               dataAiHint: dataAiHint,
-              telegramMessage: mediaObjectForFile, // Store the full media object for later use (e.g. download)
-              inputPeer: inputPeer, // Store the inputPeer for this chat
-              caption: msg.message, // Store message text as potential VFS caption
+              telegramMessage: mediaObjectForFile || msg, // Store full msg if no specific media object (for VFS text entries)
+              inputPeer: inputPeer,
+              caption: msg.message, // Always store the message text as potential caption
             });
           }
         }
@@ -787,9 +798,10 @@ export async function getChatMediaHistory(
         hasMoreMessages = false;
     }
     return {
-      files: mediaFiles,
+      files: cloudFiles,
       nextOffsetId: newOffsetId,
       hasMore: hasMoreMessages,
+      isCloudChannelFetch,
     };
 
   } catch (error:any) {
@@ -808,16 +820,21 @@ export async function prepareFileDownloadInfo(file: CloudFile): Promise<FileDown
   let totalSize: number = 0;
   let mimeType: string = 'application/octet-stream';
 
-  if (mediaObject && mediaObject._ === 'photo') {
-    if (mediaObject.id && mediaObject.access_hash && mediaObject.file_reference) {
-      const largestSize = mediaObject.sizes?.find((s: any) => s.type === 'y') ||
-                          mediaObject.sizes?.sort((a: any, b: any) => (b.w * b.h) - (a.w * a.h))[0];
+  // Check if telegramMessage is a full message object or a direct media object
+  const actualMedia = mediaObject.media ? mediaObject.media : mediaObject;
+
+
+  if (actualMedia && (actualMedia._ === 'photo' || actualMedia._ === 'messageMediaPhoto')) {
+    const photoData = actualMedia.photo || actualMedia;
+    if (photoData.id && photoData.access_hash && photoData.file_reference) {
+      const largestSize = photoData.sizes?.find((s: any) => s.type === 'y') ||
+                          photoData.sizes?.sort((a: any, b: any) => (b.w * b.h) - (a.w * a.h))[0];
       if (largestSize) {
         location = {
           _: 'inputPhotoFileLocation',
-          id: mediaObject.id,
-          access_hash: mediaObject.access_hash,
-          file_reference: mediaObject.file_reference,
+          id: photoData.id,
+          access_hash: photoData.access_hash,
+          file_reference: photoData.file_reference,
           thumb_size: largestSize.type || '',
         };
         totalSize = Number(largestSize.size) || file.totalSizeInBytes || 0;
@@ -825,17 +842,18 @@ export async function prepareFileDownloadInfo(file: CloudFile): Promise<FileDown
       }
     }
   }
-  else if (mediaObject && mediaObject._ === 'document') {
-    if (mediaObject.id && mediaObject.access_hash && mediaObject.file_reference) {
+  else if (actualMedia && (actualMedia._ === 'document' || actualMedia._ === 'messageMediaDocument')) {
+    const documentData = actualMedia.document || actualMedia;
+    if (documentData.id && documentData.access_hash && documentData.file_reference) {
       location = {
         _: 'inputDocumentFileLocation',
-        id: mediaObject.id,
-        access_hash: mediaObject.access_hash,
-        file_reference: mediaObject.file_reference,
+        id: documentData.id,
+        access_hash: documentData.access_hash,
+        file_reference: documentData.file_reference,
         thumb_size: '',
       };
-      totalSize = Number(mediaObject.size) || file.totalSizeInBytes || 0;
-      mimeType = mediaObject.mime_type || 'application/octet-stream';
+      totalSize = Number(documentData.size) || file.totalSizeInBytes || 0;
+      mimeType = documentData.mime_type || 'application/octet-stream';
     }
   }
 
@@ -1204,16 +1222,16 @@ export async function createManagedCloudChannel(
       access_hash: newChannel.access_hash,
     };
 
-    // Send a placeholder message as message ID 1
+    // Send a placeholder message to ensure message ID 1 is taken
     try {
         await api.call('messages.sendMessage', {
             peer: channelInputPeer,
-            message: `Initializing Cloud Storage: ${title}...`,
+            message: `Initializing Cloud Storage: ${title}... This message ensures the configuration message ID is stable.`,
             random_id: generateRandomLong(),
             no_webpage: true,
         });
     } catch (initMsgError) {
-      // Best effort, continue even if this fails.
+      // Best effort, continue even if this fails. This is important for reliable config message ID.
     }
 
 
@@ -1283,7 +1301,7 @@ export async function fetchAndVerifyManagedCloudChannels(): Promise<CloudFolder[
       offset_date: 0,
       offset_id: 0,
       offset_peer: { _: 'inputPeerEmpty' },
-      limit: 200, // Fetch a good number of dialogs to scan
+      limit: 200,
       hash: 0,
     });
 
@@ -1308,7 +1326,7 @@ export async function fetchAndVerifyManagedCloudChannels(): Promise<CloudFolder[
       continue;
     }
 
-    const channelInputPeer = {
+    const channelInputPeer: InputPeer = {
       _: 'inputPeerChannel',
       channel_id: channelInfo.id,
       access_hash: channelInfo.access_hash,
@@ -1322,13 +1340,13 @@ export async function fetchAndVerifyManagedCloudChannels(): Promise<CloudFolder[
         channel: channelInputPeer,
         id: [{ _: 'inputMessageID', id: CONFIG_MESSAGE_ID }],
       });
-
+      
       if (messagesResult && messagesResult.messages && Array.isArray(messagesResult.messages)) {
-        const configMessage = messagesResult.messages.find((m:any) => m.id === CONFIG_MESSAGE_ID);
+        const configMessageEntry = messagesResult.messages.find((m: any) => m.id === CONFIG_MESSAGE_ID);
 
-        if (configMessage && typeof configMessage.message === 'string' && configMessage.message.trim() !== '' && configMessage._ === 'message') {
+        if (configMessageEntry && typeof configMessageEntry.message === 'string' && configMessageEntry.message.trim() !== '' && configMessageEntry._ === 'message') {
           try {
-            const tempConfig = JSON.parse(configMessage.message);
+            const tempConfig = JSON.parse(configMessageEntry.message);
             if (tempConfig && tempConfig.app_signature === CLOUDIFIER_APP_SIGNATURE_V1) {
               channelIsVerified = true;
               parsedConfig = tempConfig as CloudChannelConfigV1;
@@ -1339,7 +1357,7 @@ export async function fetchAndVerifyManagedCloudChannels(): Promise<CloudFolder[
         }
       }
     } catch (error: any) {
-      // Gracefully handle errors (e.g., MESSAGE_ID_INVALID if message ID 2 doesn't exist for this channel)
+      // Gracefully handle errors (e.g., MESSAGE_ID_INVALID if message ID 2 doesn't exist)
     }
 
     if (channelIsVerified && parsedConfig) {
@@ -1389,6 +1407,7 @@ async function updateCloudChannelConfig(channelInputPeer: InputPeer, newConfig: 
       peer: channelInputPeer,
       id: CONFIG_MESSAGE_ID,
       message: newConfigJson,
+      no_webpage: true,
     });
     return true;
   } catch (error: any) {
@@ -1406,29 +1425,29 @@ export async function addVirtualFolderToCloudChannel(
     throw new Error("Channel inputPeer is required.");
   }
   if (!newFolderName || newFolderName.includes('/') || newFolderName === '.' || newFolderName === '..') {
-    throw new Error("Invalid folder name.");
+    throw new Error("Invalid folder name. Cannot contain '/', or be '.' or '..'.");
   }
 
   const currentConfig = await getCloudChannelConfig(channelInputPeer);
   if (!currentConfig) {
-    // console.error("Could not retrieve or validate current cloud channel configuration.");
-    return null;
+    throw new Error("Could not retrieve or validate current cloud channel configuration.");
   }
 
   let targetEntries = currentConfig.root_entries;
-  const pathSegments = parentVirtualPath.split('/').filter(segment => segment.length > 0);
+  // Normalize parentVirtualPath for traversal
+  const normalizedParentPath = parentVirtualPath.startsWith('/') ? parentVirtualPath : '/' + parentVirtualPath;
+  const pathSegments = normalizedParentPath.split('/').filter(segment => segment.length > 0);
+
 
   for (const segment of pathSegments) {
     if (!targetEntries[segment] || targetEntries[segment].type !== 'folder' || !targetEntries[segment].entries) {
-      // console.error(`Path segment "${segment}" not found or not a folder in config for path "${parentVirtualPath}".`);
-      return null; // Path is invalid
+      throw new Error(`Path segment "${segment}" not found or not a folder in config for path "${parentVirtualPath}".`);
     }
     targetEntries = targetEntries[segment].entries!;
   }
 
   if (targetEntries[newFolderName]) {
-    // console.warn(`Folder "${newFolderName}" already exists at path "${parentVirtualPath}".`);
-    throw new Error(`Folder "${newFolderName}" already exists.`);
+    throw new Error(`Folder "${newFolderName}" already exists at path "${parentVirtualPath}".`);
   }
 
   const now = new Date().toISOString();
@@ -1451,3 +1470,4 @@ if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
   (window as any).telegramServiceApi = api;
   (window as any).telegramUserSession = userSession;
 }
+

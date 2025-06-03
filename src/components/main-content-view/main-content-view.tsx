@@ -2,19 +2,21 @@
 "use client";
 
 import * as React from "react";
-import type { CloudFile, CloudFolder, CloudChannelConfigV1 } from "@/types";
+import type { CloudFile, CloudFolder, CloudChannelConfigV1, CloudChannelConfigEntry } from "@/types";
 import { ContentFileItem } from "./content-file-item";
+import { ContentFolderItem } from "./content-folder-item";
 import { Button } from "@/components/ui/button";
-import { Search, FolderOpen, Loader2, CalendarDays, XCircle as ClearIcon, UploadCloud, Cloud, FolderPlus } from "lucide-react";
+import { Search, FolderOpen, Loader2, CalendarDays, XCircle as ClearIcon, UploadCloud, Cloud, FolderPlus, ArrowUpCircle, ChevronRight } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { useState, useMemo, useEffect } from "react";
 import { format, isToday, isYesterday, startOfDay, isSameDay, isSameMonth } from "date-fns";
+import { parseVfsPathFromCaption, getEntriesForPath, normalizePath, getParentPath } from "@/lib/vfsUtils";
 
 interface MainContentViewProps {
   folderName: string | null;
-  files: CloudFile[];
+  files: CloudFile[]; // For regular chats: media. For cloud channels: ALL relevant messages.
   isLoading: boolean;
   isLoadingMoreMedia?: boolean;
   hasMore: boolean;
@@ -27,7 +29,7 @@ interface MainContentViewProps {
   preparingStreamForFileId?: string | null;
   onLoadMoreMedia?: () => void;
   isCloudChannel: boolean;
-  cloudConfig?: CloudChannelConfigV1 | null; // Make it optional for initial render
+  cloudConfig?: CloudChannelConfigV1 | null;
   currentVirtualPath: string;
   onNavigateVirtualPath: (path: string) => void;
   onOpenCreateVirtualFolderDialog: (parentPath: string) => void;
@@ -44,9 +46,10 @@ const TABS_CONFIG = [
 
 const DOCUMENT_EXTENSIONS = ['.pdf', '.docx', '.doc', '.txt', '.pptx', '.ppt'];
 
+
 export function MainContentView({
   folderName,
-  files, // For regular chats, this is media. For cloud, it will be messages.
+  files,
   isLoading,
   isLoadingMoreMedia,
   hasMore,
@@ -71,70 +74,97 @@ export function MainContentView({
 
 
   useEffect(() => {
-    // Reset filters when folder changes, but not for VFS navigation within a cloud channel
-    if (!isCloudChannel || (isCloudChannel && folderName !== selectedFolder?.name)) { // Assuming selectedFolder is available or passed
+    if (!isCloudChannel) {
         setActiveTab("all");
         setSelectedDate(undefined);
         setSearchTerm("");
     }
-    // If it's a cloud channel and folderName changes, it means a new cloud channel was selected.
-    // If currentVirtualPath changes, it means navigation within the *same* cloud channel.
-  }, [folderName, isCloudChannel]); // selectedFolder.name dependency might be tricky, ensure it's stable or use ID
+    // For cloud channels, filters might persist or be different, so we don't reset them here.
+    // Resetting of currentVirtualPath happens in page.tsx when selectedFolder changes.
+  }, [folderName, isCloudChannel]);
+
 
   const handleSearchButtonClick = () => {
     // Search functionality to be implemented
   };
 
-  const filteredByTypeFiles = useMemo(() => {
-    if (isCloudChannel) {
-      // For cloud channels, file filtering is based on VFS path & type, not direct media type
-      // This will be handled by `displayedAndPossiblyFilteredFiles` for VFS
-      return files; // Pass all messages for VFS processing
+  const vfsItems = useMemo(() => {
+    if (!isCloudChannel || !cloudConfig) return [];
+
+    const normalizedCurrentPath = normalizePath(currentVirtualPath);
+    const folderEntriesFromConfig = getEntriesForPath(cloudConfig, normalizedCurrentPath);
+    
+    const displayedFolders: { type: 'folder'; name: string; entry: CloudChannelConfigEntry }[] = [];
+    if (folderEntriesFromConfig) {
+      Object.entries(folderEntriesFromConfig).forEach(([name, entry]) => {
+        if (entry.type === 'folder') {
+          displayedFolders.push({ type: 'folder', name, entry });
+        }
+      });
     }
-    if (!files) return [];
+
+    const displayedFiles: { type: 'file'; cloudFile: CloudFile }[] = [];
+    files.forEach(fileMessage => {
+      // fileMessage.caption now holds msg.message from telegramService
+      const vfsPath = parseVfsPathFromCaption(fileMessage.caption);
+      if (vfsPath === normalizedCurrentPath) {
+        // Only add if it's not a message representing the config itself (messageId 2 and specific caption)
+        if (fileMessage.messageId === CONFIG_MESSAGE_ID && fileMessage.caption?.includes(CLOUDIFIER_APP_SIGNATURE_V1)) {
+            return;
+        }
+         // Ensure that there's actual media content to display as a file
+        if (fileMessage.telegramMessage && (fileMessage.telegramMessage.media || (fileMessage.type !== 'unknown' && fileMessage.totalSizeInBytes && fileMessage.totalSizeInBytes > 0))) {
+             displayedFiles.push({ type: 'file', cloudFile: fileMessage });
+        }
+      }
+    });
+
+    return [
+      ...displayedFolders.sort((a, b) => a.name.localeCompare(b.name)),
+      ...displayedFiles.sort((a, b) => a.cloudFile.name.localeCompare(b.cloudFile.name)),
+    ];
+  }, [isCloudChannel, cloudConfig, files, currentVirtualPath]);
+
+
+  const regularChatFiles = useMemo(() => {
+    if (isCloudChannel || !files) return [];
+    let processedFiles = files;
     switch (activeTab) {
       case "images":
-        return files.filter(file => file.type === 'image');
+        processedFiles = files.filter(file => file.type === 'image');
+        break;
       case "videos":
-        return files.filter(file => file.type === 'video');
+        processedFiles = files.filter(file => file.type === 'video');
+        break;
       case "documents":
-        return files.filter(file =>
+        processedFiles = files.filter(file =>
           file.type === 'document' &&
           DOCUMENT_EXTENSIONS.some(ext => file.name.toLowerCase().endsWith(ext))
         );
+        break;
       case "music":
-        return files.filter(file => file.type === 'audio');
+        processedFiles = files.filter(file => file.type === 'audio');
+        break;
       case "other":
-        return files.filter(file =>
+        processedFiles = files.filter(file =>
           file.type === 'document' &&
           !DOCUMENT_EXTENSIONS.some(ext => file.name.toLowerCase().endsWith(ext))
         );
+        break;
       case "all":
       default:
-        return files;
+        // processedFiles remains as files
+        break;
     }
-  }, [files, activeTab, isCloudChannel]);
-
-  const displayedAndPossiblyFilteredFiles = useMemo(() => {
-    if (isCloudChannel) {
-        // VFS logic will go here: filter 'files' (which are all messages)
-        // based on currentVirtualPath and their caption.
-        // For now, returning empty as VFS display isn't fully implemented.
-        return [];
-    }
-    let processedFiles = filteredByTypeFiles;
 
     if (selectedDate) {
       processedFiles = processedFiles.filter(file =>
         file.timestamp && isSameDay(new Date(file.timestamp * 1000), selectedDate)
       );
     }
-
-    if (!selectedDate) { // Sort only if no date filter is applied (to preserve daily grouping)
-        return processedFiles.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-    }
-    return processedFiles;
-  }, [filteredByTypeFiles, selectedDate, isCloudChannel, currentVirtualPath, cloudConfig, files]);
+    // Sort only if no date filter is applied (to preserve daily grouping)
+    return selectedDate ? processedFiles : processedFiles.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+  }, [files, activeTab, selectedDate, isCloudChannel]);
 
 
   if (!folderName) {
@@ -147,12 +177,39 @@ export function MainContentView({
     );
   }
 
-  const displayItems = displayedAndPossiblyFilteredFiles; // This will eventually hold VFS items too
-  const noResultsForFilter = (activeTab !== "all" || selectedDate || searchTerm) && displayItems.length === 0 && !isLoading;
-  const noMediaAtAll = activeTab === "all" && !selectedDate && !searchTerm && displayItems.length === 0 && !isLoading && !hasMore;
+  const displayItemsRegular = regularChatFiles;
+  const noResultsForFilter = !isCloudChannel && (activeTab !== "all" || selectedDate || searchTerm) && displayItemsRegular.length === 0 && !isLoading;
+  const noMediaAtAll = !isCloudChannel && activeTab === "all" && !selectedDate && !searchTerm && displayItemsRegular.length === 0 && !isLoading && !hasMore;
 
   let lastDisplayedDay: Date | null = null;
   let lastDisplayedMonth: Date | null = null;
+
+  const renderBreadcrumbs = () => {
+    const pathSegments = currentVirtualPath.split('/').filter(s => s.length > 0);
+    return (
+      <div className="flex items-center text-sm text-muted-foreground mb-3 flex-wrap">
+        <Button variant="link" className="p-0 h-auto hover:text-primary" onClick={() => onNavigateVirtualPath('/')}>
+          Root
+        </Button>
+        {pathSegments.map((segment, index) => {
+          const pathOnClick = normalizePath(pathSegments.slice(0, index + 1).join('/'));
+          return (
+            <React.Fragment key={segment + index}>
+              <ChevronRight className="w-4 h-4 mx-1" />
+              <Button
+                variant="link"
+                className="p-0 h-auto hover:text-primary"
+                onClick={() => onNavigateVirtualPath(pathOnClick)}
+              >
+                {segment}
+              </Button>
+            </React.Fragment>
+          );
+        })}
+      </div>
+    );
+  };
+
 
   if (isCloudChannel) {
     return (
@@ -162,40 +219,71 @@ export function MainContentView({
                 <Cloud className="w-8 h-8 mr-3 text-primary/80" />
                 {folderName}
             </h1>
-            <p className="text-sm text-muted-foreground mb-3">Path: {currentVirtualPath}</p>
+            {renderBreadcrumbs()}
         </div>
 
-        <div className="flex flex-col sm:flex-row gap-3 mb-3 items-center flex-wrap">
+        <div className="flex flex-col sm:flex-row gap-3 mb-3 items-center flex-wrap flex-shrink-0">
+           {currentVirtualPath !== '/' && (
+             <Button variant="outline" onClick={() => onNavigateVirtualPath(getParentPath(currentVirtualPath))} className="w-full sm:w-auto">
+               <ArrowUpCircle className="mr-2 h-4 w-4" /> Up
+             </Button>
+           )}
            <Button variant="outline" onClick={onOpenUploadDialog} className="w-full sm:w-auto">
             <UploadCloud className="mr-2 h-4 w-4" /> Upload File
           </Button>
            <Button variant="outline" onClick={() => onOpenCreateVirtualFolderDialog(currentVirtualPath)} className="w-full sm:w-auto">
             <FolderPlus className="mr-2 h-4 w-4" /> Create Folder
           </Button>
-           {/* TODO: Add VFS specific filters if needed */}
         </div>
 
-        {/* VFS Display Area */}
-        {isLoading && !cloudConfig ? (
+        {isLoading && vfsItems.length === 0 ? (
             <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center">
                 <Loader2 className="animate-spin h-12 w-12 text-primary mb-4" />
-                <p className="text-lg">Loading cloud storage structure...</p>
+                <p className="text-lg">Loading cloud storage contents...</p>
             </div>
-        ) : !cloudConfig ? (
+        ) : !cloudConfig && !isLoading ? (
              <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center">
                 <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
-                <p className="text-lg">Could not load cloud configuration for this channel.</p>
-                <p className="text-sm">Ensure it's a valid Cloudifier channel.</p>
+                <p className="text-lg">Cloud configuration not found or invalid for this channel.</p>
+                <p className="text-sm">Ensure it's a valid Cloudifier channel and message ID 2 contains the config.</p>
+            </div>
+        ) : vfsItems.length === 0 && !isLoading ? (
+            <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center">
+                <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
+                <p className="text-lg">This folder is empty.</p>
             </div>
         ) : (
-            <div className="flex-grow overflow-y-auto space-y-2 pr-1 pb-4">
-                 <p className="text-muted-foreground text-center py-10">
-                    Virtual file system browsing will be implemented here.
-                    <br />
-                    Current config: {JSON.stringify(cloudConfig.root_entries, null, 2)}
-                 </p>
-                {/* TODO: Implement actual VFS rendering (folders and files) */}
-                {/* displayItems for VFS will be derived from cloudConfig and actual file messages */}
+            <div className="flex-grow overflow-y-auto space-y-0 pr-1 pb-4">
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+                {vfsItems.map((item, index) => {
+                    if (item.type === 'folder') {
+                    return (
+                        <ContentFolderItem
+                        key={`vfs-folder-${item.name}-${index}`}
+                        folder={{ id: item.name, name: item.name, files: [], folders: [], cloudConfig: { root_entries: item.entry.entries || {}, ...cloudConfig! } }}
+                        style={{ animationDelay: `${index * 30}ms` }}
+                        onClick={() => onNavigateVirtualPath(normalizePath(currentVirtualPath + item.name))}
+                        />
+                    );
+                    } else if (item.type === 'file') {
+                    return (
+                        <ContentFileItem
+                        key={`vfs-file-${item.cloudFile.id}-${index}`}
+                        file={item.cloudFile}
+                        style={{ animationDelay: `${index * 30}ms` }}
+                        onDetailsClick={onFileDetailsClick}
+                        onQueueDownloadClick={onQueueDownloadClick}
+                        onViewImageClick={onFileViewImageClick}
+                        onPlayVideoClick={onFilePlayVideoClick}
+                        isPreparingStream={isPreparingStream && preparingStreamForFileId === item.cloudFile.id}
+                        preparingStreamForFileId={preparingStreamForFileId}
+                        />
+                    );
+                    }
+                    return null;
+                })}
+                </div>
+                {/* Pagination for VFS files can be added here if needed in future */}
             </div>
         )}
       </div>
@@ -256,7 +344,7 @@ export function MainContentView({
         </div>
       </div>
 
-      {isLoading && displayItems.length === 0 ? (
+      {isLoading && displayItemsRegular.length === 0 ? (
          <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center">
           <Loader2 className="animate-spin h-12 w-12 text-primary mb-4" />
           <p className="text-lg">Loading media...</p>
@@ -277,15 +365,15 @@ export function MainContentView({
         </div>
       ) : (
         <div className="flex-grow overflow-y-auto space-y-0 pr-1 pb-4">
-          {displayItems.length > 0 ? (
+          {displayItemsRegular.length > 0 ? (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-              {displayItems.map((file, index) => {
+              {displayItemsRegular.map((file, index) => {
                 if (!file.timestamp) return null;
                 const fileDate = new Date(file.timestamp * 1000);
                 let dayHeader = null;
                 let monthHeader = null;
 
-                if (!selectedDate) {
+                if (!selectedDate) { // Group by month and day only if no specific date filter is applied
                   if (!lastDisplayedMonth || !isSameMonth(fileDate, lastDisplayedMonth)) {
                     monthHeader = (
                       <div key={`month-${file.id}`} className="col-span-full text-lg font-semibold text-primary py-3 mt-4 mb-2 border-b-2 border-primary/30">
@@ -293,7 +381,7 @@ export function MainContentView({
                       </div>
                     );
                     lastDisplayedMonth = fileDate;
-                    lastDisplayedDay = null;
+                    lastDisplayedDay = null; // Reset day when month changes
                   }
 
                   if (!lastDisplayedDay || !isSameDay(fileDate, lastDisplayedDay)) {
@@ -310,6 +398,7 @@ export function MainContentView({
                     lastDisplayedDay = fileDate;
                   }
                 }
+
 
                 const itemContent = (
                   <ContentFileItem
@@ -340,13 +429,13 @@ export function MainContentView({
                 <p className="text-lg">No media items to display for the current selection.</p>
              </div>
           )}
-          {isLoadingMoreMedia && displayItems.length > 0 && (
+          {isLoadingMoreMedia && displayItemsRegular.length > 0 && (
             <div className="flex justify-center items-center p-4 mt-4">
               <Loader2 className="animate-spin h-8 w-8 text-primary" />
               <p className="ml-3 text-muted-foreground">Loading more media...</p>
             </div>
           )}
-          {!isLoading && !isLoadingMoreMedia && hasMore && displayItems.length > 0 && !selectedDate && onLoadMoreMedia && (
+          {!isLoading && !isLoadingMoreMedia && hasMore && displayItemsRegular.length > 0 && !selectedDate && onLoadMoreMedia && (
             <div className="col-span-full flex justify-center py-4 mt-4">
               <Button
                 onClick={onLoadMoreMedia}
@@ -360,7 +449,7 @@ export function MainContentView({
               </Button>
             </div>
           )}
-          {!isLoading && !isLoadingMoreMedia && !hasMore && displayItems.length > 0 && (
+          {!isLoading && !isLoadingMoreMedia && !hasMore && displayItemsRegular.length > 0 && (
              <p className="text-center text-sm text-muted-foreground py-4 mt-4">No more media to load for the current filter.</p>
           )}
         </div>
@@ -368,5 +457,7 @@ export function MainContentView({
     </div>
   );
 }
-// Dummy selectedFolder for useEffect dependency check, replace with actual context or prop if available
-const selectedFolder = null;
+
+const CONFIG_MESSAGE_ID = 2; // Duplicated from telegramService, consider centralizing
+const CLOUDIFIER_APP_SIGNATURE_V1 = "TELEGRAM_CLOUDIFIER_V1.0"; // Duplicated
+
