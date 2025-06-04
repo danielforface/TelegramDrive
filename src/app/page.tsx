@@ -268,8 +268,8 @@ export default function Home() {
                               .sort((a,b) => a.name.localeCompare(b.name));
         }
     });
-    if (source === 'update') { 
-        fetchDialogFilters(true); 
+    if (source === 'update') {
+        fetchDialogFilters(true);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [toast]); // fetchDialogFilters is intentionally not in deps as it's part of this callback's logic
@@ -552,7 +552,7 @@ export default function Home() {
         const fetchDialogFiltersPromise = fetchDialogFilters(); // Not forced, relies on its internal logic
 
         await Promise.all([fetchCloudChannelsPromise, fetchDialogFiltersPromise]);
-        
+
         if (!telegramUpdateListenerInitializedRef.current) {
             telegramService.initializeTelegramUpdateListener(handleNewCloudChannelDiscovered);
             telegramUpdateListenerInitializedRef.current = true;
@@ -1292,14 +1292,14 @@ export default function Home() {
             const newCloudFolder: CloudFolder = {
                 id: `channel-${result.channelInfo.id}`,
                 name: result.channelInfo.title,
-                isChatFolder: false, 
+                isChatFolder: false,
                 inputPeer: {
                     _: 'inputPeerChannel',
                     channel_id: result.channelInfo.id,
                     access_hash: result.channelInfo.access_hash,
                 },
-                files: [], 
-                folders: [], 
+                files: [],
+                folders: [],
                 isAppManagedCloud: true,
                 cloudConfig: result.initialConfig,
             };
@@ -1309,9 +1309,9 @@ export default function Home() {
                 if (exists) return prevFolders.map(f => f.id === newCloudFolder.id ? newCloudFolder : f).sort((a,b) => a.name.localeCompare(b.name));
                 return [...prevFolders, newCloudFolder].sort((a,b) => a.name.localeCompare(b.name));
             });
-            
-            await fetchAppManagedCloudChannels(true); 
-            await fetchDialogFilters(true); 
+
+            await fetchAppManagedCloudChannels(true);
+            await fetchDialogFilters(true);
         } else {
             throw new Error("Channel creation did not return expected info including config.");
         }
@@ -1442,11 +1442,12 @@ export default function Home() {
     if (!isConnected || !activeFilterDetails || isLoadingDialogFilters) {
       return;
     }
-    if (isNewFilter) setCurrentErrorMessage(null);
 
     const filterIdToFetch = activeFilterDetails.id;
-    const filterType = activeFilterDetails._;
     const isNewFilter = lastFetchedFilterId !== filterIdToFetch;
+    if (isNewFilter) setCurrentErrorMessage(null);
+
+    const filterType = activeFilterDetails._;
     let isCurrentFilterListEmptyAndNeedsLoad = false;
 
     const cachedEntryForCurrent = chatDataCache.get(filterIdToFetch);
@@ -1986,7 +1987,7 @@ export default function Home() {
                     onFileViewImageClick={handleViewImage}
                     onFilePlayVideoClick={handlePlayVideo}
                     onOpenUploadDialog={handleOpenUploadDialog}
-                    isPreparingStream={isPreparingVideoStream}
+                    isPreparingVideoStream={isPreparingVideoStream}
                     preparingStreamForFileId={preparingVideoStreamForFileId}
                     onLoadMoreMedia={loadMoreChatMediaCallback}
                     isCloudChannel={selectedFolder.isAppManagedCloud || false}
@@ -2146,5 +2147,6 @@ function cachedDataForActiveFilterIsLoading(activeFilterDetails: DialogFilter | 
     return cachedEntry?.isLoading || false;
 }
 
-    
+
+
 
