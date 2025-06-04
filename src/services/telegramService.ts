@@ -1202,7 +1202,7 @@ export async function updateDialogFilter(
 export async function createManagedCloudChannel(
   title: string,
   type: CloudChannelType
-): Promise<{ channelInfo: any; configMessageInfo: any } | null> {
+): Promise<{ channelInfo: any; configMessageInfo: any; initialConfig: CloudChannelConfigV1 } | null> {
   if (!(await isUserConnected())) {
     throw new Error("User not connected. Cannot create cloud channel.");
   }
@@ -1302,7 +1302,7 @@ export async function createManagedCloudChannel(
     // Here, ensure `ensureChannelInCloudFolder` is called if the creation is successful.
     await ensureChannelInCloudFolder(channelInputPeer, newChannel.title, true);
 
-    return { channelInfo: newChannel, configMessageInfo: sentMessageInfo };
+    return { channelInfo: newChannel, configMessageInfo: sentMessageInfo, initialConfig };
 
   } catch (error: any) {
     throw error;
@@ -1659,30 +1659,20 @@ async function ensureChannelInCloudFolder(channelInputPeer: InputPeer, channelTi
       // Folder with OUR ID does not exist. Create it.
       const newFilter: DialogFilter = {
         _: 'dialogFilter',
-        id: CLOUDIFIER_MANAGED_FOLDER_ID, // This ID is used by the method call, not necessarily in the object.
+        id: CLOUDIFIER_MANAGED_FOLDER_ID, 
         title: CLOUDIFIER_MANAGED_FOLDER_NAME,
         include_peers: [channelInputPeer],
-        pinned_peers: [], // Initialize explicitly
-        exclude_peers: [], // Initialize explicitly
-        // Default other boolean flags to false if not specified by Telegram schema for creation
+        pinned_peers: [], 
+        exclude_peers: [], 
         contacts: false, non_contacts: false, groups: false, broadcasts: false, bots: false,
         exclude_muted: false, exclude_read: false, exclude_archived: false,
         flags: (1 << 10) // Flag for include_peers
       };
-      // For creation, the 'id' parameter to updateDialogFilter is the one that matters.
-      // The 'id' field inside the 'filter' object itself might be ignored or should match.
-      // To be safe, ensure the filter object we pass doesn't mismatch if the API uses it.
-      // Or, the API might use the filter.id if the main id param is 0. This part of MTProto is tricky.
-      // Let's assume the main `id` parameter dictates the target ID for creation/update.
-      const filterPayloadForCreation = { ...newFilter };
-      // delete (filterPayloadForCreation as any).id; // Some clients omit id from payload for creation.
-                                                  // But our DialogFilter type requires it.
-                                                  // Let's keep it, matching the main `id` param.
-
-      await api.call('messages.updateDialogFilter', { id: CLOUDIFIER_MANAGED_FOLDER_ID, filter: filterPayloadForCreation });
+      
+      await api.call('messages.updateDialogFilter', { id: CLOUDIFIER_MANAGED_FOLDER_ID, filter: newFilter });
       updateNeeded = true;
     }
-    return updateNeeded; // Indicate an update occurred or was attempted
+    return updateNeeded; 
   } catch (error) {
     // console.error(`Error in ensureChannelInCloudFolder for ${channelTitleForLog} (ID: ${CLOUDIFIER_MANAGED_FOLDER_ID}):`, error);
     return false;

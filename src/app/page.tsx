@@ -268,12 +268,11 @@ export default function Home() {
                               .sort((a,b) => a.name.localeCompare(b.name));
         }
     });
-    // If a folder was created or updated, re-fetch dialog filters in case our managed folder was affected.
-    if (source === 'update') { // Only for real-time changes that might affect folders
-        fetchDialogFilters(true); // Force refresh dialog filters
+    if (source === 'update') { 
+        fetchDialogFilters(true); 
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toast]);
+  }, [toast]); // fetchDialogFilters is intentionally not in deps as it's part of this callback's logic
 
 
   const fetchAppManagedCloudChannels = useCallback(async (forceRefresh = false) => {
@@ -1282,27 +1281,46 @@ export default function Home() {
   const handleCreateCloudChannel = async (name: string, type: CloudChannelType) => {
     setIsCreatingCloudChannel(true);
     try {
-      const result = await telegramService.createManagedCloudChannel(name, type);
-      if (result && result.channelInfo) {
-        toast({
-          title: "Cloud Storage Created!",
-          description: `Channel "${result.channelInfo.title}" (ID: ${result.channelInfo.id}) created and configured.`,
-        });
-        setIsCreateCloudChannelDialogOpen(false);
-        // New channel will be picked up by real-time listener or next manual refresh.
-        // We can also proactively add it if needed, but listener approach is cleaner.
-        // Forcing a refresh might be good for immediate UI update:
-        await fetchAppManagedCloudChannels(true); 
-        await fetchDialogFilters(true); // also refresh dialog filters, as our managed folder might have been created/updated
-      } else {
-        throw new Error("Channel creation did not return expected info.");
-      }
+        const result = await telegramService.createManagedCloudChannel(name, type);
+        if (result && result.channelInfo && result.initialConfig) {
+            toast({
+                title: "Cloud Storage Created!",
+                description: `Channel "${result.channelInfo.title}" (ID: ${result.channelInfo.id}) created and configured.`,
+            });
+            setIsCreateCloudChannelDialogOpen(false);
+
+            const newCloudFolder: CloudFolder = {
+                id: `channel-${result.channelInfo.id}`,
+                name: result.channelInfo.title,
+                isChatFolder: false, 
+                inputPeer: {
+                    _: 'inputPeerChannel',
+                    channel_id: result.channelInfo.id,
+                    access_hash: result.channelInfo.access_hash,
+                },
+                files: [], 
+                folders: [], 
+                isAppManagedCloud: true,
+                cloudConfig: result.initialConfig,
+            };
+
+            setAppManagedCloudFolders(prevFolders => {
+                const exists = prevFolders.some(f => f.id === newCloudFolder.id);
+                if (exists) return prevFolders.map(f => f.id === newCloudFolder.id ? newCloudFolder : f).sort((a,b) => a.name.localeCompare(b.name));
+                return [...prevFolders, newCloudFolder].sort((a,b) => a.name.localeCompare(b.name));
+            });
+            
+            await fetchAppManagedCloudChannels(true); 
+            await fetchDialogFilters(true); 
+        } else {
+            throw new Error("Channel creation did not return expected info including config.");
+        }
     } catch (error: any) {
-      handleApiError(error, "Error Creating Cloud Storage", `Could not create new cloud storage: ${error.message}`);
+        handleApiError(error, "Error Creating Cloud Storage", `Could not create new cloud storage: ${error.message}`);
     } finally {
-      setIsCreatingCloudChannel(false);
+        setIsCreatingCloudChannel(false);
     }
-  };
+};
 
 
   const handleRefreshCurrentFilter = () => {
@@ -1424,6 +1442,7 @@ export default function Home() {
     if (!isConnected || !activeFilterDetails || isLoadingDialogFilters) {
       return;
     }
+    if (isNewFilter) setCurrentErrorMessage(null);
 
     const filterIdToFetch = activeFilterDetails.id;
     const filterType = activeFilterDetails._;
