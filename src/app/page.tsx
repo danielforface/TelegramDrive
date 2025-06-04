@@ -249,6 +249,7 @@ export default function Home() {
     setCurrentVirtualPath("/");
     setIsCreateVirtualFolderDialogOpen(false);
     telegramUpdateListenerInitializedRef.current = false; // Reset listener flag
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConnected, toast, videoStreamUrl]);
 
   const handleNewCloudChannelDiscovered = useCallback((newlyVerifiedFolder: CloudFolder, source: 'update' | 'initialScan') => {
@@ -272,7 +273,7 @@ export default function Home() {
         fetchDialogFilters(true); // Force refresh dialog filters
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toast]); // Removed fetchDialogFilters from deps to avoid loop, called manually
+  }, [toast]);
 
 
   const fetchAppManagedCloudChannels = useCallback(async (forceRefresh = false) => {
@@ -590,7 +591,8 @@ export default function Home() {
       setIsLoadingDialogFilters(false);
       setIsLoadingAppManagedCloudFolders(false);
     }
-  }, [toast, handleApiError, fetchDialogFilters, fetchAppManagedCloudChannels, handleReset, handleNewCloudChannelDiscovered]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [toast, handleApiError, fetchDialogFilters, fetchAppManagedCloudChannels, handleReset]);
 
 
   const fetchInitialChatMedia = useCallback(async (folder: CloudFolder) => {
@@ -1615,7 +1617,7 @@ export default function Home() {
                         }
                         setDownloadQueue(prevQ => prevQ.map(q => q.id === upToDateItem.id ? { ...q, status: 'completed', progress: 100, downloadedBytes: upToDateItem.totalSizeInBytes!, chunks: [] } : q));
                     } else {
-                        setDownloadQueue(prevQ => prevQ.map(q => q.id === upToDateItem.id ? { ...q, status: 'failed', error_message: 'CDN blocks exhausted before completion' } : q));
+                        setDownloadQueue(prev => prevQ.map(q => q.id === upToDateItem.id ? { ...q, status: 'failed', error_message: 'CDN blocks exhausted before completion' } : q));
                     }
                     activeDownloadsRef.current.delete(upToDateItem.id);
                     continue;
@@ -1790,7 +1792,7 @@ export default function Home() {
                     setDownloadQueue(prevQ => prevQ.map(q_item => q_item.id === upToDateItem.id ? { ...q_item, status: 'cancelled', error_message: "Aborted by user or system." } : q_item));
                 }
              } else {
-                setDownloadQueue(prevQ => prevQ.map(q_item => q_item.id === upToDateItem.id ? { ...q_item, status: 'failed', error_message: error.message || 'Processing error during chunk download' } : q_item));
+                setDownloadQueue(prev => prevQ.map(q_item => q_item.id === upToDateItem.id ? { ...q_item, status: 'failed', error_message: error.message || 'Processing error during chunk download' } : q_item));
              }
           } finally {
              activeDownloadsRef.current.delete(upToDateItem.id);
@@ -1909,7 +1911,7 @@ export default function Home() {
   }
 
 
-  if (!isConnected && !isConnecting && authStep === 'initial') {
+  if (!isConnected && !isConnecting) {
     return (
       <>
         <Header ref={headerRef} isConnected={false} />
@@ -2126,3 +2128,4 @@ function cachedDataForActiveFilterIsLoading(activeFilterDetails: DialogFilter | 
 }
 
     
+
