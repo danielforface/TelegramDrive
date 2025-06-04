@@ -1448,15 +1448,14 @@ export default function Home() {
 
 
     if (isNewFilter || isCurrentFilterListEmptyAndNeedsLoad) {
-        setLastFetchedFilterId(filterIdToFetch); // Mark this filter as being fetched
-
         if (isNewFilter) {
+            setCurrentErrorMessage(null); // Clear previous error messages on new filter selection
+            setDisplayedChats([]); // Clear displayed chats immediately for new filter
             setSelectedFolder(null); // Clear selected chat media when filter changes
             setCurrentChatMedia([]);
-            setCurrentErrorMessage(null);
-            setDisplayedChats([]); // Clear displayed chats immediately for new filter
             setCurrentVirtualPath("/"); // Reset VFS path
         }
+        setLastFetchedFilterId(filterIdToFetch); // Mark this filter as being fetched
         fetchDataForActiveFilter(false); // 'false' means it's not "loading more" for an existing list
     }
   }, [
