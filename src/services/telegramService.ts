@@ -9,9 +9,13 @@ import cryptoSha256 from '@cryptography/sha256';
 export { formatFileSize };
 export const ALL_CHATS_FILTER_ID = 0;
 const CLOUDIFIER_APP_SIGNATURE_V1 = "TELEGRAM_CLOUDIFIER_V1.0";
-const CONFIG_MESSAGE_ID = 2; // Message ID 2 for configuration
+const IDENTIFICATION_MESSAGE_ID = 2;
+const CONFIG_MESSAGE_ID = 3; // Changed from 2
+const IDENTIFICATION_MESSAGE_PREFIX = "Initializing Cloud Storage: ";
+const IDENTIFICATION_MESSAGE_SUFFIX = "... This message ensures the configuration message ID is stable.";
 
-const CLOUDIFIER_MANAGED_FOLDER_ID = 20001; // Specific ID for our app's managed folder
+
+const CLOUDIFIER_MANAGED_FOLDER_ID = 20001;
 const CLOUDIFIER_MANAGED_FOLDER_NAME = "Cloudifier Storage";
 
 
@@ -712,8 +716,6 @@ export async function getChatMediaHistory(
 
     if (messagesArray && messagesArray.length > 0) {
       messagesArray.forEach((msg: any) => {
-        // For cloud channels, we process messages that have media OR just a message (caption for VFS structure)
-        // For regular chats, we only process messages that have specific media types.
         const shouldProcessForCloud = isCloudChannelFetch && (msg.media || msg.message);
         const shouldProcessForRegular = !isCloudChannelFetch && msg.media && (msg.media._ === 'messageMediaPhoto' || msg.media._ === 'messageMediaDocument');
 
@@ -725,12 +727,11 @@ export async function getChatMediaHistory(
           let totalSizeInBytes: number | undefined;
           let mediaObjectForFile: any = null;
 
-          // Consolidate media object extraction
           if (msg.media?.photo && msg.media.photo.id) {
             mediaObjectForFile = historyResult.photos?.find((p:any) => String(p.id) === String(msg.media.photo.id)) || msg.media.photo;
           } else if (msg.media?.document && msg.media.document.id) {
             mediaObjectForFile = historyResult.documents?.find((d:any) => String(d.id) === String(msg.media.document.id)) || msg.media.document;
-          } else if (msg.media?.photo) { // Fallback if ID not found in separate arrays (e.g., from `updateMessageID`)
+          } else if (msg.media?.photo) {
              mediaObjectForFile = msg.media.photo;
           } else if (msg.media?.document) {
              mediaObjectForFile = msg.media.document;
@@ -762,14 +763,12 @@ export async function getChatMediaHistory(
               } else {
                   fileType = 'document'; dataAiHint = "document file";
               }
-          } else if (isCloudChannelFetch && msg.message && !msg.media) { // Text-only message in cloud channel context
+          } else if (isCloudChannelFetch && msg.message && !msg.media) {
             fileName = `vfs_text_entry_${msg.id}`;
-            fileType = 'unknown'; // It's not a file in the traditional sense, but represents VFS structure
+            fileType = 'unknown';
           }
 
-          // Ensure we push to cloudFiles if it's a cloud channel with a message (for VFS)
-          // OR if it's any channel/chat with actual media.
-          if ((isCloudChannelFetch && msg.message) || mediaObjectForFile) {
+          if ((isCloudChannelFetch && msg.message && (msg.id !== IDENTIFICATION_MESSAGE_ID && msg.id !== CONFIG_MESSAGE_ID) ) || mediaObjectForFile) {
              cloudFiles.push({
               id: String(msg.id),
               messageId: msg.id,
@@ -780,9 +779,9 @@ export async function getChatMediaHistory(
               timestamp: msg.date,
               url: undefined,
               dataAiHint: dataAiHint,
-              telegramMessage: mediaObjectForFile || msg, // Store the richest media object or the full message
+              telegramMessage: mediaObjectForFile || msg,
               inputPeer: inputPeer,
-              caption: msg.message, // Store the original caption for VFS parsing
+              caption: msg.message,
             });
           }
         }
@@ -1121,7 +1120,7 @@ export async function uploadFile(
           { _: 'documentAttributeFilename', file_name: fileToUpload.name },
         ],
       },
-      message: caption || '',
+      message: caption || '', // Use the provided caption
       random_id: generateRandomLong(),
     }, { signal });
     onProgress(100);
@@ -1224,17 +1223,22 @@ export async function createManagedCloudChannel(
       access_hash: newChannel.access_hash,
     };
 
+    // Send identification message (expected to be ID 2)
+    const identificationMessageText = `${IDENTIFICATION_MESSAGE_PREFIX}${title}${IDENTIFICATION_MESSAGE_SUFFIX}`;
     try {
         await api.call('messages.sendMessage', {
             peer: channelInputPeer,
-            message: `Initializing Cloud Storage: ${title}... This message ensures the configuration message ID is stable.`,
+            message: identificationMessageText,
             random_id: generateRandomLong(),
             no_webpage: true,
         });
     } catch (initMsgError) {
+        // Log or handle if this critical first message fails
+        // console.error("Failed to send identification message:", initMsgError);
+        // Depending on requirements, might want to delete channel if this fails
     }
 
-
+    // Prepare and send configuration message (expected to be ID 3)
     const now = new Date().toISOString();
     const initialConfig: CloudChannelConfigV1 = {
       app_signature: CLOUDIFIER_APP_SIGNATURE_V1,
@@ -1250,41 +1254,39 @@ export async function createManagedCloudChannel(
         throw new Error("Internal error: Initial configuration message is too large. Channel creation aborted and cleaned up.");
     }
 
-    const sendMessageResult = await api.call('messages.sendMessage', {
+    const configMessageResult = await api.call('messages.sendMessage', {
       peer: channelInputPeer,
       message: configJsonString,
       random_id: generateRandomLong(),
       no_webpage: true,
     });
 
-    let sentMessageInfo = null;
-    const updatesArray = Array.isArray(sendMessageResult.updates) ? sendMessageResult.updates : (sendMessageResult.updates?.updates || []);
+    let sentConfigMessageInfo = null;
+    const updatesArray = Array.isArray(configMessageResult.updates) ? configMessageResult.updates : (configMessageResult.updates?.updates || []);
 
     for (const update of updatesArray) {
         if (update._ === 'updateNewChannelMessage' && update.message && update.message.message === configJsonString) {
-            sentMessageInfo = update.message;
+            sentConfigMessageInfo = update.message;
             break;
         }
-        if (update._ === 'updateMessageID' && sendMessageResult.id === update.id) {
-             if(sendMessageResult.id && sendMessageResult.date && sendMessageResult.message === configJsonString){
-                sentMessageInfo = sendMessageResult;
-             }
-             break;
-        }
+        // Note: updateMessageID might refer to the identification message if it was sent close in time.
+        // We are more interested in the message object of the config message.
     }
-     if (!sentMessageInfo && sendMessageResult.id && sendMessageResult.message === configJsonString) {
-        sentMessageInfo = sendMessageResult;
+     if (!sentConfigMessageInfo && configMessageResult.id && configMessageResult.message === configJsonString) {
+        sentConfigMessageInfo = configMessageResult; // If sendMessage directly returns the message object
     }
 
 
-    if (!sentMessageInfo) {
-        sentMessageInfo = { id: (sendMessageResult as any).id || CONFIG_MESSAGE_ID, note: "Config message sent, but full object not found in immediate response." };
+    if (!sentConfigMessageInfo) {
+        // Fallback or error if config message info couldn't be reliably determined.
+        // For now, we assume it was sent, but might need more robust ID tracking if issues persist.
+        sentConfigMessageInfo = { id: (configMessageResult as any).id || CONFIG_MESSAGE_ID, note: "Config message sent, but full object not found in immediate response. Expected ID 3." };
     }
 
-    await sleep(500); // Small delay before ensuring in folder
+    await sleep(500);
     await ensureChannelInCloudFolder(channelInputPeer, newChannel.title, true);
 
-    return { channelInfo: newChannel, configMessageInfo: sentMessageInfo, initialConfig };
+    return { channelInfo: newChannel, configMessageInfo: sentConfigMessageInfo, initialConfig };
 
   } catch (error: any) {
     throw error;
@@ -1306,7 +1308,7 @@ export async function fetchAndVerifyManagedCloudChannels(): Promise<CloudFolder[
       offset_date: 0,
       offset_id: 0,
       offset_peer: { _: 'inputPeerEmpty' },
-      limit: 200,
+      limit: 200, // Consider pagination for very large accounts
       hash: 0,
     });
 
@@ -1337,33 +1339,43 @@ export async function fetchAndVerifyManagedCloudChannels(): Promise<CloudFolder[
       access_hash: channelInfo.access_hash,
     };
 
-    let channelIsVerified = false;
+    let isIdentified = false;
     let parsedConfig: CloudChannelConfigV1 | null = null;
 
     try {
       const messagesResult = await api.call('channels.getMessages', {
         channel: channelInputPeer,
-        id: [{ _: 'inputMessageID', id: CONFIG_MESSAGE_ID }],
+        id: [
+            { _: 'inputMessageID', id: IDENTIFICATION_MESSAGE_ID },
+            { _: 'inputMessageID', id: CONFIG_MESSAGE_ID }
+        ],
       });
 
       if (messagesResult && messagesResult.messages && Array.isArray(messagesResult.messages)) {
-        const configMessageEntry = messagesResult.messages.find((m: any) => m.id === CONFIG_MESSAGE_ID);
+        const idMessage = messagesResult.messages.find((m: any) => m.id === IDENTIFICATION_MESSAGE_ID && m._ === 'message');
+        const configMessage = messagesResult.messages.find((m: any) => m.id === CONFIG_MESSAGE_ID && m._ === 'message');
 
-        if (configMessageEntry && typeof configMessageEntry.message === 'string' && configMessageEntry.message.trim() !== '' && configMessageEntry._ === 'message') {
+        if (idMessage && typeof idMessage.message === 'string') {
+          const expectedIdText = `${IDENTIFICATION_MESSAGE_PREFIX}${channelInfo.title}${IDENTIFICATION_MESSAGE_SUFFIX}`;
+          if (idMessage.message === expectedIdText) {
+            isIdentified = true;
+          }
+        }
+
+        if (isIdentified && configMessage && typeof configMessage.message === 'string') {
           try {
-            const tempConfig = JSON.parse(configMessageEntry.message);
+            const tempConfig = JSON.parse(configMessage.message);
             if (tempConfig && tempConfig.app_signature === CLOUDIFIER_APP_SIGNATURE_V1) {
-              channelIsVerified = true;
               parsedConfig = tempConfig as CloudChannelConfigV1;
             }
-          } catch (parseError) {
-          }
+          } catch (parseError) { /* Invalid JSON */ }
         }
       }
     } catch (error: any) {
+        // Errors are expected if messages don't exist or channel is inaccessible
     }
 
-    if (channelIsVerified && parsedConfig) {
+    if (isIdentified && parsedConfig) {
       const cloudFolder = transformDialogToCloudFolder(dialog, allChatsFromDialogs, allUsersFromDialogs, true, parsedConfig);
       if (cloudFolder) {
         verifiedCloudChannels.push(cloudFolder);
@@ -1375,15 +1387,41 @@ export async function fetchAndVerifyManagedCloudChannels(): Promise<CloudFolder[
 }
 
 async function getCloudChannelConfig(channelInputPeer: InputPeer): Promise<CloudChannelConfigV1 | null> {
+  if (!channelInputPeer || channelInputPeer._ !== 'inputPeerChannel') return null;
   try {
-    const messagesResult = await api.call('channels.getMessages', {
+    // First, verify the identification message (ID 2)
+    const idMessagesResult = await api.call('channels.getMessages', {
+        channel: channelInputPeer,
+        id: [{ _: 'inputMessageID', id: IDENTIFICATION_MESSAGE_ID }],
+    });
+
+    let channelTitleForVerification: string | undefined;
+    // To get channel title, we might need to fetch channel info if not readily available.
+    // This adds complexity. For now, we assume title check was done by caller or initial scan.
+    // A more robust getCloudChannelConfig might need to fetch channel details.
+
+    if (idMessagesResult && idMessagesResult.messages && Array.isArray(idMessagesResult.messages)) {
+        const idMessage = idMessagesResult.messages.find((m: any) => m.id === IDENTIFICATION_MESSAGE_ID && m._ === 'message');
+        // Dynamic title check for ID message is tricky here without channel title.
+        // Relying on the fact that this function is usually called after initial verification.
+        if (!idMessage || typeof idMessage.message !== 'string' || !idMessage.message.startsWith(IDENTIFICATION_MESSAGE_PREFIX)) {
+            // console.warn(`Channel ${channelInputPeer.channel_id} identification message (ID 2) not found or invalid.`);
+            // return null;
+        }
+    } else {
+        // return null;
+    }
+
+
+    // If ID message seems okay (or we skip strict check here), fetch config message (ID 3)
+    const configMessagesResult = await api.call('channels.getMessages', {
       channel: channelInputPeer,
       id: [{ _: 'inputMessageID', id: CONFIG_MESSAGE_ID }],
     });
 
-    if (messagesResult && messagesResult.messages && Array.isArray(messagesResult.messages)) {
-      const configMessage = messagesResult.messages.find((m:any) => m.id === CONFIG_MESSAGE_ID);
-      if (configMessage && typeof configMessage.message === 'string' && configMessage.message.trim() !== '' && configMessage._ === 'message') {
+    if (configMessagesResult && configMessagesResult.messages && Array.isArray(configMessagesResult.messages)) {
+      const configMessage = configMessagesResult.messages.find((m:any) => m.id === CONFIG_MESSAGE_ID && m._ === 'message');
+      if (configMessage && typeof configMessage.message === 'string' && configMessage.message.trim() !== '') {
         try {
           const tempConfig = JSON.parse(configMessage.message);
           if (tempConfig && tempConfig.app_signature === CLOUDIFIER_APP_SIGNATURE_V1) {
@@ -1406,13 +1444,14 @@ async function updateCloudChannelConfig(channelInputPeer: InputPeer, newConfig: 
     if (new TextEncoder().encode(newConfigJson).length >= 4000) {
       throw new Error("Updated configuration message is too large.");
     }
+    // Edit message ID 3 for the configuration
     const result = await api.call('messages.editMessage', {
       peer: channelInputPeer,
       id: CONFIG_MESSAGE_ID,
       message: newConfigJson,
       no_webpage: true,
     });
-    return !!result; // Check for truthiness, as editMessage returns Updates object
+    return !!result;
   } catch (error: any) {
     // console.error("Failed to update cloud channel config:", error);
     return false;
@@ -1443,7 +1482,6 @@ export async function addVirtualFolderToCloudChannel(
 
   for (const segment of pathSegments) {
     if (!targetEntries[segment] || targetEntries[segment].type !== 'folder' || !targetEntries[segment].entries) {
-       // console.error(`Path segment "${segment}" not found or not a folder in config for path "${parentVirtualPath}". Current segment entries:`, targetEntries);
        throw new Error(`Path segment "${segment}" not found or not a folder in config for path "${parentVirtualPath}". Review config structure.`);
     }
     targetEntries = targetEntries[segment].entries!;
@@ -1475,60 +1513,89 @@ let onNewCloudChannelVerifiedCallback: ((cloudFolder: CloudFolder, source: 'upda
 let isTelegramUpdateListenerActive = false;
 
 async function verifyAndProcessSinglePotentialCloudChannel(
-  receivedInputPeer: InputPeer,
-  channelObject: any,
+  receivedInputPeerPossiblyFromMessage: InputPeer, // This might be a peer from a message event
+  channelObjectFromUpdate: any, // This should be the full chat entity from updateInfo.chats
   usersForTitleContext: any[] = []
 ): Promise<void> {
-  if (!onNewCloudChannelVerifiedCallback || !channelObject) return;
+  if (!onNewCloudChannelVerifiedCallback || !channelObjectFromUpdate) return;
 
+  // Prioritize channelObjectFromUpdate for reliable ID and access_hash
   let definitiveInputPeer: InputPeer;
-  if (channelObject._ === 'channel' && channelObject.id && channelObject.access_hash !== undefined) {
+  if (channelObjectFromUpdate._ === 'channel' && channelObjectFromUpdate.id && channelObjectFromUpdate.access_hash !== undefined) {
     definitiveInputPeer = {
       _: 'inputPeerChannel',
-      channel_id: channelObject.id,
-      access_hash: channelObject.access_hash,
+      channel_id: channelObjectFromUpdate.id,
+      access_hash: channelObjectFromUpdate.access_hash,
     };
-  } else if (receivedInputPeer._ === 'inputPeerChannel' && receivedInputPeer.channel_id && receivedInputPeer.access_hash) {
-    definitiveInputPeer = receivedInputPeer;
-  } else {
-    return;
+  } else if (receivedInputPeerPossiblyFromMessage._ === 'inputPeerChannel' && receivedInputPeerPossiblyFromMessage.channel_id && receivedInputPeerPossiblyFromMessage.access_hash) {
+    // Fallback if channelObjectFromUpdate is not a full channel entity but peer from message is good
+    definitiveInputPeer = receivedInputPeerPossiblyFromMessage;
+  }
+  else {
+    // console.warn("Could not form definitive InputPeer for real-time verification.", receivedInputPeerPossiblyFromMessage, channelObjectFromUpdate);
+    return; // Cannot proceed without a reliable InputPeer
   }
 
+  let isIdentified = false;
   let parsedConfig: CloudChannelConfigV1 | null = null;
+
   try {
+    // Fetch both ID and Config messages together
     const messagesResult = await api.call('channels.getMessages', {
       channel: definitiveInputPeer,
-      id: [{ _: 'inputMessageID', id: CONFIG_MESSAGE_ID }],
+      id: [
+          { _: 'inputMessageID', id: IDENTIFICATION_MESSAGE_ID },
+          { _: 'inputMessageID', id: CONFIG_MESSAGE_ID }
+      ],
     });
 
     if (messagesResult && messagesResult.messages && Array.isArray(messagesResult.messages)) {
-      const configMessageEntry = messagesResult.messages.find((m: any) => m.id === CONFIG_MESSAGE_ID);
-      if (configMessageEntry && typeof configMessageEntry.message === 'string' && configMessageEntry.message.trim() !== '' && configMessageEntry._ === 'message') {
+      const idMessage = messagesResult.messages.find((m: any) => m.id === IDENTIFICATION_MESSAGE_ID && m._ === 'message');
+      const configMessage = messagesResult.messages.find((m: any) => m.id === CONFIG_MESSAGE_ID && m._ === 'message');
+
+      if (idMessage && typeof idMessage.message === 'string') {
+        const expectedIdText = `${IDENTIFICATION_MESSAGE_PREFIX}${channelObjectFromUpdate.title}${IDENTIFICATION_MESSAGE_SUFFIX}`;
+        if (idMessage.message === expectedIdText) {
+          isIdentified = true;
+        }
+      }
+
+      if (isIdentified && configMessage && typeof configMessage.message === 'string') {
         try {
-          const tempConfig = JSON.parse(configMessageEntry.message);
+          const tempConfig = JSON.parse(configMessage.message);
           if (tempConfig && tempConfig.app_signature === CLOUDIFIER_APP_SIGNATURE_V1) {
             parsedConfig = tempConfig as CloudChannelConfigV1;
           }
-        } catch (parseError) { /* Not a valid JSON config */ }
+        } catch (parseError) { /* Invalid JSON for config */ }
       }
     }
   } catch (error) {
+    // console.warn(`Error fetching messages for real-time verification of channel ${definitiveInputPeer.channel_id}:`, error);
     return;
   }
 
-  if (parsedConfig) {
+  if (isIdentified && parsedConfig) {
+    // Use channelObjectFromUpdate for chat details to ensure title is up-to-date
     const mockDialog = {
-      peer: {
+      peer: { // Construct peer from definitiveInputPeer
         _: 'peerChannel',
         channel_id: definitiveInputPeer.channel_id,
-        access_hash: definitiveInputPeer.access_hash
+        access_hash: definitiveInputPeer.access_hash // May not be strictly needed by transformDialogToCloudFolder here
       },
-      top_message: 0,
+      top_message: 0, // Not relevant for this transformation path
     };
-    const cloudFolder = transformDialogToCloudFolder(mockDialog, [channelObject], usersForTitleContext, true, parsedConfig);
+
+    const cloudFolder = transformDialogToCloudFolder(
+        mockDialog,
+        [channelObjectFromUpdate], // Pass the full channel object for context
+        usersForTitleContext,
+        true,
+        parsedConfig
+    );
+
     if (cloudFolder) {
       onNewCloudChannelVerifiedCallback(cloudFolder, 'update');
-      await ensureChannelInCloudFolder(definitiveInputPeer, channelObject.title || `Channel ${definitiveInputPeer.channel_id}`);
+      await ensureChannelInCloudFolder(definitiveInputPeer, channelObjectFromUpdate.title || `Channel ${definitiveInputPeer.channel_id}`);
     }
   }
 }
@@ -1538,9 +1605,8 @@ async function handleTelegramUpdate(updateInfo: any): Promise<void> {
   if (!updateInfo || !onNewCloudChannelVerifiedCallback) return;
 
   const updatesToProcess: any[] = [];
-  const chatsFromUpdate = updateInfo.chats || [];
+  const chatsFromUpdate = updateInfo.chats || []; // Full chat objects
   const usersFromUpdate = updateInfo.users || [];
-
 
   if (updateInfo._ === 'updatesCombined' || updateInfo._ === 'updates') {
     if (Array.isArray(updateInfo.updates)) {
@@ -1554,33 +1620,39 @@ async function handleTelegramUpdate(updateInfo: any): Promise<void> {
   }
 
   for (const update of updatesToProcess) {
-    let channelEntityToVerify: any = null;
-    let peerFromUpdate: InputPeer | null = null;
+    let channelEntityFromUpdate: any = null; // This should be the full channel object
+    let peerIdFromMessageEvent: InputPeer | null = null; // This is the peer from the message itself
 
-    if (update._ === 'updateNewChannel') {
-      channelEntityToVerify = update.channel || chatsFromUpdate.find((c:any) => c.id === update.channel_id);
-      if(channelEntityToVerify && channelEntityToVerify.access_hash !== undefined) {
-        peerFromUpdate = { _: 'inputPeerChannel', channel_id: channelEntityToVerify.id, access_hash: channelEntityToVerify.access_hash };
-      }
-    } else if (update._ === 'updateNewChannelMessage' && update.message) {
+    if (update._ === 'updateNewChannelMessage' && update.message) {
       const message = update.message;
-      if (message.id === CONFIG_MESSAGE_ID && typeof message.message === 'string' && message.message.trim() !== '' && message._ === 'message') {
+      // We are interested if either the ID message (2) or Config message (3) is updated.
+      if (message.id === IDENTIFICATION_MESSAGE_ID || message.id === CONFIG_MESSAGE_ID) {
         const channelIdFromMessage = message.peer_id?.channel_id || message.to_id?.channel_id;
         if (channelIdFromMessage) {
-          channelEntityToVerify = chatsFromUpdate.find((c:any) => String(c.id) === String(channelIdFromMessage));
-          if (channelEntityToVerify && channelEntityToVerify.access_hash !== undefined) {
-            peerFromUpdate = {
-              _: 'inputPeerChannel',
-              channel_id: channelEntityToVerify.id,
-              access_hash: channelEntityToVerify.access_hash,
+          channelEntityFromUpdate = chatsFromUpdate.find((c:any) => String(c.id) === String(channelIdFromMessage));
+          if(channelEntityFromUpdate && channelEntityFromUpdate.access_hash !== undefined) {
+            peerIdFromMessageEvent = {
+                _: 'inputPeerChannel',
+                channel_id: channelEntityFromUpdate.id,
+                access_hash: channelEntityFromUpdate.access_hash,
             };
           }
         }
       }
+    } else if (update._ === 'updateNewChannel') { // A new channel was created or we joined one
+        channelEntityFromUpdate = update.channel || chatsFromUpdate.find((c:any) => c.id === update.channel_id);
+        if (channelEntityFromUpdate && channelEntityFromUpdate.access_hash !== undefined) {
+            peerIdFromMessageEvent = {
+                _: 'inputPeerChannel',
+                channel_id: channelEntityFromUpdate.id,
+                access_hash: channelEntityFromUpdate.access_hash
+            };
+        }
     }
+    // Add other update types like updateEditChannelMessage if needed
 
-    if (channelEntityToVerify && peerFromUpdate && channelEntityToVerify.access_hash !== undefined) {
-      await verifyAndProcessSinglePotentialCloudChannel(peerFromUpdate, channelEntityToVerify, usersFromUpdate);
+    if (channelEntityFromUpdate && peerIdFromMessageEvent && channelEntityFromUpdate.access_hash !== undefined) {
+      await verifyAndProcessSinglePotentialCloudChannel(peerIdFromMessageEvent, channelEntityFromUpdate, usersFromUpdate);
     }
   }
 }
@@ -1592,6 +1664,8 @@ export function initializeTelegramUpdateListener(callback: (cloudFolder: CloudFo
   onNewCloudChannelVerifiedCallback = callback;
   api.mtproto.updates.on('updates', handleTelegramUpdate);
   api.mtproto.updates.on('updatesCombined', handleTelegramUpdate);
+  // Potentially listen to specific updates like 'updateNewChannelMessage' if 'updates' is too broad
+  // and causes performance issues, though 'updates' should cover it.
   isTelegramUpdateListenerActive = true;
 }
 
@@ -1627,7 +1701,7 @@ async function ensureChannelInCloudFolder(channelInputPeer: InputPeer, channelTi
         updateNeeded = true;
       }
       if (cloudifierFolder.include_peers === undefined) {
-        cloudifierFolder.include_peers = []; // Initialize if undefined
+        cloudifierFolder.include_peers = [];
       }
 
       if (!cloudifierFolder.include_peers.some(p => areInputPeersEqual(p, channelInputPeer))) {
@@ -1635,10 +1709,8 @@ async function ensureChannelInCloudFolder(channelInputPeer: InputPeer, channelTi
         updateNeeded = true;
       }
 
-      // Ensure all included peers are channels (though our logic should only add channels)
       cloudifierFolder.include_peers = cloudifierFolder.include_peers.filter(p => p._ === 'inputPeerChannel');
 
-      // Manage flags
       if (cloudifierFolder.include_peers.length > 0 && !(cloudifierFolder.flags & includePeersFlag)) {
           cloudifierFolder.flags |= includePeersFlag;
           updateNeeded = true;
@@ -1646,7 +1718,7 @@ async function ensureChannelInCloudFolder(channelInputPeer: InputPeer, channelTi
            cloudifierFolder.flags &= ~includePeersFlag;
            updateNeeded = true;
       }
-      if (!(cloudifierFolder.flags & broadcastsFlag)) {
+      if (!(cloudifierFolder.flags & broadcastsFlag)) { // Channels are broadcasts
           cloudifierFolder.flags |= broadcastsFlag;
           updateNeeded = true;
       }
@@ -1659,12 +1731,12 @@ async function ensureChannelInCloudFolder(channelInputPeer: InputPeer, channelTi
         _: 'dialogFilter',
         id: CLOUDIFIER_MANAGED_FOLDER_ID,
         title: CLOUDIFIER_MANAGED_FOLDER_NAME,
-        include_peers: [channelInputPeer].filter(p => p._ === 'inputPeerChannel'), // Ensure only channels are added
+        include_peers: [channelInputPeer].filter(p => p._ === 'inputPeerChannel'),
         pinned_peers: [],
         exclude_peers: [],
         contacts: false, non_contacts: false, groups: false, broadcasts: true, bots: false,
         exclude_muted: false, exclude_read: false, exclude_archived: false,
-        flags: includePeersFlag | broadcastsFlag
+        flags: includePeersFlag | broadcastsFlag // Set include_peers and broadcasts flags
       };
 
       await api.call('messages.updateDialogFilter', { id: CLOUDIFIER_MANAGED_FOLDER_ID, filter: newFilter });
@@ -1682,6 +1754,3 @@ if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
   (window as any).telegramServiceApi = api;
   (window as any).telegramUserSession = userSession;
 }
-
-
-    
