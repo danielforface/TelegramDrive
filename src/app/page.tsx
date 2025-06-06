@@ -1,5 +1,4 @@
 
-
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
@@ -249,7 +248,7 @@ export default function Home() {
     setIsCreatingCloudChannel(false);
     setCurrentVirtualPath("/");
     setIsCreateVirtualFolderDialogOpen(false);
-    telegramUpdateListenerInitializedRef.current = false; 
+    telegramUpdateListenerInitializedRef.current = false;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConnected, toast, videoStreamUrl]);
 
@@ -257,24 +256,24 @@ export default function Home() {
     setAppManagedCloudFolders(prevFolders => {
         const exists = prevFolders.some(f => f.id === newlyVerifiedFolder.id);
         if (!exists) {
-            if (source === 'update') { 
+            if (source === 'update') {
                 toast({
                     title: "New Cloud Storage Detected",
                     description: `"${newlyVerifiedFolder.name}" is now available and has been organized.`,
                 });
             }
             return [...prevFolders, newlyVerifiedFolder].sort((a,b) => a.name.localeCompare(b.name));
-        } else { 
+        } else {
              // If it exists, update it but keep its original position if sorting is important
             return prevFolders.map(f => f.id === newlyVerifiedFolder.id ? newlyVerifiedFolder : f)
                               .sort((a,b) => a.name.localeCompare(b.name));
         }
     });
     if (source === 'update') {
-        fetchDialogFilters(true); 
+        fetchDialogFilters(true); // Refresh Telegram Folder list
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toast]); 
+  }, [toast]);
 
 
   const fetchAppManagedCloudChannels = useCallback(async (forceRefresh = false) => {
@@ -407,7 +406,7 @@ export default function Home() {
         setIsLoadingDialogFilters(false);
         return;
     }
-    if (!forceRefresh && hasFetchedDialogFiltersOnce && dialogFilters.length > 1 && !isReorderingFolders) { 
+    if (!forceRefresh && hasFetchedDialogFiltersOnce && dialogFilters.length > 1 && !isReorderingFolders) {
       setIsLoadingDialogFilters(false);
       return;
     }
@@ -439,7 +438,7 @@ export default function Home() {
       }
 
       if (!allChatsFilterExists && !processedFilters.some(f => f.id === ALL_CHATS_FILTER_ID)) {
-        processedFilters.unshift({ ...defaultAllChatsFilter }); 
+        processedFilters.unshift({ ...defaultAllChatsFilter });
       }
 
 
@@ -549,10 +548,10 @@ export default function Home() {
         setAuthStep('initial');
         setAuthError(null);
 
-        const fetchCloudChannelsPromise = fetchAppManagedCloudChannels(true);
-        const fetchDialogFiltersPromise = fetchDialogFilters(); 
-
-        await Promise.all([fetchCloudChannelsPromise, fetchDialogFiltersPromise]);
+        await Promise.all([
+            fetchAppManagedCloudChannels(true),
+            fetchDialogFilters(true)
+        ]);
 
         if (!telegramUpdateListenerInitializedRef.current) {
             telegramService.initializeTelegramUpdateListener(handleNewCloudChannelDiscovered);
@@ -616,8 +615,8 @@ export default function Home() {
       const response = await telegramService.getChatMediaHistory(
           folder.inputPeer!,
           mediaLimit,
-          0, 
-          isCloud 
+          0,
+          isCloud
       );
       setCurrentChatMedia(response.files);
       setCurrentMediaOffsetId(response.nextOffsetId || 0);
@@ -647,7 +646,7 @@ export default function Home() {
           selectedFolder.inputPeer,
           SUBSEQUENT_MEDIA_LOAD_LIMIT,
           currentMediaOffsetId,
-          isCloud 
+          isCloud
       );
       setCurrentChatMedia(prev => [...prev, ...response.files]);
       setCurrentMediaOffsetId(response.nextOffsetId || 0);
@@ -691,7 +690,7 @@ export default function Home() {
     if (channel) {
       setSelectedFolder(channel);
       setCurrentVirtualPath("/");
-      fetchInitialChatMedia(channel); 
+      fetchInitialChatMedia(channel);
       setIsCloudStorageSelectorOpen(false);
     } else {
       setSelectedFolder(null);
@@ -748,10 +747,10 @@ export default function Home() {
         setPassword('');
         toast({ title: "Sign In Successful!", description: "Connected to Telegram." });
 
-        const fetchCloudChannelsPromise = fetchAppManagedCloudChannels(true);
-        const fetchDialogFiltersPromise = fetchDialogFilters(true); 
-
-        await Promise.all([fetchCloudChannelsPromise, fetchDialogFiltersPromise]);
+        await Promise.all([
+            fetchAppManagedCloudChannels(true),
+            fetchDialogFilters(true)
+        ]);
 
         if (!telegramUpdateListenerInitializedRef.current) {
             telegramService.initializeTelegramUpdateListener(handleNewCloudChannelDiscovered);
@@ -794,10 +793,10 @@ export default function Home() {
         setPassword('');
         toast({ title: "2FA Successful!", description: "Connected to Telegram." });
 
-        const fetchCloudChannelsPromise = fetchAppManagedCloudChannels(true);
-        const fetchDialogFiltersPromise = fetchDialogFilters(true); 
-
-        await Promise.all([fetchCloudChannelsPromise, fetchDialogFiltersPromise]);
+        await Promise.all([
+            fetchAppManagedCloudChannels(true),
+            fetchDialogFilters(true)
+        ]);
 
         if (!telegramUpdateListenerInitializedRef.current) {
             telegramService.initializeTelegramUpdateListener(handleNewCloudChannelDiscovered);
@@ -1190,8 +1189,8 @@ export default function Home() {
         updateUiForFile(fileToUpload.id, 100, 'completed');
         toast({ title: "Upload Successful!", description: `${fileToUpload.name} uploaded to ${selectedFolder.name}.` });
 
-        if (selectedFolder && selectedFolder.id === selectedFolder?.id) { 
-           fetchInitialChatMedia(selectedFolder); 
+        if (selectedFolder && selectedFolder.id === selectedFolder?.id) {
+           fetchInitialChatMedia(selectedFolder);
         }
       } catch (error: any) {
         if (controller.signal.aborted || error.name === 'AbortError' || error.message?.includes('aborted')) {
@@ -1224,7 +1223,7 @@ export default function Home() {
         toast({ title: "Folder Order Saved", description: "The new folder order has been saved to Telegram." });
       } catch (error: any) {
         handleApiError(error, "Error Saving Order", "Could not save the folder order.");
-        setHasFetchedDialogFiltersOnce(false); 
+        setHasFetchedDialogFiltersOnce(false);
         await fetchDialogFilters();
       }
     }
@@ -1297,7 +1296,7 @@ export default function Home() {
                 files: [],
                 folders: [],
                 isAppManagedCloud: true,
-                cloudConfig: result.initialConfig, 
+                cloudConfig: result.initialConfig,
             };
 
             setAppManagedCloudFolders(prevFolders => {
@@ -1305,8 +1304,8 @@ export default function Home() {
                 if (exists) return prevFolders.map(f => f.id === newCloudFolder.id ? newCloudFolder : f).sort((a,b) => a.name.localeCompare(b.name));
                 return [...prevFolders, newCloudFolder].sort((a,b) => a.name.localeCompare(b.name));
             });
-            
-            await fetchAppManagedCloudChannels(true); 
+
+            await fetchAppManagedCloudChannels(true);
             await fetchDialogFilters(true);
         } else {
             throw new Error("Channel creation did not return expected info including config.");
@@ -1340,7 +1339,7 @@ export default function Home() {
                  setMasterChatListPaginationForFiltering(initialPaginationState);
             }
         }
-        setLastFetchedFilterId(null); 
+        setLastFetchedFilterId(null);
     }
   };
 
@@ -1412,15 +1411,19 @@ export default function Home() {
         newFilter = dialogFilters.find(f => f.id === ALL_CHATS_FILTER_ID) || dialogFilters[0];
         if (newFilter && newFilter.id !== activeDialogFilterId) {
           setActiveDialogFilterId(newFilter.id);
-          return; 
+          // Early return as this effect will re-run with the new activeDialogFilterId
+          return;
         }
-    } else if (!newFilter && dialogFilters.length === 0) { 
+    } else if (!newFilter && dialogFilters.length === 0) {
+        // This case should ideally not happen if defaultAllChatsFilter is always in dialogFilters
         newFilter = defaultAllChatsFilter;
         if (activeDialogFilterId !== ALL_CHATS_FILTER_ID) {
             setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
             return;
         }
     }
+
+    // Only update activeFilterDetails if it's actually different
     if (activeFilterDetails?.id !== newFilter?.id ||
         activeFilterDetails?._ !== newFilter?._ ||
         activeFilterDetails?.title !== newFilter?.title
@@ -1434,10 +1437,10 @@ export default function Home() {
     if (!isConnected || !activeFilterDetails || isLoadingDialogFilters) {
       return;
     }
-    
-    const filterIdToFetch = activeFilterDetails.id;
-    const isNewFilter = lastFetchedFilterId !== filterIdToFetch;
-    
+
+    const currentFilterId = activeFilterDetails.id;
+    const isNewFilter = lastFetchedFilterId !== currentFilterId;
+
     if (isNewFilter) {
         setCurrentErrorMessage(null);
     }
@@ -1445,7 +1448,7 @@ export default function Home() {
     const filterType = activeFilterDetails._;
     let isCurrentFilterListEmptyAndNeedsLoad = false;
 
-    const cachedEntryForCurrent = chatDataCache.get(filterIdToFetch);
+    const cachedEntryForCurrent = chatDataCache.get(currentFilterId);
     const cachedEntryForAllChats = chatDataCache.get(ALL_CHATS_FILTER_ID);
 
     if (filterType === 'dialogFilterDefault') {
@@ -1456,7 +1459,7 @@ export default function Home() {
         isCurrentFilterListEmptyAndNeedsLoad = (!cachedEntryForAllChats || cachedEntryForAllChats.folders.length === 0) &&
                                              masterChatListPaginationForFiltering.hasMore &&
                                              !cachedEntryForAllChats?.isLoading;
-    } else if (filterType === 'dialogFilter') { 
+    } else if (filterType === 'dialogFilter') {
          isCurrentFilterListEmptyAndNeedsLoad = (!cachedEntryForCurrent || cachedEntryForCurrent.folders.length === 0) &&
                                              (!cachedEntryForCurrent || cachedEntryForCurrent.pagination.hasMore) &&
                                              !cachedEntryForCurrent?.isLoading;
@@ -1465,13 +1468,13 @@ export default function Home() {
 
     if (isNewFilter || isCurrentFilterListEmptyAndNeedsLoad) {
         if (isNewFilter) {
-            setDisplayedChats([]); 
-            setSelectedFolder(null); 
+            setDisplayedChats([]);
+            setSelectedFolder(null);
             setCurrentChatMedia([]);
-            setCurrentVirtualPath("/"); 
+            setCurrentVirtualPath("/");
         }
-        setLastFetchedFilterId(filterIdToFetch); 
-        fetchDataForActiveFilter(false); 
+        setLastFetchedFilterId(currentFilterId);
+        fetchDataForActiveFilter(false);
     }
   }, [
       isConnected, activeFilterDetails, isLoadingDialogFilters, lastFetchedFilterId,
@@ -1482,7 +1485,7 @@ export default function Home() {
   useEffect(() => {
     if (!isConnected || !activeFilterDetails) {
       setIsLoadingDisplayedChats(isConnecting || isLoadingDialogFilters);
-      setDisplayedChats([]); 
+      setDisplayedChats([]);
       return;
     }
 
@@ -1503,8 +1506,8 @@ export default function Home() {
         setIsLoadingDisplayedChats(cachedEntryForAllChats.isLoading);
       } else {
         setDisplayedChats([]);
-        setHasMoreDisplayedChats(initialPaginationState.hasMore); 
-        setIsLoadingDisplayedChats(true); 
+        setHasMoreDisplayedChats(initialPaginationState.hasMore);
+        setIsLoadingDisplayedChats(true);
       }
     } else if (filterType === 'dialogFilter') {
       if (cachedEntryForCurrentFilter?.error === 'FOLDER_ID_INVALID_FALLBACK') {
@@ -1522,7 +1525,7 @@ export default function Home() {
                                                  (activeFilterDetails.pinned_peers?.findIndex(p => peerToKey(p) === peerToKey(b.inputPeer)) ?? 0));
             const nonPinned = filtered.filter(chat => { const key = peerToKey(chat.inputPeer); return key && includePeerKeys.has(key) && !pinnedPeerKeys.has(key); });
             setDisplayedChats([...pinned, ...nonPinned]);
-            setHasMoreDisplayedChats(cachedEntryForAllChats.pagination.hasMore); 
+            setHasMoreDisplayedChats(cachedEntryForAllChats.pagination.hasMore);
             setIsLoadingDisplayedChats(cachedEntryForAllChats.isLoading);
         } else {
             setDisplayedChats([]);
@@ -1967,7 +1970,7 @@ export default function Home() {
             {selectedFolder ? (
                 <MainContentView
                     folderName={selectedFolder.name}
-                    files={currentChatMedia} 
+                    files={currentChatMedia}
                     isLoading={isLoadingChatMedia && currentChatMedia.length === 0}
                     isLoadingMoreMedia={isLoadingChatMedia && currentChatMedia.length > 0}
                     hasMore={hasMoreChatMedia}
@@ -2136,3 +2139,5 @@ function cachedDataForActiveFilterIsLoading(activeFilterDetails: DialogFilter | 
     return cachedEntry?.isLoading || false;
 }
 
+
+    
