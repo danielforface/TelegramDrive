@@ -487,24 +487,20 @@ export default function Home() {
 
     const currentFilterId = activeFilterDetails.id;
     const filterType = activeFilterDetails._;
-    const cachedEntry = chatDataCache.get(currentFilterId);
 
     if (filterType === 'dialogFilterDefault') {
-      fetchAndCacheDialogs(currentFilterId, isLoadingMore);
+      fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, isLoadingMore);
     } else if (filterType === 'dialogFilter') {
-      if (cachedEntry?.error === 'FOLDER_ID_INVALID_FALLBACK') {
-        if (masterChatListPaginationForFiltering.hasMore && !chatDataCache.get(ALL_CHATS_FILTER_ID)?.isLoading) {
-          fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, isLoadingMore);
-        }
-      } else {
-        fetchAndCacheDialogs(currentFilterId, isLoadingMore, currentFilterId);
-      }
+      // Always attempt to fetch for the specific filter.
+      // `fetchAndCacheDialogs` will set error in cache if invalid.
+      // `useEffect` for `displayedChats` handles fallback and triggers "All Chats" fetch if needed.
+      fetchAndCacheDialogs(currentFilterId, isLoadingMore, currentFilterId);
     } else if (filterType === 'dialogFilterChatlist') {
-      if (masterChatListPaginationForFiltering.hasMore && !chatDataCache.get(ALL_CHATS_FILTER_ID)?.isLoading) {
-         fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, isLoadingMore);
-      }
+      // DialogFilterChatlist always relies on the master list for its peers.
+      // Fetch/paginate the master list. The display useEffect will filter it.
+      fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, isLoadingMore);
     }
-  }, [isConnected, activeFilterDetails, fetchAndCacheDialogs, masterChatListPaginationForFiltering, chatDataCache]);
+  }, [isConnected, activeFilterDetails, fetchAndCacheDialogs]);
 
 
   const loadMoreDisplayedChats = useCallback(async () => {
@@ -515,24 +511,25 @@ export default function Home() {
     const cachedEntry = chatDataCache.get(currentFilterId);
     const masterCacheEntry = chatDataCache.get(ALL_CHATS_FILTER_ID);
 
-    if (filterType === 'dialogFilterDefault') {
+    if (filterType === 'dialogFilterDefault') { // Loading more for "All Chats" tab
         if (masterCacheEntry?.pagination.hasMore && !masterCacheEntry.isLoading) {
             fetchDataForActiveFilter(true);
         }
     } else if (filterType === 'dialogFilter') {
-      if (cachedEntry?.error === 'FOLDER_ID_INVALID_FALLBACK') {
+      if (cachedEntry?.error === 'FOLDER_ID_INVALID_FALLBACK') { // If current view is fallback from specific folder
         if (masterCacheEntry?.pagination.hasMore && !masterCacheEntry.isLoading) {
-          fetchDataForActiveFilter(true);
+          // Load more for "All Chats"
+          fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, true);
         }
-      } else if (cachedEntry?.pagination.hasMore && !cachedEntry.isLoading) {
+      } else if (cachedEntry?.pagination.hasMore && !cachedEntry.isLoading) { // Loading more for specific folder that loaded successfully
         fetchDataForActiveFilter(true);
       }
-    } else if (filterType === 'dialogFilterChatlist') {
+    } else if (filterType === 'dialogFilterChatlist') { // Loading more for a chatlist folder (relies on All Chats)
       if (masterCacheEntry?.pagination.hasMore && !masterCacheEntry.isLoading) {
-        fetchDataForActiveFilter(true);
+        fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, true);
       }
     }
-  }, [activeFilterDetails, isLoadingDisplayedChats, chatDataCache, fetchDataForActiveFilter]);
+  }, [activeFilterDetails, isLoadingDisplayedChats, chatDataCache, fetchAndCacheDialogs, fetchDataForActiveFilter]);
 
 
   const checkExistingConnection = useCallback(async () => {
@@ -1411,11 +1408,9 @@ export default function Home() {
         newFilter = dialogFilters.find(f => f.id === ALL_CHATS_FILTER_ID) || dialogFilters[0];
         if (newFilter && newFilter.id !== activeDialogFilterId) {
           setActiveDialogFilterId(newFilter.id);
-          // Early return as this effect will re-run with the new activeDialogFilterId
           return;
         }
     } else if (!newFilter && dialogFilters.length === 0) {
-        // This case should ideally not happen if defaultAllChatsFilter is always in dialogFilters
         newFilter = defaultAllChatsFilter;
         if (activeDialogFilterId !== ALL_CHATS_FILTER_ID) {
             setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
@@ -1423,7 +1418,6 @@ export default function Home() {
         }
     }
 
-    // Only update activeFilterDetails if it's actually different
     if (activeFilterDetails?.id !== newFilter?.id ||
         activeFilterDetails?._ !== newFilter?._ ||
         activeFilterDetails?.title !== newFilter?.title
@@ -1440,7 +1434,6 @@ export default function Home() {
 
     const currentFilterId = activeFilterDetails.id;
     const isNewFilter = lastFetchedFilterId !== currentFilterId;
-
     if (isNewFilter) {
         setCurrentErrorMessage(null);
     }
@@ -1512,6 +1505,17 @@ export default function Home() {
     } else if (filterType === 'dialogFilter') {
       if (cachedEntryForCurrentFilter?.error === 'FOLDER_ID_INVALID_FALLBACK') {
         setCurrentErrorMessage(`"${activeFilterDetails.title}" couldn't be loaded directly. Showing matching chats from 'All Chats'. Some older chats might not appear until 'All Chats' is loaded further.`);
+        
+        const masterCacheIsEmptyOrStale = !cachedEntryForAllChats || (cachedEntryForAllChats.folders.length === 0 && cachedEntryForAllChats.pagination.hasMore);
+        const masterCacheIsNotLoading = !cachedEntryForAllChats?.isLoading;
+
+        if (masterCacheIsEmptyOrStale && masterCacheIsNotLoading) {
+          fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, false); 
+          setIsLoadingDisplayedChats(true); 
+          setDisplayedChats([]); 
+          return; 
+        }
+        
         if (cachedEntryForAllChats) {
             const includePeerKeys = new Set((activeFilterDetails.include_peers || []).map(peerToKey).filter(Boolean) as string[]);
             const pinnedPeerKeys = new Set((activeFilterDetails.pinned_peers || []).map(peerToKey).filter(Boolean) as string[]);
@@ -1543,6 +1547,17 @@ export default function Home() {
          setIsLoadingDisplayedChats(true);
       }
     } else if (filterType === 'dialogFilterChatlist') {
+        setCurrentErrorMessage(null); // Usually, chatlists just filter the main list.
+        const masterCacheIsEmptyOrStale = !cachedEntryForAllChats || (cachedEntryForAllChats.folders.length === 0 && cachedEntryForAllChats.pagination.hasMore);
+        const masterCacheIsNotLoading = !cachedEntryForAllChats?.isLoading;
+
+        if (masterCacheIsEmptyOrStale && masterCacheIsNotLoading) {
+          fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, false);
+          setIsLoadingDisplayedChats(true);
+          setDisplayedChats([]);
+          return;
+        }
+
       if (cachedEntryForAllChats) {
           const includePeerKeys = new Set((activeFilterDetails.include_peers || []).map(peerToKey).filter(Boolean) as string[]);
           const pinnedPeerKeys = new Set((activeFilterDetails.pinned_peers || []).map(peerToKey).filter(Boolean) as string[]);
@@ -1564,7 +1579,7 @@ export default function Home() {
       }
     }
   }, [
-      isConnected, activeFilterDetails, chatDataCache, peerToKey, isConnecting, isLoadingDialogFilters, lastFetchedFilterId
+      isConnected, activeFilterDetails, chatDataCache, peerToKey, isConnecting, isLoadingDialogFilters, lastFetchedFilterId, fetchAndCacheDialogs
   ]);
 
 
