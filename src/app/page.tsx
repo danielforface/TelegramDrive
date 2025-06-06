@@ -14,7 +14,7 @@ import { ChatSelectionDialog } from "@/components/chat-selection-dialog";
 import { UploadDialog } from "@/components/upload-dialog";
 import { CreateCloudChannelDialog } from "@/components/create-cloud-channel-dialog";
 import { CreateVirtualFolderDialog } from "@/components/create-virtual-folder-dialog";
-import { DeleteItemConfirmationDialog } from "@/components/delete-item-confirmation-dialog"; // New
+import { DeleteItemConfirmationDialog } from "@/components/delete-item-confirmation-dialog";
 import type { CloudFolder, CloudFile, DownloadQueueItemType, ExtendedFile, DialogFilter, CloudChannelType, CloudChannelConfigV1, InputPeer } from "@/types";
 import { Button } from "@/components/ui/button";
 import { RefreshCw, Loader2, LayoutPanelLeft, MessageSquare, Cloud } from "lucide-react";
@@ -160,24 +160,8 @@ export default function Home() {
 
   const { toast } = useToast();
 
-  const handleApiError = useCallback((error: any, title: string, defaultMessage: string) => {
-    let description = error.message || defaultMessage;
-
-    if (error.message && error.message.includes("Invalid hash in mt_dh_gen_ok")) {
-      description = "Connection handshake failed. Please check your API ID/Hash in .env.local, ensure it's correct, restart the server, and try clearing your browser's localStorage for this site.";
-      setAuthError(description);
-      toast({ title: "Connection Handshake Failed", description, variant: "destructive", duration: 10000 });
-    } else if (error.message === 'AUTH_RESTART') {
-        description = "Authentication process needs to be restarted. Please try entering your phone number again.";
-        setAuthError(description);
-        toast({ title: "Authentication Restart Needed", description, variant: "destructive" });
-        handleReset(false);
-    } else {
-        setAuthError(description);
-        toast({ title, description, variant: "destructive", duration: 5000 });
-    }
-  }, [toast]);
-
+  // ORDERING OF useCallback-WRAPPED FUNCTIONS IS CRITICAL FOR SSR AND TO AVOID INITIALIZATION ERRORS.
+  // Functions must be defined before they are used as dependencies in other useCallback hooks.
 
   const handleReset = useCallback(async (performServerLogout = true) => {
     const currentIsConnected = isConnected;
@@ -264,49 +248,25 @@ export default function Home() {
     setIsDeleteItemDialogOpen(false);
     setIsProcessingDeletion(false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected, toast, videoStreamUrl]);
+  }, [isConnected, toast, videoStreamUrl]); // handleReset has minimal internal useCallback deps
 
-  const handleNewCloudChannelDiscovered = useCallback((newlyVerifiedFolder: CloudFolder, source: 'update' | 'initialScan') => {
-    setAppManagedCloudFolders(prevFolders => {
-        const exists = prevFolders.some(f => f.id === newlyVerifiedFolder.id);
-        if (!exists) {
-            if (source === 'update') {
-                toast({
-                    title: "New Cloud Storage Detected",
-                    description: `"${newlyVerifiedFolder.name}" is now available and has been organized.`,
-                });
-            }
-            return [...prevFolders, newlyVerifiedFolder].sort((a,b) => a.name.localeCompare(b.name));
-        } else {
-            return prevFolders.map(f => f.id === newlyVerifiedFolder.id ? newlyVerifiedFolder : f)
-                              .sort((a,b) => a.name.localeCompare(b.name));
-        }
-    });
-    if (source === 'update') {
-        fetchDialogFilters(true);
-    }
-  }, [toast, fetchDialogFilters]);
+  const handleApiError = useCallback((error: any, title: string, defaultMessage: string) => {
+    let description = error.message || defaultMessage;
 
-
-  const fetchAppManagedCloudChannels = useCallback(async (forceRefresh = false) => {
-    if (!isConnected && !forceRefresh) {
-        setIsLoadingAppManagedCloudFolders(false);
-        return;
+    if (error.message && error.message.includes("Invalid hash in mt_dh_gen_ok")) {
+      description = "Connection handshake failed. Please check your API ID/Hash in .env.local, ensure it's correct, restart the server, and try clearing your browser's localStorage for this site.";
+      setAuthError(description);
+      toast({ title: "Connection Handshake Failed", description, variant: "destructive", duration: 10000 });
+    } else if (error.message === 'AUTH_RESTART') {
+        description = "Authentication process needs to be restarted. Please try entering your phone number again.";
+        setAuthError(description);
+        toast({ title: "Authentication Restart Needed", description, variant: "destructive" });
+        handleReset(false);
+    } else {
+        setAuthError(description);
+        toast({ title, description, variant: "destructive", duration: 5000 });
     }
-     if (!forceRefresh && appManagedCloudFolders.length > 0 && !isLoadingAppManagedCloudFolders) {
-        return;
-    }
-    setIsLoadingAppManagedCloudFolders(true);
-    try {
-      const channels = await telegramService.fetchAndVerifyManagedCloudChannels();
-      setAppManagedCloudFolders(channels.sort((a,b) => a.name.localeCompare(b.name)));
-    } catch (error: any) {
-      handleApiError(error, "Error Fetching Cloud Channels", "Could not load app-managed cloud channels.");
-      setAppManagedCloudFolders([]);
-    } finally {
-      setIsLoadingAppManagedCloudFolders(false);
-    }
-  }, [isConnected, handleApiError, appManagedCloudFolders.length, isLoadingAppManagedCloudFolders]);
+  }, [toast, handleReset]);
 
   const fetchAndCacheDialogs = useCallback(async (
     cacheKeyToFetch: number,
@@ -412,7 +372,6 @@ export default function Home() {
     }
   }, [chatDataCache, handleApiError, toast, masterChatListForFiltering, dialogFilters]);
 
-
   const fetchDialogFilters = useCallback(async (forceRefresh = false) => {
     if (!isConnected) {
         setIsLoadingDialogFilters(false);
@@ -453,7 +412,6 @@ export default function Home() {
         processedFilters.unshift({ ...defaultAllChatsFilter });
       }
 
-
       processedFilters.sort((a, b) => {
         if (a.id === ALL_CHATS_FILTER_ID) return -1;
         if (b.id === ALL_CHATS_FILTER_ID) return 1;
@@ -470,7 +428,6 @@ export default function Home() {
       } else if (processedFilters.length === 0) {
         setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
       }
-
 
       if ((forceRefresh || processedFilters.length > 0 || (processedFilters.length === 0 && dialogFilters.some(df => df.id === ALL_CHATS_FILTER_ID)))) {
         await fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, false, undefined, INITIAL_MASTER_CHATS_LOAD_LIMIT);
@@ -491,52 +448,46 @@ export default function Home() {
     }
   }, [isConnected, handleApiError, activeDialogFilterId, hasFetchedDialogFiltersOnce, dialogFilters, fetchAndCacheDialogs, isReorderingFolders]);
 
-
-  const fetchDataForActiveFilter = useCallback((isLoadingMore: boolean) => {
-    if (!isConnected || !activeFilterDetails) {
-       return;
-    }
-
-    const currentFilterId = activeFilterDetails.id;
-    const filterType = activeFilterDetails._;
-
-    if (filterType === 'dialogFilterDefault') {
-      fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, isLoadingMore);
-    } else if (filterType === 'dialogFilter') {
-      fetchAndCacheDialogs(currentFilterId, isLoadingMore, currentFilterId);
-    } else if (filterType === 'dialogFilterChatlist') {
-      fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, isLoadingMore);
-    }
-  }, [isConnected, activeFilterDetails, fetchAndCacheDialogs]);
-
-
-  const loadMoreDisplayedChats = useCallback(async () => {
-    if (!activeFilterDetails || isLoadingDisplayedChats) return;
-
-    const filterType = activeFilterDetails._;
-    const currentFilterId = activeFilterDetails.id;
-    const cachedEntry = chatDataCache.get(currentFilterId);
-    const masterCacheEntry = chatDataCache.get(ALL_CHATS_FILTER_ID);
-
-    if (filterType === 'dialogFilterDefault') {
-        if (masterCacheEntry?.pagination.hasMore && !masterCacheEntry.isLoading) {
-            fetchDataForActiveFilter(true);
+  const handleNewCloudChannelDiscovered = useCallback((newlyVerifiedFolder: CloudFolder, source: 'update' | 'initialScan') => {
+    setAppManagedCloudFolders(prevFolders => {
+        const exists = prevFolders.some(f => f.id === newlyVerifiedFolder.id);
+        if (!exists) {
+            if (source === 'update') {
+                toast({
+                    title: "New Cloud Storage Detected",
+                    description: `"${newlyVerifiedFolder.name}" is now available and has been organized.`,
+                });
+            }
+            return [...prevFolders, newlyVerifiedFolder].sort((a,b) => a.name.localeCompare(b.name));
+        } else {
+            return prevFolders.map(f => f.id === newlyVerifiedFolder.id ? newlyVerifiedFolder : f)
+                              .sort((a,b) => a.name.localeCompare(b.name));
         }
-    } else if (filterType === 'dialogFilter') {
-      if (cachedEntry?.error === 'FOLDER_ID_INVALID_FALLBACK') {
-        if (masterCacheEntry?.pagination.hasMore && !masterCacheEntry.isLoading) {
-          fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, true);
-        }
-      } else if (cachedEntry?.pagination.hasMore && !cachedEntry.isLoading) {
-        fetchDataForActiveFilter(true);
-      }
-    } else if (filterType === 'dialogFilterChatlist') {
-      if (masterCacheEntry?.pagination.hasMore && !masterCacheEntry.isLoading) {
-        fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, true);
-      }
+    });
+    if (source === 'update') {
+        fetchDialogFilters(true);
     }
-  }, [activeFilterDetails, isLoadingDisplayedChats, chatDataCache, fetchDataForActiveFilter]);
+  }, [toast, fetchDialogFilters]);
 
+  const fetchAppManagedCloudChannels = useCallback(async (forceRefresh = false) => {
+    if (!isConnected && !forceRefresh) {
+        setIsLoadingAppManagedCloudFolders(false);
+        return;
+    }
+     if (!forceRefresh && appManagedCloudFolders.length > 0 && !isLoadingAppManagedCloudFolders) {
+        return;
+    }
+    setIsLoadingAppManagedCloudFolders(true);
+    try {
+      const channels = await telegramService.fetchAndVerifyManagedCloudChannels();
+      setAppManagedCloudFolders(channels.sort((a,b) => a.name.localeCompare(b.name)));
+    } catch (error: any) {
+      handleApiError(error, "Error Fetching Cloud Channels", "Could not load app-managed cloud channels.");
+      setAppManagedCloudFolders([]);
+    } finally {
+      setIsLoadingAppManagedCloudFolders(false);
+    }
+  }, [isConnected, handleApiError, appManagedCloudFolders.length, isLoadingAppManagedCloudFolders]);
 
   const checkExistingConnection = useCallback(async () => {
     setIsLoadingDialogFilters(true);
@@ -595,7 +546,6 @@ export default function Home() {
     }
   }, [toast, handleApiError, fetchDialogFilters, fetchAppManagedCloudChannels, handleReset, handleNewCloudChannelDiscovered]);
 
-
   const fetchInitialChatMedia = useCallback(async (folder: CloudFolder) => {
     if (!folder.inputPeer && !folder.isAppManagedCloud) {
       toast({ title: "Error", description: "Cannot load media: InputPeer data is missing for this chat.", variant: "destructive" });
@@ -636,7 +586,6 @@ export default function Home() {
     }
   },[toast, handleApiError]);
 
-
   const loadMoreChatMediaCallback = useCallback(async () => {
     if (isLoadingChatMedia || !hasMoreChatMedia || !selectedFolder?.inputPeer) return;
 
@@ -666,41 +615,6 @@ export default function Home() {
     }
   }, [isLoadingChatMedia, hasMoreChatMedia, selectedFolder, currentMediaOffsetId, toast, handleApiError]);
 
-  const peerToKey = useCallback((peer: any): string | null => {
-    if (!peer) return null;
-    if (peer._ === 'inputPeerUser') return `user:${String(peer.user_id)}`;
-    if (peer._ === 'inputPeerChat') return `chat:${String(peer.chat_id)}`;
-    if (peer._ === 'inputPeerChannel') return `channel:${String(peer.channel_id)}`;
-    return null;
-  }, []);
-
-  const handleSelectFolder = (folderId: string) => {
-    const folder = displayedChats.find(f => f.id === folderId);
-    if (folder) {
-      setSelectedFolder(folder);
-      setCurrentVirtualPath("/");
-      fetchInitialChatMedia(folder);
-      setIsChatSelectionDialogOpen(false);
-    } else {
-      setSelectedFolder(null);
-      setCurrentChatMedia([]);
-    }
-  };
-
-  const handleSelectCloudChannel = (channelId: string) => {
-    const channel = appManagedCloudFolders.find(c => c.id === channelId);
-    if (channel) {
-      setSelectedFolder(channel);
-      setCurrentVirtualPath("/");
-      fetchInitialChatMedia(channel);
-      setIsCloudStorageSelectorOpen(false);
-    } else {
-      setSelectedFolder(null);
-      setCurrentChatMedia([]);
-    }
-  };
-
-
   const handleSendCode = async (fullPhoneNumberFromConnect: string) => {
     if (!fullPhoneNumberFromConnect || !fullPhoneNumberFromConnect.startsWith('+') || fullPhoneNumberFromConnect.length < 5) {
       setAuthError("Phone number is required and must be valid (e.g. +1234567890).");
@@ -728,7 +642,6 @@ export default function Home() {
       setIsConnecting(false);
     }
   };
-
 
   const handleSignIn = async (currentPhoneCode: string) => {
     if (!currentPhoneCode) {
@@ -775,7 +688,6 @@ export default function Home() {
     }
   };
 
-
   const handleCheckPassword = async (currentPassword: string) => {
     if (!currentPassword) {
       setAuthError("Password is required.");
@@ -813,16 +725,6 @@ export default function Home() {
     } finally {
       setIsConnecting(false);
     }
-  };
-
-  const handleOpenFileDetails = useCallback((file: CloudFile) => {
-    setSelectedFileForDetails(file);
-    setIsDetailsPanelOpen(true);
-  }, []);
-
-  const handleCloseFileDetails = () => {
-    setIsDetailsPanelOpen(false);
-    setTimeout(() => setSelectedFileForDetails(null), 300);
   };
 
   const handleQueueDownload = useCallback(async (file: CloudFile) => {
@@ -931,18 +833,6 @@ export default function Home() {
     );
     toast({ title: "Download Resumed", description: `Download for item has been resumed.`});
   }, [toast, handleQueueDownload]);
-
-  const handleViewImage = useCallback((file: CloudFile) => {
-    if (file.type === 'image' && file.url) {
-      setViewingImageUrl(file.url);
-      setViewingImageName(file.name);
-      setIsImageViewerOpen(true);
-    } else if (file.type === 'image' && !file.url) {
-      toast({ title: "Preview Not Available", description: "Image URL not available for preview. Try downloading first.", variant: "default"});
-    } else if (file.type !== 'image') {
-      toast({ title: "Not an Image", description: "This file is not an image and cannot be viewed here.", variant: "default"});
-    }
-  }, [toast]);
 
   const fetchVideoAndCreateStreamUrl = useCallback(async (file: CloudFile, signal: AbortSignal) => {
     toast({ title: "Preparing Video...", description: `Fetching ${file.name} for playback.` });
@@ -1070,6 +960,256 @@ export default function Home() {
     }
   }, [prepareAndPlayVideoStream, toast]);
 
+  const handleStartUpload = async () => {
+    const filesToAttemptUpload = filesToUpload.filter(f => f.uploadStatus === 'pending' || f.uploadStatus === 'failed' || f.uploadStatus === 'cancelled');
+
+    if (filesToAttemptUpload.length === 0) {
+      toast({ title: "No New Files", description: "No new files or files marked for retry to upload.", variant: "default" });
+      return;
+    }
+    if (!selectedFolder || !selectedFolder.inputPeer) {
+      toast({ title: "Upload Target Missing", description: "No target chat selected or inputPeer is missing.", variant: "destructive" });
+      return;
+    }
+
+    setIsUploadingFiles(true);
+
+    for (const fileToUpload of filesToAttemptUpload) {
+      if (fileToUpload.uploadStatus === 'completed' || fileToUpload.uploadStatus === 'uploading' || fileToUpload.uploadStatus === 'processing') {
+          continue;
+      }
+
+      const controller = new AbortController();
+      uploadAbortControllersRef.current.set(fileToUpload.id, controller);
+
+      const updateUiForFile = (fileId: string, progress: number, status: ExtendedFile['uploadStatus']) => {
+        setFilesToUpload(prev =>
+          prev.map(f =>
+            f.id === fileId
+              ? { ...f, uploadProgress: progress, uploadStatus: status }
+              : f
+          )
+        );
+      };
+
+      updateUiForFile(fileToUpload.id, 0, 'uploading');
+
+      let captionForUpload: string | undefined = undefined;
+      if (selectedFolder.isAppManagedCloud) {
+        captionForUpload = JSON.stringify({ path: normalizePath(currentVirtualPath) });
+      }
+
+      try {
+        toast({ title: `Starting Upload: ${fileToUpload.name}`, description: `Size: ${telegramService.formatFileSize(fileToUpload.size)}` });
+        await telegramService.uploadFile(
+          selectedFolder.inputPeer,
+          fileToUpload.originalFile,
+          (percent) => {
+            const currentStatus = percent === 100 ? 'processing' : 'uploading';
+            updateUiForFile(fileToUpload.id, percent, currentStatus);
+          },
+          controller.signal,
+          captionForUpload
+        );
+        updateUiForFile(fileToUpload.id, 100, 'completed');
+        toast({ title: "Upload Successful!", description: `${fileToUpload.name} uploaded to ${selectedFolder.name}.` });
+
+        if (selectedFolder && selectedFolder.id === selectedFolder?.id) { // Check if the selected folder is still the one being uploaded to
+           fetchInitialChatMedia(selectedFolder); // Re-fetch media for the current folder
+        }
+      } catch (error: any) {
+        if (controller.signal.aborted || error.name === 'AbortError' || error.message?.includes('aborted')) {
+          updateUiForFile(fileToUpload.id, fileToUpload.uploadProgress || 0, 'cancelled');
+          toast({ title: "Upload Cancelled", description: `${fileToUpload.name} upload was cancelled.`, variant: "default" });
+        } else {
+          updateUiForFile(fileToUpload.id, fileToUpload.uploadProgress || 0, 'failed');
+          toast({ title: "Upload Failed", description: `Could not upload ${fileToUpload.name}: ${error.message}`, variant: "destructive" });
+        }
+      } finally {
+        uploadAbortControllersRef.current.delete(fileToUpload.id);
+      }
+    }
+    setIsUploadingFiles(false);
+  };
+
+  const handleCreateCloudChannel = async (name: string, type: CloudChannelType) => {
+    setIsCreatingCloudChannel(true);
+    try {
+        const result = await telegramService.createManagedCloudChannel(name, type);
+        if (result && result.channelInfo && result.initialConfig) {
+            toast({
+                title: "Cloud Storage Created!",
+                description: `Channel "${result.channelInfo.title}" (ID: ${result.channelInfo.id}) created and configured.`,
+            });
+            setIsCreateCloudChannelDialogOpen(false);
+
+            const newCloudFolder: CloudFolder = {
+                id: `channel-${result.channelInfo.id}`,
+                name: result.channelInfo.title,
+                isChatFolder: false,
+                inputPeer: {
+                    _: 'inputPeerChannel',
+                    channel_id: result.channelInfo.id,
+                    access_hash: result.channelInfo.access_hash,
+                },
+                files: [],
+                folders: [],
+                isAppManagedCloud: true,
+                cloudConfig: result.initialConfig,
+            };
+
+            setAppManagedCloudFolders(prevFolders => {
+                const exists = prevFolders.some(f => f.id === newCloudFolder.id);
+                if (exists) return prevFolders.map(f => f.id === newCloudFolder.id ? newCloudFolder : f).sort((a,b) => a.name.localeCompare(b.name));
+                return [...prevFolders, newCloudFolder].sort((a,b) => a.name.localeCompare(b.name));
+            });
+
+            // Fetch all app managed channels again to ensure full sync and correct "Cloudifier Storage" folder update
+            await fetchAppManagedCloudChannels(true);
+            // Also refresh dialog filters to pick up any changes to the "Cloudifier Storage" telegram folder
+            await fetchDialogFilters(true);
+
+        } else {
+            throw new Error("Channel creation did not return expected info including config.");
+        }
+    } catch (error: any) {
+        handleApiError(error, "Error Creating Cloud Storage", `Could not create new cloud storage: ${error.message}`);
+    } finally {
+        setIsCreatingCloudChannel(false);
+    }
+  };
+
+  const handleCreateVirtualFolder = async (newFolderName: string) => {
+    if (!selectedFolder || !selectedFolder.isAppManagedCloud || !selectedFolder.inputPeer) {
+      toast({ title: "Error", description: "No cloud channel selected or inputPeer missing.", variant: "destructive" });
+      return;
+    }
+    setIsProcessingVirtualFolder(true);
+    try {
+      const updatedConfig = await telegramService.addVirtualFolderToCloudChannel(
+        selectedFolder.inputPeer,
+        virtualFolderParentPath,
+        newFolderName
+      );
+
+      if (updatedConfig) {
+        setSelectedFolder(prev => prev ? { ...prev, cloudConfig: updatedConfig } : null);
+        setAppManagedCloudFolders(prevList =>
+          prevList.map(cf =>
+            cf.id === selectedFolder.id ? { ...cf, cloudConfig: updatedConfig } : cf
+          )
+        );
+        toast({ title: "Virtual Folder Created", description: `Folder "${newFolderName}" created in ${selectedFolder.name} at ${virtualFolderParentPath}.` });
+      } else {
+        toast({ title: "Creation Failed", description: "Could not create virtual folder. Config message might not have updated. Check Telegram.", variant: "destructive" });
+      }
+    } catch (error: any) {
+      toast({ title: "Error Creating Folder", description: error.message || "An unknown error occurred.", variant: "destructive" });
+    } finally {
+      setIsProcessingVirtualFolder(false);
+      setIsCreateVirtualFolderDialogOpen(false);
+    }
+  };
+
+  const confirmDeleteItem = async () => {
+    if (!itemToDelete) return;
+    setIsProcessingDeletion(true);
+
+    try {
+      if (itemToDelete.type === 'file') {
+        const { file, parentInputPeer } = itemToDelete;
+        if (!parentInputPeer) throw new Error("InputPeer missing for file deletion.");
+        const success = await telegramService.deleteTelegramMessages(parentInputPeer, [file.messageId]);
+        if (success) {
+          toast({ title: "File Deleted", description: `File "${file.name}" has been deleted.` });
+          setCurrentChatMedia(prev => prev.filter(f => f.id !== file.id));
+        } else {
+          throw new Error("Telegram service failed to delete the message.");
+        }
+      } else if (itemToDelete.type === 'virtualFolder') {
+        const { path, name, parentInputPeer } = itemToDelete;
+        if (!parentInputPeer) throw new Error("InputPeer missing for virtual folder deletion.");
+
+        const updatedConfig = await telegramService.removeVirtualFolderFromCloudChannel(parentInputPeer, path);
+        if (updatedConfig) {
+          toast({ title: "Virtual Folder Deleted", description: `Folder "${name}" has been removed from the virtual structure.` });
+          setSelectedFolder(prev => prev ? { ...prev, cloudConfig: updatedConfig } : null);
+          setAppManagedCloudFolders(prevList =>
+            prevList.map(cf =>
+              cf.id === selectedFolder?.id ? { ...cf, cloudConfig: updatedConfig } : cf
+            )
+          );
+        } else {
+          throw new Error("Failed to update cloud configuration after deleting virtual folder.");
+        }
+      }
+    } catch (error: any) {
+      handleApiError(error, `Error Deleting ${itemToDelete.type === 'file' ? 'File' : 'Virtual Folder'}`, error.message || "Could not complete deletion.");
+    } finally {
+      setIsProcessingDeletion(false);
+      setIsDeleteItemDialogOpen(false);
+      setItemToDelete(null);
+    }
+  };
+
+
+  // Utility and other handlers (keep these below main async logic handlers if they don't have useCallback deps on them)
+  const peerToKey = useCallback((peer: any): string | null => {
+    if (!peer) return null;
+    if (peer._ === 'inputPeerUser') return `user:${String(peer.user_id)}`;
+    if (peer._ === 'inputPeerChat') return `chat:${String(peer.chat_id)}`;
+    if (peer._ === 'inputPeerChannel') return `channel:${String(peer.channel_id)}`;
+    return null;
+  }, []);
+
+  const handleSelectFolder = (folderId: string) => {
+    const folder = displayedChats.find(f => f.id === folderId);
+    if (folder) {
+      setSelectedFolder(folder);
+      setCurrentVirtualPath("/");
+      fetchInitialChatMedia(folder);
+      setIsChatSelectionDialogOpen(false);
+    } else {
+      setSelectedFolder(null);
+      setCurrentChatMedia([]);
+    }
+  };
+
+  const handleSelectCloudChannel = (channelId: string) => {
+    const channel = appManagedCloudFolders.find(c => c.id === channelId);
+    if (channel) {
+      setSelectedFolder(channel);
+      setCurrentVirtualPath("/");
+      fetchInitialChatMedia(channel);
+      setIsCloudStorageSelectorOpen(false);
+    } else {
+      setSelectedFolder(null);
+      setCurrentChatMedia([]);
+    }
+  };
+
+  const handleOpenFileDetails = useCallback((file: CloudFile) => {
+    setSelectedFileForDetails(file);
+    setIsDetailsPanelOpen(true);
+  }, []);
+
+  const handleCloseFileDetails = () => {
+    setIsDetailsPanelOpen(false);
+    setTimeout(() => setSelectedFileForDetails(null), 300);
+  };
+
+  const handleViewImage = useCallback((file: CloudFile) => {
+    if (file.type === 'image' && file.url) {
+      setViewingImageUrl(file.url);
+      setViewingImageName(file.name);
+      setIsImageViewerOpen(true);
+    } else if (file.type === 'image' && !file.url) {
+      toast({ title: "Preview Not Available", description: "Image URL not available for preview. Try downloading first.", variant: "default"});
+    } else if (file.type !== 'image') {
+      toast({ title: "Not an Image", description: "This file is not an image and cannot be viewed here.", variant: "default"});
+    }
+  }, [toast]);
+
   const handleCloseVideoPlayer = useCallback(() => {
     setIsVideoPlayerOpen(false);
     if (isPreparingVideoStream && videoStreamAbortControllerRef.current && !videoStreamAbortControllerRef.current.signal.aborted) {
@@ -1092,7 +1232,6 @@ export default function Home() {
   const handleOpenCloudStorageSelector = () => {
     setIsCloudStorageSelectorOpen(true);
   };
-
 
   const handleOpenUploadDialog = () => {
     if (!selectedFolder) {
@@ -1136,79 +1275,6 @@ export default function Home() {
     }
   };
 
-  const handleStartUpload = async () => {
-    const filesToAttemptUpload = filesToUpload.filter(f => f.uploadStatus === 'pending' || f.uploadStatus === 'failed' || f.uploadStatus === 'cancelled');
-
-    if (filesToAttemptUpload.length === 0) {
-      toast({ title: "No New Files", description: "No new files or files marked for retry to upload.", variant: "default" });
-      return;
-    }
-    if (!selectedFolder || !selectedFolder.inputPeer) {
-      toast({ title: "Upload Target Missing", description: "No target chat selected or inputPeer is missing.", variant: "destructive" });
-      return;
-    }
-
-    setIsUploadingFiles(true);
-
-    for (const fileToUpload of filesToAttemptUpload) {
-      if (fileToUpload.uploadStatus === 'completed' || fileToUpload.uploadStatus === 'uploading' || fileToUpload.uploadStatus === 'processing') {
-          continue;
-      }
-
-      const controller = new AbortController();
-      uploadAbortControllersRef.current.set(fileToUpload.id, controller);
-
-      const updateUiForFile = (fileId: string, progress: number, status: ExtendedFile['uploadStatus']) => {
-        setFilesToUpload(prev =>
-          prev.map(f =>
-            f.id === fileId
-              ? { ...f, uploadProgress: progress, uploadStatus: status }
-              : f
-          )
-        );
-      };
-
-      updateUiForFile(fileToUpload.id, 0, 'uploading');
-
-      let captionForUpload: string | undefined = undefined;
-      if (selectedFolder.isAppManagedCloud) {
-        captionForUpload = JSON.stringify({ path: normalizePath(currentVirtualPath) });
-      }
-
-
-      try {
-        toast({ title: `Starting Upload: ${fileToUpload.name}`, description: `Size: ${telegramService.formatFileSize(fileToUpload.size)}` });
-        await telegramService.uploadFile(
-          selectedFolder.inputPeer,
-          fileToUpload.originalFile,
-          (percent) => {
-            const currentStatus = percent === 100 ? 'processing' : 'uploading';
-            updateUiForFile(fileToUpload.id, percent, currentStatus);
-          },
-          controller.signal,
-          captionForUpload
-        );
-        updateUiForFile(fileToUpload.id, 100, 'completed');
-        toast({ title: "Upload Successful!", description: `${fileToUpload.name} uploaded to ${selectedFolder.name}.` });
-
-        if (selectedFolder && selectedFolder.id === selectedFolder?.id) {
-           fetchInitialChatMedia(selectedFolder);
-        }
-      } catch (error: any) {
-        if (controller.signal.aborted || error.name === 'AbortError' || error.message?.includes('aborted')) {
-          updateUiForFile(fileToUpload.id, fileToUpload.uploadProgress || 0, 'cancelled');
-          toast({ title: "Upload Cancelled", description: `${fileToUpload.name} upload was cancelled.`, variant: "default" });
-        } else {
-          updateUiForFile(fileToUpload.id, fileToUpload.uploadProgress || 0, 'failed');
-          toast({ title: "Upload Failed", description: `Could not upload ${fileToUpload.name}: ${error.message}`, variant: "destructive" });
-        }
-      } finally {
-        uploadAbortControllersRef.current.delete(fileToUpload.id);
-      }
-    }
-    setIsUploadingFiles(false);
-  };
-
   const handleSelectDialogFilter = (filterId: number) => {
     if (activeDialogFilterId === filterId && !isReorderingFolders) return;
     setActiveDialogFilterId(filterId);
@@ -1225,7 +1291,7 @@ export default function Home() {
         toast({ title: "Folder Order Saved", description: "The new folder order has been saved to Telegram." });
       } catch (error: any) {
         handleApiError(error, "Error Saving Order", "Could not save the folder order.");
-        setHasFetchedDialogFiltersOnce(false);
+        setHasFetchedDialogFiltersOnce(false); // Force refresh if save fails
         await fetchDialogFilters();
       }
     }
@@ -1270,55 +1336,9 @@ export default function Home() {
     }
   };
 
-
   const handleOpenCreateCloudChannelDialog = () => {
     setIsCreateCloudChannelDialogOpen(true);
   };
-
-  const handleCreateCloudChannel = async (name: string, type: CloudChannelType) => {
-    setIsCreatingCloudChannel(true);
-    try {
-        const result = await telegramService.createManagedCloudChannel(name, type);
-        if (result && result.channelInfo && result.initialConfig) {
-            toast({
-                title: "Cloud Storage Created!",
-                description: `Channel "${result.channelInfo.title}" (ID: ${result.channelInfo.id}) created and configured.`,
-            });
-            setIsCreateCloudChannelDialogOpen(false);
-
-            const newCloudFolder: CloudFolder = {
-                id: `channel-${result.channelInfo.id}`,
-                name: result.channelInfo.title,
-                isChatFolder: false,
-                inputPeer: {
-                    _: 'inputPeerChannel',
-                    channel_id: result.channelInfo.id,
-                    access_hash: result.channelInfo.access_hash,
-                },
-                files: [],
-                folders: [],
-                isAppManagedCloud: true,
-                cloudConfig: result.initialConfig,
-            };
-
-            setAppManagedCloudFolders(prevFolders => {
-                const exists = prevFolders.some(f => f.id === newCloudFolder.id);
-                if (exists) return prevFolders.map(f => f.id === newCloudFolder.id ? newCloudFolder : f).sort((a,b) => a.name.localeCompare(b.name));
-                return [...prevFolders, newCloudFolder].sort((a,b) => a.name.localeCompare(b.name));
-            });
-
-            await fetchAppManagedCloudChannels(true);
-            await fetchDialogFilters(true);
-        } else {
-            throw new Error("Channel creation did not return expected info including config.");
-        }
-    } catch (error: any) {
-        handleApiError(error, "Error Creating Cloud Storage", `Could not create new cloud storage: ${error.message}`);
-    } finally {
-        setIsCreatingCloudChannel(false);
-    }
-};
-
 
   const handleRefreshCurrentFilter = () => {
     if (activeFilterDetails) {
@@ -1341,7 +1361,7 @@ export default function Home() {
                  setMasterChatListPaginationForFiltering(initialPaginationState);
             }
         }
-        setLastFetchedFilterId(null);
+        setLastFetchedFilterId(null); // This will trigger re-fetch in useEffect
     }
   };
 
@@ -1353,38 +1373,6 @@ export default function Home() {
   const handleOpenCreateVirtualFolderDialog = (path: string) => {
     setVirtualFolderParentPath(path || "/");
     setIsCreateVirtualFolderDialogOpen(true);
-  };
-
-  const handleCreateVirtualFolder = async (newFolderName: string) => {
-    if (!selectedFolder || !selectedFolder.isAppManagedCloud || !selectedFolder.inputPeer) {
-      toast({ title: "Error", description: "No cloud channel selected or inputPeer missing.", variant: "destructive" });
-      return;
-    }
-    setIsProcessingVirtualFolder(true);
-    try {
-      const updatedConfig = await telegramService.addVirtualFolderToCloudChannel(
-        selectedFolder.inputPeer,
-        virtualFolderParentPath,
-        newFolderName
-      );
-
-      if (updatedConfig) {
-        setSelectedFolder(prev => prev ? { ...prev, cloudConfig: updatedConfig } : null);
-        setAppManagedCloudFolders(prevList =>
-          prevList.map(cf =>
-            cf.id === selectedFolder.id ? { ...cf, cloudConfig: updatedConfig } : cf
-          )
-        );
-        toast({ title: "Virtual Folder Created", description: `Folder "${newFolderName}" created in ${selectedFolder.name} at ${virtualFolderParentPath}.` });
-      } else {
-        toast({ title: "Creation Failed", description: "Could not create virtual folder. Config message might not have updated. Check Telegram.", variant: "destructive" });
-      }
-    } catch (error: any) {
-      toast({ title: "Error Creating Folder", description: error.message || "An unknown error occurred.", variant: "destructive" });
-    } finally {
-      setIsProcessingVirtualFolder(false);
-      setIsCreateVirtualFolderDialogOpen(false);
-    }
   };
 
   const handleNavigateVirtualPath = (path: string) => {
@@ -1409,49 +1397,52 @@ export default function Home() {
     setIsDeleteItemDialogOpen(true);
   };
 
-  const confirmDeleteItem = async () => {
-    if (!itemToDelete) return;
-    setIsProcessingDeletion(true);
-
-    try {
-      if (itemToDelete.type === 'file') {
-        const { file, parentInputPeer } = itemToDelete;
-        if (!parentInputPeer) throw new Error("InputPeer missing for file deletion.");
-        const success = await telegramService.deleteTelegramMessages(parentInputPeer, [file.messageId]);
-        if (success) {
-          toast({ title: "File Deleted", description: `File "${file.name}" has been deleted.` });
-          setCurrentChatMedia(prev => prev.filter(f => f.id !== file.id));
-          // If it was a VFS file, its caption is gone, so it's effectively removed from VFS
-        } else {
-          throw new Error("Telegram service failed to delete the message.");
-        }
-      } else if (itemToDelete.type === 'virtualFolder') {
-        const { path, name, parentInputPeer } = itemToDelete;
-        if (!parentInputPeer) throw new Error("InputPeer missing for virtual folder deletion.");
-
-        const updatedConfig = await telegramService.removeVirtualFolderFromCloudChannel(parentInputPeer, path);
-        if (updatedConfig) {
-          toast({ title: "Virtual Folder Deleted", description: `Folder "${name}" has been removed from the virtual structure.` });
-          setSelectedFolder(prev => prev ? { ...prev, cloudConfig: updatedConfig } : null);
-          setAppManagedCloudFolders(prevList =>
-            prevList.map(cf =>
-              cf.id === selectedFolder?.id ? { ...cf, cloudConfig: updatedConfig } : cf
-            )
-          );
-        } else {
-          throw new Error("Failed to update cloud configuration after deleting virtual folder.");
-        }
-      }
-    } catch (error: any) {
-      handleApiError(error, `Error Deleting ${itemToDelete.type === 'file' ? 'File' : 'Virtual Folder'}`, error.message || "Could not complete deletion.");
-    } finally {
-      setIsProcessingDeletion(false);
-      setIsDeleteItemDialogOpen(false);
-      setItemToDelete(null);
+  const fetchDataForActiveFilter = useCallback((isLoadingMore: boolean) => {
+    if (!isConnected || !activeFilterDetails) {
+       return;
     }
-  };
+
+    const currentFilterId = activeFilterDetails.id;
+    const filterType = activeFilterDetails._;
+
+    if (filterType === 'dialogFilterDefault') {
+      fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, isLoadingMore);
+    } else if (filterType === 'dialogFilter') {
+      fetchAndCacheDialogs(currentFilterId, isLoadingMore, currentFilterId);
+    } else if (filterType === 'dialogFilterChatlist') {
+      fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, isLoadingMore);
+    }
+  }, [isConnected, activeFilterDetails, fetchAndCacheDialogs]);
+
+  const loadMoreDisplayedChats = useCallback(async () => {
+    if (!activeFilterDetails || isLoadingDisplayedChats) return;
+
+    const filterType = activeFilterDetails._;
+    const currentFilterId = activeFilterDetails.id;
+    const cachedEntry = chatDataCache.get(currentFilterId);
+    const masterCacheEntry = chatDataCache.get(ALL_CHATS_FILTER_ID);
+
+    if (filterType === 'dialogFilterDefault') {
+        if (masterCacheEntry?.pagination.hasMore && !masterCacheEntry.isLoading) {
+            fetchDataForActiveFilter(true);
+        }
+    } else if (filterType === 'dialogFilter') {
+      if (cachedEntry?.error === 'FOLDER_ID_INVALID_FALLBACK') {
+        if (masterCacheEntry?.pagination.hasMore && !masterCacheEntry.isLoading) {
+          fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, true); // Fetch more for fallback
+        }
+      } else if (cachedEntry?.pagination.hasMore && !cachedEntry.isLoading) {
+        fetchDataForActiveFilter(true); // Fetch more for the specific filter
+      }
+    } else if (filterType === 'dialogFilterChatlist') {
+      if (masterCacheEntry?.pagination.hasMore && !masterCacheEntry.isLoading) {
+        fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, true); // Chatlists filter from All Chats
+      }
+    }
+  }, [activeFilterDetails, isLoadingDisplayedChats, chatDataCache, fetchDataForActiveFilter, fetchAndCacheDialogs]);
 
 
+  // useEffect hooks
   useEffect(() => {
     downloadQueueRef.current = downloadQueue;
   }, [downloadQueue]);
@@ -1459,8 +1450,7 @@ export default function Home() {
   useEffect(() => {
     checkExistingConnection();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
+  }, []); // checkExistingConnection is wrapped in useCallback with its dependencies
 
   useEffect(() => {
     if (isLoadingDialogFilters) {
@@ -1491,14 +1481,13 @@ export default function Home() {
     }
   }, [activeDialogFilterId, dialogFilters, isLoadingDialogFilters, activeFilterDetails]);
 
-
   useEffect(() => {
     if (!isConnected || !activeFilterDetails || isLoadingDialogFilters) {
       return;
     }
+
     const filterIdToFetch = activeFilterDetails.id;
     const isNewFilter = lastFetchedFilterId !== filterIdToFetch;
-
     if (isNewFilter) setCurrentErrorMessage(null);
 
     const filterType = activeFilterDetails._;
@@ -1521,7 +1510,6 @@ export default function Home() {
                                              !cachedEntryForCurrent?.isLoading;
     }
 
-
     if (isNewFilter || isCurrentFilterListEmptyAndNeedsLoad) {
         if (isNewFilter) {
             setDisplayedChats([]);
@@ -1537,7 +1525,6 @@ export default function Home() {
       chatDataCache, masterChatListPaginationForFiltering.hasMore, fetchDataForActiveFilter
   ]);
 
-
   useEffect(() => {
     if (!isConnected || !activeFilterDetails) {
       setIsLoadingDisplayedChats(isConnecting || isLoadingDialogFilters);
@@ -1550,8 +1537,7 @@ export default function Home() {
     const cachedEntryForCurrentFilter = chatDataCache.get(currentFilterId);
     const cachedEntryForAllChats = chatDataCache.get(ALL_CHATS_FILTER_ID);
 
-    if(lastFetchedFilterId !== currentFilterId) setCurrentErrorMessage(null);
-
+    if(lastFetchedFilterId !== currentFilterId && currentFilterId !== undefined) setCurrentErrorMessage(null);
 
     if (filterType === 'dialogFilterDefault') {
       if (cachedEntryForAllChats) {
@@ -1566,7 +1552,7 @@ export default function Home() {
       }
     } else if (filterType === 'dialogFilter') {
       if (cachedEntryForCurrentFilter?.error === 'FOLDER_ID_INVALID_FALLBACK') {
-        setCurrentErrorMessage(`"${activeFilterDetails.title}" couldn't be loaded directly. Showing matching chats from 'All Chats'.`);
+        setCurrentErrorMessage(`"${activeFilterDetails.title}" couldn't be loaded directly. Showing matching chats from 'All Chats'. Some older chats might not appear until 'All Chats' is loaded further.`);
 
         const masterCacheIsEmptyOrStale = !cachedEntryForAllChats || (cachedEntryForAllChats.folders.length === 0 && cachedEntryForAllChats.pagination.hasMore);
         const masterCacheIsNotLoading = !cachedEntryForAllChats?.isLoading;
@@ -1643,7 +1629,6 @@ export default function Home() {
   }, [
       isConnected, activeFilterDetails, chatDataCache, peerToKey, isConnecting, isLoadingDialogFilters, lastFetchedFilterId, fetchAndCacheDialogs
   ]);
-
 
   useEffect(() => {
     const processQueue = async () => {
@@ -1756,7 +1741,6 @@ export default function Home() {
                 if (actualLimitForApi === 0 && bytesNeededForFileDirect > 0 && idealRequestSizeDirect > 0) {
                     actualLimitForApi = KB_1;
                 }
-
 
                 if (actualLimitForApi <= 0) {
                    if (upToDateItem.downloadedBytes >= upToDateItem.totalSizeInBytes) {
@@ -1962,7 +1946,6 @@ export default function Home() {
         activeDownloadsRef.current.clear();
     };
   }, []);
-
 
   useEffect(() => {
     return () => {
