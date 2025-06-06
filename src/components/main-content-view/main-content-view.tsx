@@ -45,11 +45,12 @@ const TABS_CONFIG = [
 ];
 
 const DOCUMENT_EXTENSIONS = ['.pdf', '.docx', '.doc', '.txt', '.pptx', '.ppt'];
-
+const IDENTIFICATION_MESSAGE_ID = 2; 
+const CONFIG_MESSAGE_ID = 3;
 
 export function MainContentView({
   folderName,
-  files,
+  files, // These are ALL files for the channel if isCloudChannel is true
   isLoading,
   isLoadingMoreMedia,
   hasMore,
@@ -92,11 +93,18 @@ export function MainContentView({
     const normalizedCurrentPath = normalizePath(currentVirtualPath);
     const folderEntriesFromConfig = getEntriesForPath(cloudConfig, normalizedCurrentPath);
     
-    const displayedFolders: { type: 'folder'; name: string; entry: CloudChannelConfigEntry }[] = [];
+    const displayedFolders: { type: 'folder'; name: string; entry: CloudChannelConfigEntry, itemCount: number }[] = [];
     if (folderEntriesFromConfig) {
       Object.entries(folderEntriesFromConfig).forEach(([name, entry]) => {
         if (entry.type === 'folder') {
-          displayedFolders.push({ type: 'folder', name, entry });
+          const virtualFolderPath = normalizePath(normalizedCurrentPath + name);
+          const subFoldersCount = Object.values(entry.entries || {}).filter(e => e.type === 'folder').length;
+          const filesInThisVirtualFolderCount = files.filter(f => {
+            const vfsPath = parseVfsPathFromCaption(f.caption);
+            return vfsPath === virtualFolderPath && f.messageId !== CONFIG_MESSAGE_ID && f.messageId !== IDENTIFICATION_MESSAGE_ID;
+          }).length;
+          const totalVirtualItems = subFoldersCount + filesInThisVirtualFolderCount;
+          displayedFolders.push({ type: 'folder', name, entry, itemCount: totalVirtualItems });
         }
       });
     }
@@ -105,8 +113,8 @@ export function MainContentView({
     files.forEach(fileMessage => {
       const vfsPath = parseVfsPathFromCaption(fileMessage.caption);
       if (vfsPath === normalizedCurrentPath) {
-        if (fileMessage.messageId === CONFIG_MESSAGE_ID && fileMessage.caption?.includes(CLOUDIFIER_APP_SIGNATURE_V1)) {
-            return;
+        if (fileMessage.messageId === CONFIG_MESSAGE_ID || fileMessage.messageId === IDENTIFICATION_MESSAGE_ID) {
+            return; // Do not display config/id messages as files
         }
         if (fileMessage.telegramMessage && (fileMessage.telegramMessage.media || (fileMessage.type !== 'unknown' && fileMessage.totalSizeInBytes && fileMessage.totalSizeInBytes > 0))) {
              displayedFiles.push({ type: 'file', cloudFile: fileMessage });
@@ -238,7 +246,7 @@ export function MainContentView({
              <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center">
                 <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
                 <p className="text-lg">Cloud configuration not found or invalid for this channel.</p>
-                <p className="text-sm">Ensure it's a valid Cloudifier channel and message ID 2 contains the config.</p>
+                <p className="text-sm">Ensure it's a valid Cloudifier channel and message ID {CONFIG_MESSAGE_ID} contains the config, and ID {IDENTIFICATION_MESSAGE_ID} has the ID text.</p>
             </div>
         ) : vfsItems.length === 0 && !isLoading ? (
             <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center">
@@ -250,10 +258,18 @@ export function MainContentView({
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
                 {vfsItems.map((item, index) => {
                     if (item.type === 'folder') {
+                    const syntheticFolder: CloudFolder = { // Create a minimal CloudFolder structure
+                        id: item.name, // Use name as ID for key, actual VFS path is used for navigation
+                        name: item.name,
+                        files: [], // Not used for display count for virtual folders
+                        folders: [], // Not used for display count for virtual folders
+                        // cloudConfig is not strictly needed by ContentFolderItem if itemCountOverride is used
+                    };
                     return (
                         <ContentFolderItem
                         key={`vfs-folder-${item.name}-${index}`}
-                        folder={{ id: item.name, name: item.name, files: [], folders: [], cloudConfig: { root_entries: item.entry.entries || {}, ...cloudConfig! } }}
+                        folder={syntheticFolder}
+                        itemCountOverride={item.itemCount} // Pass the pre-calculated item count
                         style={{ animationDelay: `${index * 30}ms` }}
                         onClick={() => onNavigateVirtualPath(normalizePath(currentVirtualPath + item.name))}
                         />
@@ -469,6 +485,7 @@ export function MainContentView({
   );
 }
 
-const CONFIG_MESSAGE_ID = 2; 
-const CLOUDIFIER_APP_SIGNATURE_V1 = "TELEGRAM_CLOUDIFIER_V1.0"; 
+// const CONFIG_MESSAGE_ID = 2; // Now defined globally in this file
+// const CLOUDIFIER_APP_SIGNATURE_V1 = "TELEGRAM_CLOUDIFIER_V1.0"; // No longer needed here, handled in service
+
 

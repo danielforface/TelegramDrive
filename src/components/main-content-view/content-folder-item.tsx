@@ -8,13 +8,17 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 
 interface ContentFolderItemProps {
-  folder: CloudFolder;
+  folder: CloudFolder; // For regular folders, or a synthetic one for virtuals
   style?: React.CSSProperties;
   onClick?: () => void; 
+  itemCountOverride?: number; // New prop
 }
 
-export function ContentFolderItem({ folder, style, onClick }: ContentFolderItemProps) {
-  const totalItems = folder.files.length + folder.folders.length;
+export function ContentFolderItem({ folder, style, onClick, itemCountOverride }: ContentFolderItemProps) {
+  const totalItems = itemCountOverride !== undefined 
+    ? itemCountOverride 
+    : (folder.files?.length || 0) + (folder.folders?.length || 0);
+    
   const folderTypeHint = folder.name.toLowerCase().includes("image") ? "gallery folder" : 
                          folder.name.toLowerCase().includes("video") ? "video library" :
                          folder.name.toLowerCase().includes("audio") ? "music collection" :
@@ -45,9 +49,10 @@ export function ContentFolderItem({ folder, style, onClick }: ContentFolderItemP
       <CardFooter className="p-3 w-full border-t bg-muted/20 flex-shrink-0">
         <Badge variant="outline" className="text-xs w-full justify-center truncate">
           {totalItems === 0 && "Empty"}
-          {totalItems > 0 && `${totalItems} item${totalItems > 1 ? 's' : ''}`}
+          {totalItems > 0 && `${totalItems} item${totalItems !== 1 ? 's' : ''}`}
         </Badge>
       </CardFooter>
     </Card>
   );
 }
+
