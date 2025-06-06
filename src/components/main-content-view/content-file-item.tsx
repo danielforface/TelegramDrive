@@ -3,8 +3,8 @@
 
 import React, { forwardRef, type MouseEvent } from "react";
 import type { CloudFile } from "@/types";
-import { FileText, Image as ImageIcon, Video, FileAudio, FileQuestion, Download, Info, Eye, PlayCircle, Loader2 } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
+import { FileText, Image as ImageIcon, Video, FileAudio, FileQuestion, Download, Info, Eye, PlayCircle, Loader2, Trash2 } from "lucide-react";
+import { Card } from "@/components/ui/card"; // Removed CardContent, CardFooter
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import {
@@ -24,6 +24,7 @@ interface ContentFileItemProps {
   onPlayVideoClick: (file: CloudFile) => void;
   isPreparingStream?: boolean;
   preparingStreamForFileId?: string | null;
+  onDeleteFile: (file: CloudFile) => void; // New prop
 }
 
 const FileTypeIcon = ({ type, name, dataAiHint }: { type: CloudFile['type'], name: string, dataAiHint?: string }) => {
@@ -46,22 +47,22 @@ const FileTypeIcon = ({ type, name, dataAiHint }: { type: CloudFile['type'], nam
 };
 
 export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
-  ({ file, style, onDetailsClick, onQueueDownloadClick, onViewImageClick, onPlayVideoClick, isPreparingStream, preparingStreamForFileId }, ref) => {
-    
+  ({ file, style, onDetailsClick, onQueueDownloadClick, onViewImageClick, onPlayVideoClick, isPreparingStream, preparingStreamForFileId, onDeleteFile }, ref) => {
+
     const handleCardClick = (e: MouseEvent) => {
-      const targetElement = e.target as HTMLElement;
-      if (targetElement.closest('[role="menuitem"], [data-radix-dropdown-menu-trigger]')) {
+      // Prevent card click if dropdown trigger or item was clicked
+      if ((e.target as HTMLElement).closest('[data-radix-dropdown-menu-trigger]') || (e.target as HTMLElement).closest('[role="menuitem"]')) {
         return;
       }
       onDetailsClick(file);
     };
 
     const handleDropdownSelect = (event: Event) => {
-        event.preventDefault(); 
+        event.preventDefault(); // Prevent triggering card click
     };
 
     const isCurrentlyPreparingThisFile = isPreparingStream && preparingStreamForFileId === file.id;
-    
+
     return (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -69,10 +70,11 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
             ref={ref}
             className={cn(
               "flex flex-col h-40 w-full overflow-hidden rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200 animate-item-enter cursor-pointer",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 bg-card" 
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 bg-card"
             )}
             style={style}
             onClick={handleCardClick}
+            onContextMenu={(e) => e.stopPropagation()} // Allow dropdown trigger to handle context menu
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 if (!(e.target as HTMLElement).closest('[data-radix-dropdown-menu-trigger]')) {
@@ -80,7 +82,7 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
                 }
               }
             }}
-            tabIndex={0} 
+            tabIndex={0}
             aria-label={`File: ${file.name}, Type: ${file.type}`}
           >
             <TooltipProvider delayDuration={300}>
@@ -109,31 +111,33 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
             <Download className="mr-2 h-4 w-4" />
             <span>Download</span>
           </DropdownMenuItem>
-          {file.type === 'image' && file.url && ( // Only show if URL exists, or adapt for blob later
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onViewImageClick(file); }}>
-                <Eye className="mr-2 h-4 w-4" />
-                <span>View Image</span>
-              </DropdownMenuItem>
-            </>
+          {file.type === 'image' && file.url && (
+            <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onViewImageClick(file); }}>
+              <Eye className="mr-2 h-4 w-4" />
+              <span>View Image</span>
+            </DropdownMenuItem>
           )}
-          {file.type === 'video' && ( // Keep video play option always, will attempt stream if no direct URL
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem 
-                onClick={(e) => { e.stopPropagation(); onPlayVideoClick(file); }}
-                disabled={isCurrentlyPreparingThisFile}
-              >
-                {isCurrentlyPreparingThisFile ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <PlayCircle className="mr-2 h-4 w-4" />
-                )}
-                <span>{isCurrentlyPreparingThisFile ? "Preparing..." : "Play Video"}</span>
-              </DropdownMenuItem>
-            </>
+          {file.type === 'video' && (
+            <DropdownMenuItem
+              onClick={(e) => { e.stopPropagation(); onPlayVideoClick(file); }}
+              disabled={isCurrentlyPreparingThisFile}
+            >
+              {isCurrentlyPreparingThisFile ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <PlayCircle className="mr-2 h-4 w-4" />
+              )}
+              <span>{isCurrentlyPreparingThisFile ? "Preparing..." : "Play Video"}</span>
+            </DropdownMenuItem>
           )}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onClick={(e) => { e.stopPropagation(); onDeleteFile(file); }}
+            className="text-destructive focus:text-destructive focus:bg-destructive/10"
+          >
+            <Trash2 className="mr-2 h-4 w-4" />
+            <span>Delete File</span>
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     );

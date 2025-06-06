@@ -2,21 +2,28 @@
 "use client";
 
 import * as React from "react";
-import type { CloudFile, CloudFolder, CloudChannelConfigV1, CloudChannelConfigEntry } from "@/types";
+import type { CloudFile, CloudFolder, CloudChannelConfigV1, CloudChannelConfigEntry, InputPeer } from "@/types";
 import { ContentFileItem } from "./content-file-item";
 import { ContentFolderItem } from "./content-folder-item";
 import { Button } from "@/components/ui/button";
-import { Search, FolderOpen, Loader2, CalendarDays, XCircle as ClearIcon, UploadCloud, Cloud, FolderPlus, ArrowUpCircle, ChevronRight } from "lucide-react";
+import { Search, FolderOpen, Loader2, CalendarDays, XCircle as ClearIcon, UploadCloud, Cloud, FolderPlus, ArrowUpCircle, ChevronRight, MoreVertical, FolderUp, FolderPlus as CreateFolderIcon, ArrowLeftCircle, Trash2 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { useState, useMemo, useEffect } from "react";
 import { format, isToday, isYesterday, startOfDay, isSameDay, isSameMonth } from "date-fns";
 import { parseVfsPathFromCaption, getEntriesForPath, normalizePath, getParentPath } from "@/lib/vfsUtils";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface MainContentViewProps {
   folderName: string | null;
-  files: CloudFile[]; 
+  files: CloudFile[];
   isLoading: boolean;
   isLoadingMoreMedia?: boolean;
   hasMore: boolean;
@@ -33,6 +40,9 @@ interface MainContentViewProps {
   currentVirtualPath: string;
   onNavigateVirtualPath: (path: string) => void;
   onOpenCreateVirtualFolderDialog: (parentPath: string) => void;
+  onDeleteFile: (file: CloudFile) => void; // New prop
+  onDeleteVirtualFolder: (folderPath: string, folderName: string, parentInputPeer?: InputPeer) => void; // New prop
+  selectedFolderInputPeer?: InputPeer | null; // New prop
 }
 
 const TABS_CONFIG = [
@@ -45,12 +55,12 @@ const TABS_CONFIG = [
 ];
 
 const DOCUMENT_EXTENSIONS = ['.pdf', '.docx', '.doc', '.txt', '.pptx', '.ppt'];
-const IDENTIFICATION_MESSAGE_ID = 2; 
+const IDENTIFICATION_MESSAGE_ID = 2;
 const CONFIG_MESSAGE_ID = 3;
 
 export function MainContentView({
   folderName,
-  files, // These are ALL files for the channel if isCloudChannel is true
+  files,
   isLoading,
   isLoadingMoreMedia,
   hasMore,
@@ -67,6 +77,9 @@ export function MainContentView({
   currentVirtualPath,
   onNavigateVirtualPath,
   onOpenCreateVirtualFolderDialog,
+  onDeleteFile,
+  onDeleteVirtualFolder,
+  selectedFolderInputPeer,
 }: MainContentViewProps) {
   const [activeTab, setActiveTab] = useState("all");
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
@@ -92,15 +105,16 @@ export function MainContentView({
 
     const normalizedCurrentPath = normalizePath(currentVirtualPath);
     const folderEntriesFromConfig = getEntriesForPath(cloudConfig, normalizedCurrentPath);
-    
+
     const displayedFolders: { type: 'folder'; name: string; entry: CloudChannelConfigEntry, itemCount: number }[] = [];
     if (folderEntriesFromConfig) {
       Object.entries(folderEntriesFromConfig).forEach(([name, entry]) => {
         if (entry.type === 'folder') {
-          const virtualFolderPath = normalizePath(normalizedCurrentPath + name);
+          const virtualFolderPath = normalizePath(normalizedCurrentPath + name + '/'); // Ensure trailing slash for matching
           const subFoldersCount = Object.values(entry.entries || {}).filter(e => e.type === 'folder').length;
           const filesInThisVirtualFolderCount = files.filter(f => {
             const vfsPath = parseVfsPathFromCaption(f.caption);
+            // Ensure exact match for folder path, not just prefix
             return vfsPath === virtualFolderPath && f.messageId !== CONFIG_MESSAGE_ID && f.messageId !== IDENTIFICATION_MESSAGE_ID;
           }).length;
           const totalVirtualItems = subFoldersCount + filesInThisVirtualFolderCount;
@@ -114,7 +128,7 @@ export function MainContentView({
       const vfsPath = parseVfsPathFromCaption(fileMessage.caption);
       if (vfsPath === normalizedCurrentPath) {
         if (fileMessage.messageId === CONFIG_MESSAGE_ID || fileMessage.messageId === IDENTIFICATION_MESSAGE_ID) {
-            return; // Do not display config/id messages as files
+            return;
         }
         if (fileMessage.telegramMessage && (fileMessage.telegramMessage.media || (fileMessage.type !== 'unknown' && fileMessage.totalSizeInBytes && fileMessage.totalSizeInBytes > 0))) {
              displayedFiles.push({ type: 'file', cloudFile: fileMessage });
@@ -211,173 +225,214 @@ export function MainContentView({
     );
   };
 
-
-  if (isCloudChannel) {
-    return (
-      <div className="space-y-4 h-full flex flex-col p-1 md:p-2 lg:p-4">
-        <div className="flex-shrink-0">
-            <h1 className="text-3xl font-bold text-primary mb-1 pb-2 border-b flex items-center">
-                <Cloud className="w-8 h-8 mr-3 text-primary/80" />
-                {folderName}
-            </h1>
-            {renderBreadcrumbs()}
-        </div>
-
-        <div className="flex flex-col sm:flex-row gap-3 mb-3 items-center flex-wrap flex-shrink-0">
-           {currentVirtualPath !== '/' && (
-             <Button variant="outline" onClick={() => onNavigateVirtualPath(getParentPath(currentVirtualPath))} className="w-full sm:w-auto">
-               <ArrowUpCircle className="mr-2 h-4 w-4" /> Up
-             </Button>
-           )}
-           <Button variant="outline" onClick={onOpenUploadDialog} className="w-full sm:w-auto">
-            <UploadCloud className="mr-2 h-4 w-4" /> Upload File
-          </Button>
-           <Button variant="outline" onClick={() => onOpenCreateVirtualFolderDialog(currentVirtualPath)} className="w-full sm:w-auto">
-            <FolderPlus className="mr-2 h-4 w-4" /> Create Folder
-          </Button>
-        </div>
-
-        {isLoading && vfsItems.length === 0 ? (
-            <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center">
-                <Loader2 className="animate-spin h-12 w-12 text-primary mb-4" />
-                <p className="text-lg">Loading cloud storage contents...</p>
-            </div>
-        ) : !cloudConfig && !isLoading ? (
-             <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center">
-                <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
-                <p className="text-lg">Cloud configuration not found or invalid for this channel.</p>
-                <p className="text-sm">Ensure it's a valid Cloudifier channel and message ID {CONFIG_MESSAGE_ID} contains the config, and ID {IDENTIFICATION_MESSAGE_ID} has the ID text.</p>
-            </div>
-        ) : vfsItems.length === 0 && !isLoading ? (
-            <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center">
-                <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
-                <p className="text-lg">This folder is empty.</p>
-            </div>
+  const mainContent = (
+    <div className="flex-grow overflow-y-auto space-y-0 pr-1 pb-4">
+      {isCloudChannel ? (
+        // Cloud Channel VFS View
+        vfsItems.length === 0 && !isLoading ? (
+          <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center py-10">
+            <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
+            <p className="text-lg">This folder is empty.</p>
+          </div>
         ) : (
-            <div className="flex-grow overflow-y-auto space-y-0 pr-1 pb-4">
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-                {vfsItems.map((item, index) => {
-                    if (item.type === 'folder') {
-                    const syntheticFolder: CloudFolder = { // Create a minimal CloudFolder structure
-                        id: item.name, // Use name as ID for key, actual VFS path is used for navigation
-                        name: item.name,
-                        files: [], // Not used for display count for virtual folders
-                        folders: [], // Not used for display count for virtual folders
-                        // cloudConfig is not strictly needed by ContentFolderItem if itemCountOverride is used
-                    };
-                    return (
-                        <ContentFolderItem
-                        key={`vfs-folder-${item.name}-${index}`}
-                        folder={syntheticFolder}
-                        itemCountOverride={item.itemCount} // Pass the pre-calculated item count
-                        style={{ animationDelay: `${index * 30}ms` }}
-                        onClick={() => onNavigateVirtualPath(normalizePath(currentVirtualPath + item.name))}
-                        />
-                    );
-                    } else if (item.type === 'file') {
-                    return (
-                        <ContentFileItem
-                        key={`vfs-file-${item.cloudFile.id}-${index}`}
-                        file={item.cloudFile}
-                        style={{ animationDelay: `${index * 30}ms` }}
-                        onDetailsClick={onFileDetailsClick}
-                        onQueueDownloadClick={onQueueDownloadClick}
-                        onViewImageClick={onFileViewImageClick}
-                        onPlayVideoClick={onFilePlayVideoClick}
-                        isPreparingStream={isPreparingStream && preparingStreamForFileId === item.cloudFile.id}
-                        preparingStreamForFileId={preparingStreamForFileId}
-                        />
-                    );
-                    }
-                    return null;
-                })}
-                </div>
-                 {isLoadingMoreMedia && vfsItems.length > 0 && (
-                    <div className="flex justify-center items-center p-4 mt-4">
-                    <Loader2 className="animate-spin h-8 w-8 text-primary" />
-                    <p className="ml-3 text-muted-foreground">Loading more content...</p>
-                    </div>
-                )}
-                {!isLoading && !isLoadingMoreMedia && hasMore && vfsItems.length > 0 && onLoadMoreMedia && (
-                    <div className="col-span-full flex justify-center py-4 mt-4">
-                    <Button
-                        onClick={onLoadMoreMedia}
-                        disabled={isLoadingMoreMedia}
-                        variant="outline"
-                    >
-                        {isLoadingMoreMedia && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                        Load More
-                    </Button>
-                    </div>
-                )}
-                {!isLoading && !isLoadingMoreMedia && !hasMore && vfsItems.length > 0 && (
-                    <p className="text-center text-sm text-muted-foreground py-4 mt-4">No more content to load in this folder.</p>
-                )}
-            </div>
-        )}
-      </div>
-    );
-  }
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+            {vfsItems.map((item, index) => {
+              if (item.type === 'folder') {
+                const syntheticFolder: CloudFolder = {
+                  id: item.name,
+                  name: item.name,
+                  files: [],
+                  folders: [],
+                  isAppManagedCloud: true,
+                  vfsPath: normalizePath(currentVirtualPath + item.name + '/')
+                };
+                return (
+                    <ContentFolderItem
+                      key={`vfs-folder-${item.name}-${index}`}
+                      folder={syntheticFolder}
+                      itemCountOverride={item.itemCount}
+                      style={{ animationDelay: `${index * 30}ms` }}
+                      onClick={() => onNavigateVirtualPath(normalizePath(currentVirtualPath + item.name + '/'))}
+                      onDelete={() => onDeleteVirtualFolder(normalizePath(currentVirtualPath + item.name + '/'), item.name, selectedFolderInputPeer)}
+                      onCreateFolderInside={() => onOpenCreateVirtualFolderDialog(normalizePath(currentVirtualPath + item.name + '/'))}
+                      isCloudChannelContext={true}
+                    />
+                );
+              } else if (item.type === 'file') {
+                return (
+                    <ContentFileItem
+                      key={`vfs-file-${item.cloudFile.id}-${index}`}
+                      file={item.cloudFile}
+                      style={{ animationDelay: `${index * 30}ms` }}
+                      onDetailsClick={onFileDetailsClick}
+                      onQueueDownloadClick={onQueueDownloadClick}
+                      onViewImageClick={onFileViewImageClick}
+                      onPlayVideoClick={onFilePlayVideoClick}
+                      isPreparingStream={isPreparingStream && preparingStreamForFileId === item.cloudFile.id}
+                      preparingStreamForFileId={preparingStreamForFileId}
+                      onDeleteFile={() => onDeleteFile(item.cloudFile)}
+                    />
+                );
+              }
+              return null;
+            })}
+          </div>
+        )
+      ) : (
+        // Regular Chat Media View
+        displayItemsRegular.length > 0 ? (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+            {displayItemsRegular.map((file, index) => {
+              if (!file.timestamp) return null;
+              const fileDate = new Date(file.timestamp * 1000);
+              let dayHeader = null;
+              let monthHeader = null;
 
-  // Regular Chat Media View
-  return (
+              if (!selectedDate) {
+                if (!lastDisplayedMonth || !isSameMonth(fileDate, lastDisplayedMonth)) {
+                  monthHeader = (
+                    <div key={`month-${file.id}`} className="col-span-full text-lg font-semibold text-primary py-3 mt-4 mb-2 border-b-2 border-primary/30">
+                      {format(fileDate, "MMMM yyyy")}
+                    </div>
+                  );
+                  lastDisplayedMonth = fileDate;
+                  lastDisplayedDay = null;
+                }
+                if (!lastDisplayedDay || !isSameDay(fileDate, lastDisplayedDay)) {
+                  let dayLabel = isToday(fileDate) ? "Today" : isYesterday(fileDate) ? "Yesterday" : format(fileDate, "eeee, MMMM d");
+                  dayHeader = (
+                    <div key={`day-${file.id}`} className="col-span-full text-sm font-medium text-muted-foreground py-2 mt-2 mb-1 border-b border-border">
+                      {dayLabel}
+                    </div>
+                  );
+                  lastDisplayedDay = fileDate;
+                }
+              }
+              const itemContent = (
+                  <ContentFileItem
+                    key={`${file.id}-${activeTab}-${selectedDate ? format(selectedDate, "yyyy-MM-dd") : 'all'}-${index}`}
+                    file={file}
+                    style={{ animationDelay: `${index * 30}ms` }}
+                    onDetailsClick={onFileDetailsClick}
+                    onQueueDownloadClick={onQueueDownloadClick}
+                    onViewImageClick={onFileViewImageClick}
+                    onPlayVideoClick={onFilePlayVideoClick}
+                    isPreparingStream={isPreparingStream && preparingStreamForFileId === file.id}
+                    preparingStreamForFileId={preparingStreamForFileId}
+                    onDeleteFile={() => onDeleteFile(file)}
+                  />
+              );
+              return (
+                <React.Fragment key={`fragment-${file.id}`}>
+                  {monthHeader}
+                  {dayHeader}
+                  {itemContent}
+                </React.Fragment>
+              );
+            })}
+          </div>
+        ) : (
+           <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center py-10">
+              <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
+              <p className="text-lg">No media items to display for the current selection.</p>
+           </div>
+        )
+      )}
+
+      {/* Loading Indicators for both views */}
+      {isLoadingMoreMedia && (isCloudChannel ? vfsItems.length > 0 : displayItemsRegular.length > 0) && (
+        <div className="flex justify-center items-center p-4 mt-4">
+          <Loader2 className="animate-spin h-8 w-8 text-primary" />
+          <p className="ml-3 text-muted-foreground">Loading more content...</p>
+        </div>
+      )}
+      {!isLoading && !isLoadingMoreMedia && hasMore && (isCloudChannel ? vfsItems.length > 0 : displayItemsRegular.length > 0) && onLoadMoreMedia && (
+        <div className="col-span-full flex justify-center py-4 mt-4">
+          <Button onClick={onLoadMoreMedia} disabled={isLoadingMoreMedia} variant="outline">
+            {isLoadingMoreMedia && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Load More
+          </Button>
+        </div>
+      )}
+      {!isLoading && !isLoadingMoreMedia && !hasMore && (isCloudChannel ? vfsItems.length > 0 : displayItemsRegular.length > 0) && (
+        <p className="text-center text-sm text-muted-foreground py-4 mt-4">No more content to load.</p>
+      )}
+    </div>
+  );
+
+
+  const viewContent = (
     <div className="space-y-4 h-full flex flex-col p-1 md:p-2 lg:p-4">
       <div className="flex-shrink-0">
-        <h1 className="text-3xl font-bold text-primary mb-3 pb-2 border-b">{folderName}</h1>
-        <div className="flex flex-col sm:flex-row gap-3 mb-3 items-center flex-wrap">
-          <Button variant="outline" onClick={handleSearchButtonClick} className="w-full sm:w-auto">
-            <Search className="mr-2 h-4 w-4" /> Search
-          </Button>
-
-          <Popover open={isCalendarOpen} onOpenChange={setIsCalendarOpen}>
-            <PopoverTrigger asChild>
-              <Button
-                variant={"outline"}
-                className="w-full sm:w-auto justify-start text-left font-normal min-w-[200px]"
-              >
-                <CalendarDays className="mr-2 h-4 w-4" />
-                {selectedDate ? format(selectedDate, "PPP") : <span>Filter by date</span>}
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-auto p-0" align="start">
-              <Calendar
-                mode="single"
-                selected={selectedDate}
-                onSelect={(date) => {
-                    setSelectedDate(date || undefined);
-                    setIsCalendarOpen(false);
-                }}
-                initialFocus
-              />
-            </PopoverContent>
-          </Popover>
-          {selectedDate && (
-            <Button variant="ghost" size="icon" onClick={() => setSelectedDate(undefined)} title="Clear date filter">
-              <ClearIcon className="h-5 w-5 text-muted-foreground hover:text-destructive" />
-            </Button>
-          )}
-           <Button variant="outline" onClick={onOpenUploadDialog} className="w-full sm:w-auto">
-            <UploadCloud className="mr-2 h-4 w-4" /> Upload File
-          </Button>
-
-          <div className="flex-grow"></div> {/* Spacer */}
-          <Tabs defaultValue="all" onValueChange={setActiveTab} value={activeTab} className="w-full sm:w-auto">
-            <TabsList className="grid w-full grid-cols-3 sm:grid-cols-none sm:inline-flex h-auto">
-              {TABS_CONFIG.map(tab => (
-                <TabsTrigger key={tab.value} value={tab.value} className="px-3 py-1.5 text-xs sm:text-sm">
-                  {tab.label}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
-        </div>
+          <h1 className="text-3xl font-bold text-primary mb-1 pb-2 border-b flex items-center">
+              {isCloudChannel ? <Cloud className="w-8 h-8 mr-3 text-primary/80" /> : null}
+              {folderName}
+          </h1>
+          {isCloudChannel && renderBreadcrumbs()}
       </div>
 
-      {isLoading && displayItemsRegular.length === 0 ? (
-         <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center">
-          <Loader2 className="animate-spin h-12 w-12 text-primary mb-4" />
-          <p className="text-lg">Loading media...</p>
-        </div>
+      <div className="flex flex-col sm:flex-row gap-3 mb-3 items-center flex-wrap flex-shrink-0">
+         {isCloudChannel ? (
+           <>
+             {currentVirtualPath !== '/' && (
+               <Button variant="outline" onClick={() => onNavigateVirtualPath(getParentPath(currentVirtualPath))} className="w-full sm:w-auto">
+                 <FolderUp className="mr-2 h-4 w-4" /> Up
+               </Button>
+             )}
+             <Button variant="outline" onClick={onOpenUploadDialog} className="w-full sm:w-auto">
+              <UploadCloud className="mr-2 h-4 w-4" /> Upload File
+            </Button>
+             <Button variant="outline" onClick={() => onOpenCreateVirtualFolderDialog(currentVirtualPath)} className="w-full sm:w-auto">
+              <FolderPlus className="mr-2 h-4 w-4" /> Create Folder
+            </Button>
+           </>
+         ) : (
+            <>
+              <Button variant="outline" onClick={handleSearchButtonClick} className="w-full sm:w-auto">
+                <Search className="mr-2 h-4 w-4" /> Search
+              </Button>
+              <Popover open={isCalendarOpen} onOpenChange={setIsCalendarOpen}>
+                <PopoverTrigger asChild>
+                  <Button variant={"outline"} className="w-full sm:w-auto justify-start text-left font-normal min-w-[200px]">
+                    <CalendarDays className="mr-2 h-4 w-4" />
+                    {selectedDate ? format(selectedDate, "PPP") : <span>Filter by date</span>}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar mode="single" selected={selectedDate} onSelect={(date) => { setSelectedDate(date || undefined); setIsCalendarOpen(false); }} initialFocus />
+                </PopoverContent>
+              </Popover>
+              {selectedDate && (
+                <Button variant="ghost" size="icon" onClick={() => setSelectedDate(undefined)} title="Clear date filter">
+                  <ClearIcon className="h-5 w-5 text-muted-foreground hover:text-destructive" />
+                </Button>
+              )}
+              <Button variant="outline" onClick={onOpenUploadDialog} className="w-full sm:w-auto">
+                <UploadCloud className="mr-2 h-4 w-4" /> Upload File
+              </Button>
+            </>
+         )}
+        {!isCloudChannel && (
+          <>
+            <div className="flex-grow"></div>
+            <Tabs defaultValue="all" onValueChange={setActiveTab} value={activeTab} className="w-full sm:w-auto">
+              <TabsList className="grid w-full grid-cols-3 sm:grid-cols-none sm:inline-flex h-auto">
+                {TABS_CONFIG.map(tab => (
+                  <TabsTrigger key={tab.value} value={tab.value} className="px-3 py-1.5 text-xs sm:text-sm">
+                    {tab.label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+          </>
+        )}
+      </div>
+
+      {isLoading && (isCloudChannel ? vfsItems.length === 0 : displayItemsRegular.length === 0) ? (
+          <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center">
+              <Loader2 className="animate-spin h-12 w-12 text-primary mb-4" />
+              <p className="text-lg">{isCloudChannel ? "Loading cloud storage contents..." : "Loading media..."}</p>
+          </div>
       ) : noResultsForFilter ? (
         <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center">
           <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
@@ -392,100 +447,33 @@ export function MainContentView({
           <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
           <p className="text-lg">This chat contains no media items.</p>
         </div>
-      ) : (
-        <div className="flex-grow overflow-y-auto space-y-0 pr-1 pb-4">
-          {displayItemsRegular.length > 0 ? (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-              {displayItemsRegular.map((file, index) => {
-                if (!file.timestamp) return null;
-                const fileDate = new Date(file.timestamp * 1000);
-                let dayHeader = null;
-                let monthHeader = null;
-
-                if (!selectedDate) { 
-                  if (!lastDisplayedMonth || !isSameMonth(fileDate, lastDisplayedMonth)) {
-                    monthHeader = (
-                      <div key={`month-${file.id}`} className="col-span-full text-lg font-semibold text-primary py-3 mt-4 mb-2 border-b-2 border-primary/30">
-                        {format(fileDate, "MMMM yyyy")}
-                      </div>
-                    );
-                    lastDisplayedMonth = fileDate;
-                    lastDisplayedDay = null; 
-                  }
-
-                  if (!lastDisplayedDay || !isSameDay(fileDate, lastDisplayedDay)) {
-                    let dayLabel;
-                    if (isToday(fileDate)) dayLabel = "Today";
-                    else if (isYesterday(fileDate)) dayLabel = "Yesterday";
-                    else dayLabel = format(fileDate, "eeee, MMMM d");
-
-                    dayHeader = (
-                      <div key={`day-${file.id}`} className="col-span-full text-sm font-medium text-muted-foreground py-2 mt-2 mb-1 border-b border-border">
-                        {dayLabel}
-                      </div>
-                    );
-                    lastDisplayedDay = fileDate;
-                  }
-                }
-
-
-                const itemContent = (
-                  <ContentFileItem
-                    key={`${file.id}-${activeTab}-${selectedDate ? format(selectedDate, "yyyy-MM-dd") : 'all'}-${index}`}
-                    file={file}
-                    style={{ animationDelay: `${index * 30}ms` }}
-                    onDetailsClick={onFileDetailsClick}
-                    onQueueDownloadClick={onQueueDownloadClick}
-                    onViewImageClick={onFileViewImageClick}
-                    onPlayVideoClick={onFilePlayVideoClick}
-                    isPreparingStream={isPreparingStream && preparingStreamForFileId === file.id}
-                    preparingStreamForFileId={preparingStreamForFileId}
-                  />
-                );
-
-                return (
-                  <React.Fragment key={`fragment-${file.id}`}>
-                    {monthHeader}
-                    {dayHeader}
-                    {itemContent}
-                  </React.Fragment>
-                );
-              })}
-            </div>
-          ) : (
-             <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center">
-                <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
-                <p className="text-lg">No media items to display for the current selection.</p>
-             </div>
-          )}
-          {isLoadingMoreMedia && displayItemsRegular.length > 0 && (
-            <div className="flex justify-center items-center p-4 mt-4">
-              <Loader2 className="animate-spin h-8 w-8 text-primary" />
-              <p className="ml-3 text-muted-foreground">Loading more media...</p>
-            </div>
-          )}
-          {!isLoading && !isLoadingMoreMedia && hasMore && displayItemsRegular.length > 0 && !selectedDate && onLoadMoreMedia && (
-            <div className="col-span-full flex justify-center py-4 mt-4">
-              <Button
-                onClick={onLoadMoreMedia}
-                disabled={isLoadingMoreMedia}
-                variant="outline"
-              >
-                {isLoadingMoreMedia && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Load More Media
-              </Button>
-            </div>
-          )}
-          {!isLoading && !isLoadingMoreMedia && !hasMore && displayItemsRegular.length > 0 && (
-             <p className="text-center text-sm text-muted-foreground py-4 mt-4">No more media to load for the current filter.</p>
-          )}
-        </div>
-      )}
+      ) : mainContent }
     </div>
   );
+
+  if (isCloudChannel) {
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          {viewContent}
+        </DropdownMenuTrigger>
+        <DropdownMenuContent className="w-56">
+          <DropdownMenuItem onClick={() => onOpenCreateVirtualFolderDialog(currentVirtualPath)}>
+            <CreateFolderIcon className="mr-2 h-4 w-4" />
+            <span>Create New Folder Here</span>
+          </DropdownMenuItem>
+          {currentVirtualPath !== '/' && (
+            <DropdownMenuItem onClick={() => onNavigateVirtualPath(getParentPath(currentVirtualPath))}>
+              <ArrowLeftCircle className="mr-2 h-4 w-4" />
+              <span>Go Up One Level</span>
+            </DropdownMenuItem>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  }
+
+  return viewContent; // For regular chats, no background context menu
 }
 
-// const CONFIG_MESSAGE_ID = 2; // Now defined globally in this file
-// const CLOUDIFIER_APP_SIGNATURE_V1 = "TELEGRAM_CLOUDIFIER_V1.0"; // No longer needed here, handled in service
-
-
+    

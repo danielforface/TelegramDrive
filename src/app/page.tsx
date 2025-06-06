@@ -1,4 +1,5 @@
 
+
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
@@ -13,7 +14,8 @@ import { ChatSelectionDialog } from "@/components/chat-selection-dialog";
 import { UploadDialog } from "@/components/upload-dialog";
 import { CreateCloudChannelDialog } from "@/components/create-cloud-channel-dialog";
 import { CreateVirtualFolderDialog } from "@/components/create-virtual-folder-dialog";
-import type { CloudFolder, CloudFile, DownloadQueueItemType, ExtendedFile, DialogFilter, CloudChannelType, CloudChannelConfigV1 } from "@/types";
+import { DeleteItemConfirmationDialog } from "@/components/delete-item-confirmation-dialog"; // New
+import type { CloudFolder, CloudFile, DownloadQueueItemType, ExtendedFile, DialogFilter, CloudChannelType, CloudChannelConfigV1, InputPeer } from "@/types";
 import { Button } from "@/components/ui/button";
 import { RefreshCw, Loader2, LayoutPanelLeft, MessageSquare, Cloud } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -27,8 +29,8 @@ const SUBSEQUENT_MASTER_CHATS_LOAD_LIMIT = 50;
 const INITIAL_SPECIFIC_FOLDER_CHATS_LOAD_LIMIT = 20;
 const SUBSEQUENT_SPECIFIC_FOLDER_CHATS_LOAD_LIMIT = 20;
 
-const INITIAL_MEDIA_LOAD_LIMIT = 20; // For regular chats
-const CLOUD_CHANNEL_INITIAL_MESSAGES_LOAD_LIMIT = 100; // For cloud channels (VFS messages)
+const INITIAL_MEDIA_LOAD_LIMIT = 20;
+const CLOUD_CHANNEL_INITIAL_MESSAGES_LOAD_LIMIT = 100;
 const SUBSEQUENT_MEDIA_LOAD_LIMIT = 20;
 const DOWNLOAD_CHUNK_SIZE = 512 * 1024;
 const KB_1 = 1024;
@@ -67,6 +69,11 @@ const defaultAllChatsFilter: DialogFilter = {
   include_peers: [],
   exclude_peers: []
 };
+
+export type ItemToDeleteType =
+  | { type: 'file'; file: CloudFile; parentInputPeer?: InputPeer | null }
+  | { type: 'virtualFolder'; path: string; name: string; parentInputPeer?: InputPeer | null };
+
 
 export default function Home() {
   const [isConnecting, setIsConnecting] = useState(false);
@@ -136,6 +143,10 @@ export default function Home() {
   const [isCreateVirtualFolderDialogOpen, setIsCreateVirtualFolderDialogOpen] = useState(false);
   const [virtualFolderParentPath, setVirtualFolderParentPath] = useState<string>("/");
   const [isProcessingVirtualFolder, setIsProcessingVirtualFolder] = useState(false);
+
+  const [itemToDelete, setItemToDelete] = useState<ItemToDeleteType | null>(null);
+  const [isDeleteItemDialogOpen, setIsDeleteItemDialogOpen] = useState(false);
+  const [isProcessingDeletion, setIsProcessingDeletion] = useState(false);
 
 
   const activeDownloadsRef = useRef<Set<string>>(new Set());
@@ -249,6 +260,9 @@ export default function Home() {
     setCurrentVirtualPath("/");
     setIsCreateVirtualFolderDialogOpen(false);
     telegramUpdateListenerInitializedRef.current = false;
+    setItemToDelete(null);
+    setIsDeleteItemDialogOpen(false);
+    setIsProcessingDeletion(false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConnected, toast, videoStreamUrl]);
 
@@ -264,16 +278,14 @@ export default function Home() {
             }
             return [...prevFolders, newlyVerifiedFolder].sort((a,b) => a.name.localeCompare(b.name));
         } else {
-             // If it exists, update it but keep its original position if sorting is important
             return prevFolders.map(f => f.id === newlyVerifiedFolder.id ? newlyVerifiedFolder : f)
                               .sort((a,b) => a.name.localeCompare(b.name));
         }
     });
     if (source === 'update') {
-        fetchDialogFilters(true); // Refresh Telegram Folder list
+        fetchDialogFilters(true);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toast]);
+  }, [toast, fetchDialogFilters]);
 
 
   const fetchAppManagedCloudChannels = useCallback(async (forceRefresh = false) => {
@@ -491,13 +503,8 @@ export default function Home() {
     if (filterType === 'dialogFilterDefault') {
       fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, isLoadingMore);
     } else if (filterType === 'dialogFilter') {
-      // Always attempt to fetch for the specific filter.
-      // `fetchAndCacheDialogs` will set error in cache if invalid.
-      // `useEffect` for `displayedChats` handles fallback and triggers "All Chats" fetch if needed.
       fetchAndCacheDialogs(currentFilterId, isLoadingMore, currentFilterId);
     } else if (filterType === 'dialogFilterChatlist') {
-      // DialogFilterChatlist always relies on the master list for its peers.
-      // Fetch/paginate the master list. The display useEffect will filter it.
       fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, isLoadingMore);
     }
   }, [isConnected, activeFilterDetails, fetchAndCacheDialogs]);
@@ -511,25 +518,24 @@ export default function Home() {
     const cachedEntry = chatDataCache.get(currentFilterId);
     const masterCacheEntry = chatDataCache.get(ALL_CHATS_FILTER_ID);
 
-    if (filterType === 'dialogFilterDefault') { // Loading more for "All Chats" tab
+    if (filterType === 'dialogFilterDefault') {
         if (masterCacheEntry?.pagination.hasMore && !masterCacheEntry.isLoading) {
             fetchDataForActiveFilter(true);
         }
     } else if (filterType === 'dialogFilter') {
-      if (cachedEntry?.error === 'FOLDER_ID_INVALID_FALLBACK') { // If current view is fallback from specific folder
+      if (cachedEntry?.error === 'FOLDER_ID_INVALID_FALLBACK') {
         if (masterCacheEntry?.pagination.hasMore && !masterCacheEntry.isLoading) {
-          // Load more for "All Chats"
           fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, true);
         }
-      } else if (cachedEntry?.pagination.hasMore && !cachedEntry.isLoading) { // Loading more for specific folder that loaded successfully
+      } else if (cachedEntry?.pagination.hasMore && !cachedEntry.isLoading) {
         fetchDataForActiveFilter(true);
       }
-    } else if (filterType === 'dialogFilterChatlist') { // Loading more for a chatlist folder (relies on All Chats)
+    } else if (filterType === 'dialogFilterChatlist') {
       if (masterCacheEntry?.pagination.hasMore && !masterCacheEntry.isLoading) {
         fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, true);
       }
     }
-  }, [activeFilterDetails, isLoadingDisplayedChats, chatDataCache, fetchAndCacheDialogs, fetchDataForActiveFilter]);
+  }, [activeFilterDetails, isLoadingDisplayedChats, chatDataCache, fetchDataForActiveFilter]);
 
 
   const checkExistingConnection = useCallback(async () => {
@@ -587,8 +593,7 @@ export default function Home() {
       setIsLoadingDialogFilters(false);
       setIsLoadingAppManagedCloudFolders(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toast, handleApiError, fetchDialogFilters, fetchAppManagedCloudChannels, handleReset]);
+  }, [toast, handleApiError, fetchDialogFilters, fetchAppManagedCloudChannels, handleReset, handleNewCloudChannelDiscovered]);
 
 
   const fetchInitialChatMedia = useCallback(async (folder: CloudFolder) => {
@@ -1386,6 +1391,66 @@ export default function Home() {
     setCurrentVirtualPath(normalizePath(path));
   };
 
+  const handleDeleteFile = (file: CloudFile) => {
+    if (!file.inputPeer) {
+        toast({ title: "Error", description: "Cannot delete file: InputPeer is missing.", variant: "destructive" });
+        return;
+    }
+    setItemToDelete({ type: 'file', file, parentInputPeer: file.inputPeer });
+    setIsDeleteItemDialogOpen(true);
+  };
+
+  const handleDeleteVirtualFolder = (folderPath: string, folderName: string, parentInputPeer?: InputPeer | null) => {
+     if (!parentInputPeer) {
+        toast({ title: "Error", description: "Cannot delete virtual folder: Parent InputPeer is missing.", variant: "destructive" });
+        return;
+    }
+    setItemToDelete({ type: 'virtualFolder', path: folderPath, name: folderName, parentInputPeer });
+    setIsDeleteItemDialogOpen(true);
+  };
+
+  const confirmDeleteItem = async () => {
+    if (!itemToDelete) return;
+    setIsProcessingDeletion(true);
+
+    try {
+      if (itemToDelete.type === 'file') {
+        const { file, parentInputPeer } = itemToDelete;
+        if (!parentInputPeer) throw new Error("InputPeer missing for file deletion.");
+        const success = await telegramService.deleteTelegramMessages(parentInputPeer, [file.messageId]);
+        if (success) {
+          toast({ title: "File Deleted", description: `File "${file.name}" has been deleted.` });
+          setCurrentChatMedia(prev => prev.filter(f => f.id !== file.id));
+          // If it was a VFS file, its caption is gone, so it's effectively removed from VFS
+        } else {
+          throw new Error("Telegram service failed to delete the message.");
+        }
+      } else if (itemToDelete.type === 'virtualFolder') {
+        const { path, name, parentInputPeer } = itemToDelete;
+        if (!parentInputPeer) throw new Error("InputPeer missing for virtual folder deletion.");
+
+        const updatedConfig = await telegramService.removeVirtualFolderFromCloudChannel(parentInputPeer, path);
+        if (updatedConfig) {
+          toast({ title: "Virtual Folder Deleted", description: `Folder "${name}" has been removed from the virtual structure.` });
+          setSelectedFolder(prev => prev ? { ...prev, cloudConfig: updatedConfig } : null);
+          setAppManagedCloudFolders(prevList =>
+            prevList.map(cf =>
+              cf.id === selectedFolder?.id ? { ...cf, cloudConfig: updatedConfig } : cf
+            )
+          );
+        } else {
+          throw new Error("Failed to update cloud configuration after deleting virtual folder.");
+        }
+      }
+    } catch (error: any) {
+      handleApiError(error, `Error Deleting ${itemToDelete.type === 'file' ? 'File' : 'Virtual Folder'}`, error.message || "Could not complete deletion.");
+    } finally {
+      setIsProcessingDeletion(false);
+      setIsDeleteItemDialogOpen(false);
+      setItemToDelete(null);
+    }
+  };
+
 
   useEffect(() => {
     downloadQueueRef.current = downloadQueue;
@@ -1431,17 +1496,15 @@ export default function Home() {
     if (!isConnected || !activeFilterDetails || isLoadingDialogFilters) {
       return;
     }
+    const filterIdToFetch = activeFilterDetails.id;
+    const isNewFilter = lastFetchedFilterId !== filterIdToFetch;
 
-    const currentFilterId = activeFilterDetails.id;
-    const isNewFilter = lastFetchedFilterId !== currentFilterId;
-    if (isNewFilter) {
-        setCurrentErrorMessage(null);
-    }
+    if (isNewFilter) setCurrentErrorMessage(null);
 
     const filterType = activeFilterDetails._;
     let isCurrentFilterListEmptyAndNeedsLoad = false;
 
-    const cachedEntryForCurrent = chatDataCache.get(currentFilterId);
+    const cachedEntryForCurrent = chatDataCache.get(filterIdToFetch);
     const cachedEntryForAllChats = chatDataCache.get(ALL_CHATS_FILTER_ID);
 
     if (filterType === 'dialogFilterDefault') {
@@ -1466,7 +1529,7 @@ export default function Home() {
             setCurrentChatMedia([]);
             setCurrentVirtualPath("/");
         }
-        setLastFetchedFilterId(currentFilterId);
+        setLastFetchedFilterId(filterIdToFetch);
         fetchDataForActiveFilter(false);
     }
   }, [
@@ -1487,8 +1550,7 @@ export default function Home() {
     const cachedEntryForCurrentFilter = chatDataCache.get(currentFilterId);
     const cachedEntryForAllChats = chatDataCache.get(ALL_CHATS_FILTER_ID);
 
-    const _isNewFilter = lastFetchedFilterId !== currentFilterId;
-    if(_isNewFilter) setCurrentErrorMessage(null);
+    if(lastFetchedFilterId !== currentFilterId) setCurrentErrorMessage(null);
 
 
     if (filterType === 'dialogFilterDefault') {
@@ -1504,18 +1566,18 @@ export default function Home() {
       }
     } else if (filterType === 'dialogFilter') {
       if (cachedEntryForCurrentFilter?.error === 'FOLDER_ID_INVALID_FALLBACK') {
-        setCurrentErrorMessage(`"${activeFilterDetails.title}" couldn't be loaded directly. Showing matching chats from 'All Chats'. Some older chats might not appear until 'All Chats' is loaded further.`);
-        
+        setCurrentErrorMessage(`"${activeFilterDetails.title}" couldn't be loaded directly. Showing matching chats from 'All Chats'.`);
+
         const masterCacheIsEmptyOrStale = !cachedEntryForAllChats || (cachedEntryForAllChats.folders.length === 0 && cachedEntryForAllChats.pagination.hasMore);
         const masterCacheIsNotLoading = !cachedEntryForAllChats?.isLoading;
 
         if (masterCacheIsEmptyOrStale && masterCacheIsNotLoading) {
-          fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, false); 
-          setIsLoadingDisplayedChats(true); 
-          setDisplayedChats([]); 
-          return; 
+          fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, false);
+          setIsLoadingDisplayedChats(true);
+          setDisplayedChats([]);
+          return;
         }
-        
+
         if (cachedEntryForAllChats) {
             const includePeerKeys = new Set((activeFilterDetails.include_peers || []).map(peerToKey).filter(Boolean) as string[]);
             const pinnedPeerKeys = new Set((activeFilterDetails.pinned_peers || []).map(peerToKey).filter(Boolean) as string[]);
@@ -1547,7 +1609,7 @@ export default function Home() {
          setIsLoadingDisplayedChats(true);
       }
     } else if (filterType === 'dialogFilterChatlist') {
-        setCurrentErrorMessage(null); // Usually, chatlists just filter the main list.
+        setCurrentErrorMessage(null);
         const masterCacheIsEmptyOrStale = !cachedEntryForAllChats || (cachedEntryForAllChats.folders.length === 0 && cachedEntryForAllChats.pagination.hasMore);
         const masterCacheIsNotLoading = !cachedEntryForAllChats?.isLoading;
 
@@ -1981,7 +2043,7 @@ export default function Home() {
       />
       <div className="flex-1 flex overflow-hidden min-h-0">
         <main className="flex-1 overflow-y-auto bg-background">
-           <div className="container mx-auto h-full px-4 sm:px-6 lg:px-8 py-4 md:py-6 lg:py-8">
+           <div className="container mx-auto h-full px-0 sm:px-0 lg:px-0 py-0 md:py-0 lg:py-0">
             {selectedFolder ? (
                 <MainContentView
                     folderName={selectedFolder.name}
@@ -2002,9 +2064,12 @@ export default function Home() {
                     currentVirtualPath={currentVirtualPath}
                     onNavigateVirtualPath={handleNavigateVirtualPath}
                     onOpenCreateVirtualFolderDialog={handleOpenCreateVirtualFolderDialog}
+                    onDeleteFile={handleDeleteFile}
+                    onDeleteVirtualFolder={handleDeleteVirtualFolder}
+                    selectedFolderInputPeer={selectedFolder.inputPeer}
                  />
             ) : (
-                <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground">
+                <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground p-4">
                   <LayoutPanelLeft className="w-16 h-16 mb-4 opacity-50" />
                   <p className="text-lg mb-2">No chat selected.</p>
                   <p className="text-sm mb-4">Select a chat folder or a cloud storage channel.</p>
@@ -2097,6 +2162,16 @@ export default function Home() {
         parentPath={virtualFolderParentPath}
       />
 
+      <DeleteItemConfirmationDialog
+        isOpen={isDeleteItemDialogOpen}
+        onClose={() => setIsDeleteItemDialogOpen(false)}
+        onConfirm={confirmDeleteItem}
+        isLoading={isProcessingDeletion}
+        itemName={itemToDelete?.type === 'file' ? itemToDelete.file.name : itemToDelete?.name || "item"}
+        itemType={itemToDelete?.type || "item"}
+      />
+
+
       <FileDetailsPanel
         file={selectedFileForDetails}
         isOpen={isDetailsPanelOpen}
@@ -2153,6 +2228,5 @@ function cachedDataForActiveFilterIsLoading(activeFilterDetails: DialogFilter | 
     }
     return cachedEntry?.isLoading || false;
 }
-
 
     
