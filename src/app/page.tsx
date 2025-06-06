@@ -1,4 +1,5 @@
 
+
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
@@ -264,12 +265,13 @@ export default function Home() {
             }
             return [...prevFolders, newlyVerifiedFolder].sort((a,b) => a.name.localeCompare(b.name));
         } else { 
+             // If it exists, update it but keep its original position if sorting is important
             return prevFolders.map(f => f.id === newlyVerifiedFolder.id ? newlyVerifiedFolder : f)
                               .sort((a,b) => a.name.localeCompare(b.name));
         }
     });
     if (source === 'update') {
-        fetchDialogFilters(true); // Refresh Telegram Folders if our managed folder was updated
+        fetchDialogFilters(true); 
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [toast]); 
@@ -405,7 +407,7 @@ export default function Home() {
         setIsLoadingDialogFilters(false);
         return;
     }
-    if (!forceRefresh && hasFetchedDialogFiltersOnce && dialogFilters.length > 1 && !isReorderingFolders) { // Check for more than just the default
+    if (!forceRefresh && hasFetchedDialogFiltersOnce && dialogFilters.length > 1 && !isReorderingFolders) { 
       setIsLoadingDialogFilters(false);
       return;
     }
@@ -437,7 +439,7 @@ export default function Home() {
       }
 
       if (!allChatsFilterExists && !processedFilters.some(f => f.id === ALL_CHATS_FILTER_ID)) {
-        processedFilters.unshift({ ...defaultAllChatsFilter }); // Use spread for the default
+        processedFilters.unshift({ ...defaultAllChatsFilter }); 
       }
 
 
@@ -1489,7 +1491,9 @@ export default function Home() {
     const cachedEntryForCurrentFilter = chatDataCache.get(currentFilterId);
     const cachedEntryForAllChats = chatDataCache.get(ALL_CHATS_FILTER_ID);
 
-    setCurrentErrorMessage(null); 
+    const _isNewFilter = lastFetchedFilterId !== currentFilterId;
+    if(_isNewFilter) setCurrentErrorMessage(null);
+
 
     if (filterType === 'dialogFilterDefault') {
       if (cachedEntryForAllChats) {
@@ -1557,7 +1561,7 @@ export default function Home() {
       }
     }
   }, [
-      isConnected, activeFilterDetails, chatDataCache, peerToKey, isConnecting, isLoadingDialogFilters
+      isConnected, activeFilterDetails, chatDataCache, peerToKey, isConnecting, isLoadingDialogFilters, lastFetchedFilterId
   ]);
 
 
@@ -1972,7 +1976,7 @@ export default function Home() {
                     onFileViewImageClick={handleViewImage}
                     onFilePlayVideoClick={handlePlayVideo}
                     onOpenUploadDialog={handleOpenUploadDialog}
-                    isPreparingVideoStream={isPreparingVideoStream}
+                    isPreparingStream={isPreparingVideoStream}
                     preparingStreamForFileId={preparingVideoStreamForFileId}
                     onLoadMoreMedia={loadMoreChatMediaCallback}
                     isCloudChannel={selectedFolder.isAppManagedCloud || false}
@@ -2131,3 +2135,4 @@ function cachedDataForActiveFilterIsLoading(activeFilterDetails: DialogFilter | 
     }
     return cachedEntry?.isLoading || false;
 }
+

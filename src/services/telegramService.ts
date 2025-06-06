@@ -706,8 +706,7 @@ export async function getChatMediaHistory(
 
     if (messagesArray && messagesArray.length > 0) {
       messagesArray.forEach((msg: any) => {
-        // For cloud channels, process all messages. For regular, only those with media.
-        const shouldProcessForCloud = isCloudChannelFetch;
+        const shouldProcessForCloud = isCloudChannelFetch && (msg.media || msg.message); // Cloud: media or just message (for VFS path)
         const shouldProcessForRegular = !isCloudChannelFetch && msg.media && (msg.media._ === 'messageMediaPhoto' || msg.media._ === 'messageMediaDocument');
         
         if (shouldProcessForCloud || shouldProcessForRegular) {
@@ -727,7 +726,6 @@ export async function getChatMediaHistory(
           } else if (msg.media?.document) {
              mediaObjectForFile = msg.media.document;
           }
-
 
           if (msg.media?._ === 'messageMediaPhoto' && mediaObjectForFile) {
             fileType = 'image';
@@ -756,13 +754,15 @@ export async function getChatMediaHistory(
                   fileType = 'document'; dataAiHint = "document file";
               }
           } else if (isCloudChannelFetch && msg.message && !msg.media) {
-            fileName = `vfs_text_entry_${msg.id}`;
-            fileType = 'unknown'; // Indicates a message that might be part of VFS structure but isn't media
+            // This is a text-only message in a cloud channel, potentially for VFS.
+            // Its 'fileName' isn't really a file name but an identifier if we show it.
+            // For VFS, we primarily care about its caption (msg.message).
+            fileName = `vfs_text_entry_${msg.id}`; // If we were to list it.
+            fileType = 'unknown'; // Not a media file type.
           }
 
-
-          // For cloud channels, always push if it's a message (media or text with caption).
-          // For regular, only push if mediaObjectForFile exists.
+          // For cloud channels, push if it's a message (media or text with caption for VFS).
+          // For regular, only push if mediaObjectForFile exists (meaning it's media).
           if ((isCloudChannelFetch && msg.message) || mediaObjectForFile) {
              cloudFiles.push({
               id: String(msg.id),
@@ -774,9 +774,9 @@ export async function getChatMediaHistory(
               timestamp: msg.date,
               url: undefined,
               dataAiHint: dataAiHint,
-              telegramMessage: mediaObjectForFile || msg,
+              telegramMessage: mediaObjectForFile || msg, // Store full msg if no distinct media obj
               inputPeer: inputPeer,
-              caption: msg.message,
+              caption: msg.message, // This is the crucial part for VFS path parsing
             });
           }
         }
@@ -1046,7 +1046,7 @@ export async function uploadFile(
   fileToUpload: File,
   onProgress: (percent: number) => void,
   signal?: AbortSignal,
-  caption?: string
+  caption?: string // Added caption parameter
 ): Promise<any> {
   const client_file_id_str = generateRandomLong();
   const isBigFile = fileToUpload.size > TEN_MB;
@@ -1115,7 +1115,7 @@ export async function uploadFile(
           { _: 'documentAttributeFilename', file_name: fileToUpload.name },
         ],
       },
-      message: caption || '', // Use the provided caption
+      message: caption || '', // Use the provided caption here
       random_id: generateRandomLong(),
     }, { signal });
     onProgress(100);
@@ -1212,7 +1212,7 @@ export async function createManagedCloudChannel(
     }
 
     const newChannel = createChannelResult.chats[0];
-    const channelInputPeer: InputPeer = { // Explicitly type here
+    const channelInputPeer: InputPeer = {
       _: 'inputPeerChannel',
       channel_id: newChannel.id,
       access_hash: newChannel.access_hash,
@@ -1405,9 +1405,6 @@ async function updateCloudChannelConfig(channelInputPeer: InputPeer, newConfig: 
       message: newConfigJson,
       no_webpage: true,
     });
-    // An successful editMessage returns an Updates object, not a simple Bool.
-    // Check for presence of an update related to the message edit.
-    // This is a simplification; a more robust check would look for specific update types.
     return !!result; 
   } catch (error: any) {
     // console.error("Failed to update cloud channel config:", error);
@@ -1608,9 +1605,9 @@ async function ensureChannelInCloudFolder(channelInputPeer: InputPeer, channelTi
     let cloudifierFolder = existingFilters.find(f => f.id === CLOUDIFIER_MANAGED_FOLDER_ID);
     let updateNeeded = false;
     const includePeersFlag = (1 << 10);
+    const broadcastsFlag = (1 << 4);
 
     if (cloudifierFolder) {
-      // Folder with OUR ID exists. Update it.
       if (cloudifierFolder.title !== CLOUDIFIER_MANAGED_FOLDER_NAME) {
         cloudifierFolder.title = CLOUDIFIER_MANAGED_FOLDER_NAME;
         updateNeeded = true;
@@ -1624,32 +1621,34 @@ async function ensureChannelInCloudFolder(channelInputPeer: InputPeer, channelTi
         updateNeeded = true;
       }
       
+      cloudifierFolder.include_peers = cloudifierFolder.include_peers.filter(p => p._ === 'inputPeerChannel');
+      
       if (cloudifierFolder.include_peers.length > 0 && !(cloudifierFolder.flags & includePeersFlag)) {
-          cloudifierFolder.flags = (cloudifierFolder.flags || 0) | includePeersFlag;
+          cloudifierFolder.flags |= includePeersFlag;
+          updateNeeded = true;
+      } else if (cloudifierFolder.include_peers.length === 0 && (cloudifierFolder.flags & includePeersFlag)) {
+           cloudifierFolder.flags &= ~includePeersFlag;
+           updateNeeded = true;
+      }
+      if (!(cloudifierFolder.flags & broadcastsFlag)) { // Ensure broadcasts flag is set for channels
+          cloudifierFolder.flags |= broadcastsFlag;
           updateNeeded = true;
       }
+
       if (updateNeeded) {
-        // Ensure all peers are valid InputPeerChannel for this folder type
-        cloudifierFolder.include_peers = cloudifierFolder.include_peers.filter(p => p._ === 'inputPeerChannel');
-        if (!(cloudifierFolder.flags & includePeersFlag) && cloudifierFolder.include_peers.length > 0) {
-            cloudifierFolder.flags |= includePeersFlag;
-        } else if (cloudifierFolder.include_peers.length === 0 && (cloudifierFolder.flags & includePeersFlag)) {
-            cloudifierFolder.flags &= ~includePeersFlag; // Remove flag if no peers
-        }
         await api.call('messages.updateDialogFilter', { id: CLOUDIFIER_MANAGED_FOLDER_ID, filter: cloudifierFolder });
       }
     } else {
-      // Folder with OUR ID does not exist. Create it.
       const newFilter: DialogFilter = {
         _: 'dialogFilter',
         id: CLOUDIFIER_MANAGED_FOLDER_ID, 
         title: CLOUDIFIER_MANAGED_FOLDER_NAME,
-        include_peers: [channelInputPeer].filter(p => p._ === 'inputPeerChannel'), // Ensure only channels
+        include_peers: [channelInputPeer].filter(p => p._ === 'inputPeerChannel'),
         pinned_peers: [], 
         exclude_peers: [], 
-        contacts: false, non_contacts: false, groups: false, broadcasts: true, bots: false, // broadcasts true for channels
+        contacts: false, non_contacts: false, groups: false, broadcasts: true, bots: false,
         exclude_muted: false, exclude_read: false, exclude_archived: false,
-        flags: (1 << 10) | (1 << 4) // Flag for include_peers and broadcasts
+        flags: includePeersFlag | broadcastsFlag 
       };
       
       await api.call('messages.updateDialogFilter', { id: CLOUDIFIER_MANAGED_FOLDER_ID, filter: newFilter });
@@ -1667,3 +1666,4 @@ if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
   (window as any).telegramServiceApi = api;
   (window as any).telegramUserSession = userSession;
 }
+

@@ -16,7 +16,7 @@ import { parseVfsPathFromCaption, getEntriesForPath, normalizePath, getParentPat
 
 interface MainContentViewProps {
   folderName: string | null;
-  files: CloudFile[]; // For regular chats: media. For cloud channels: ALL relevant messages.
+  files: CloudFile[]; 
   isLoading: boolean;
   isLoadingMoreMedia?: boolean;
   hasMore: boolean;
@@ -79,8 +79,6 @@ export function MainContentView({
         setSelectedDate(undefined);
         setSearchTerm("");
     }
-    // For cloud channels, filters might persist or be different, so we don't reset them here.
-    // Resetting of currentVirtualPath happens in page.tsx when selectedFolder changes.
   }, [folderName, isCloudChannel]);
 
 
@@ -105,14 +103,11 @@ export function MainContentView({
 
     const displayedFiles: { type: 'file'; cloudFile: CloudFile }[] = [];
     files.forEach(fileMessage => {
-      // fileMessage.caption now holds msg.message from telegramService
       const vfsPath = parseVfsPathFromCaption(fileMessage.caption);
       if (vfsPath === normalizedCurrentPath) {
-        // Only add if it's not a message representing the config itself (messageId 2 and specific caption)
         if (fileMessage.messageId === CONFIG_MESSAGE_ID && fileMessage.caption?.includes(CLOUDIFIER_APP_SIGNATURE_V1)) {
             return;
         }
-         // Ensure that there's actual media content to display as a file
         if (fileMessage.telegramMessage && (fileMessage.telegramMessage.media || (fileMessage.type !== 'unknown' && fileMessage.totalSizeInBytes && fileMessage.totalSizeInBytes > 0))) {
              displayedFiles.push({ type: 'file', cloudFile: fileMessage });
         }
@@ -153,7 +148,6 @@ export function MainContentView({
         break;
       case "all":
       default:
-        // processedFiles remains as files
         break;
     }
 
@@ -162,7 +156,6 @@ export function MainContentView({
         file.timestamp && isSameDay(new Date(file.timestamp * 1000), selectedDate)
       );
     }
-    // Sort only if no date filter is applied (to preserve daily grouping)
     return selectedDate ? processedFiles : processedFiles.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
   }, [files, activeTab, selectedDate, isCloudChannel]);
 
@@ -283,7 +276,27 @@ export function MainContentView({
                     return null;
                 })}
                 </div>
-                {/* Pagination for VFS files can be added here if needed in future */}
+                 {isLoadingMoreMedia && vfsItems.length > 0 && (
+                    <div className="flex justify-center items-center p-4 mt-4">
+                    <Loader2 className="animate-spin h-8 w-8 text-primary" />
+                    <p className="ml-3 text-muted-foreground">Loading more content...</p>
+                    </div>
+                )}
+                {!isLoading && !isLoadingMoreMedia && hasMore && vfsItems.length > 0 && onLoadMoreMedia && (
+                    <div className="col-span-full flex justify-center py-4 mt-4">
+                    <Button
+                        onClick={onLoadMoreMedia}
+                        disabled={isLoadingMoreMedia}
+                        variant="outline"
+                    >
+                        {isLoadingMoreMedia && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        Load More
+                    </Button>
+                    </div>
+                )}
+                {!isLoading && !isLoadingMoreMedia && !hasMore && vfsItems.length > 0 && (
+                    <p className="text-center text-sm text-muted-foreground py-4 mt-4">No more content to load in this folder.</p>
+                )}
             </div>
         )}
       </div>
@@ -373,7 +386,7 @@ export function MainContentView({
                 let dayHeader = null;
                 let monthHeader = null;
 
-                if (!selectedDate) { // Group by month and day only if no specific date filter is applied
+                if (!selectedDate) { 
                   if (!lastDisplayedMonth || !isSameMonth(fileDate, lastDisplayedMonth)) {
                     monthHeader = (
                       <div key={`month-${file.id}`} className="col-span-full text-lg font-semibold text-primary py-3 mt-4 mb-2 border-b-2 border-primary/30">
@@ -381,7 +394,7 @@ export function MainContentView({
                       </div>
                     );
                     lastDisplayedMonth = fileDate;
-                    lastDisplayedDay = null; // Reset day when month changes
+                    lastDisplayedDay = null; 
                   }
 
                   if (!lastDisplayedDay || !isSameDay(fileDate, lastDisplayedDay)) {
@@ -442,9 +455,7 @@ export function MainContentView({
                 disabled={isLoadingMoreMedia}
                 variant="outline"
               >
-                {isLoadingMoreMedia ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : null}
+                {isLoadingMoreMedia && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Load More Media
               </Button>
             </div>
@@ -458,6 +469,6 @@ export function MainContentView({
   );
 }
 
-const CONFIG_MESSAGE_ID = 2; // Duplicated from telegramService, consider centralizing
-const CLOUDIFIER_APP_SIGNATURE_V1 = "TELEGRAM_CLOUDIFIER_V1.0"; // Duplicated
+const CONFIG_MESSAGE_ID = 2; 
+const CLOUDIFIER_APP_SIGNATURE_V1 = "TELEGRAM_CLOUDIFIER_V1.0"; 
 
