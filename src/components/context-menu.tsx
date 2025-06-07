@@ -65,13 +65,21 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose, 
       if (y + menuHeight > boundaryRect.bottom - 5) {
         finalTop = boundaryRect.bottom - menuHeight - 5;
       }
-      // Adjust if going off left edge of boundary (can happen if menu is wider than x or shifted)
+      // Adjust if going off left edge of boundary (can happen if menu is wider than x or shifted by right edge adjustment)
       if (finalLeft < boundaryRect.left + 5) {
         finalLeft = boundaryRect.left + 5;
       }
       // Adjust if going off top edge of boundary
       if (finalTop < boundaryRect.top + 5) {
         finalTop = boundaryRect.top + 5;
+      }
+
+      // Apply the requested 100px shift to the left
+      finalLeft = finalLeft - 100;
+
+      // Re-check and enforce the left boundary after the shift
+      if (finalLeft < boundaryRect.left + 5) {
+        finalLeft = boundaryRect.left + 5;
       }
 
       setMenuStyle({
