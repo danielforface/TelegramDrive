@@ -106,11 +106,13 @@ export function MainContentView({
 
 
   const handleSearchButtonClick = () => {
+    // Placeholder for search functionality
   };
 
   const handleBackgroundContextMenu = (event: React.MouseEvent) => {
     event.preventDefault();
     const clickedOnItem = (event.target as HTMLElement).closest('[data-file-item="true"]') || (event.target as HTMLElement).closest('[data-folder-item="true"]');
+    
     if (clickedOnItem || !isCloudChannel) {
       setBackgroundContextMenu({ visible: false, x: 0, y: 0, items: [] });
       return;
@@ -191,7 +193,7 @@ export function MainContentView({
 
     return [
       ...displayedFolders.sort((a, b) => a.name.localeCompare(b.name)),
-      ...displayedFiles.sort((a, b) => (b.cloudFile.timestamp || 0) - (a.cloudFile.timestamp || 0)),
+      ...displayedFiles.sort((a, b) => (b.cloudFile.timestamp || 0) - (a.cloudFile.timestamp || 0)), // Files sorted by newest first
     ];
   }, [isCloudChannel, cloudConfig, files, currentVirtualPath]);
 
@@ -342,7 +344,7 @@ export function MainContentView({
               let dayHeader = null;
               let monthHeader = null;
 
-              if (!selectedDate) {
+              if (!selectedDate) { // Only show date grouping if no specific date is selected
                 if (!lastDisplayedMonth || !isSameMonth(fileDate, lastDisplayedMonth)) {
                   monthHeader = (
                     <div key={`month-${file.id}`} className="col-span-full text-lg font-semibold text-primary py-3 mt-4 mb-2 border-b-2 border-primary/30">
@@ -350,7 +352,7 @@ export function MainContentView({
                     </div>
                   );
                   lastDisplayedMonth = fileDate;
-                  lastDisplayedDay = null;
+                  lastDisplayedDay = null; // Reset day when month changes
                 }
                 if (!lastDisplayedDay || !isSameDay(fileDate, lastDisplayedDay)) {
                   let dayLabel = isToday(fileDate) ? "Today" : isYesterday(fileDate) ? "Yesterday" : format(fileDate, "eeee, MMMM d");
@@ -416,7 +418,11 @@ export function MainContentView({
 
 
   return (
-    <div ref={mainContentRef} className="space-y-4 h-full flex flex-col p-1 md:p-2 lg:p-4 relative" onContextMenu={handleBackgroundContextMenu}>
+    <div 
+      ref={mainContentRef} 
+      className="space-y-4 h-full flex flex-col p-1 md:p-2 lg:p-4 relative" 
+      onContextMenu={handleBackgroundContextMenu}
+    >
       <div className="flex-shrink-0">
           <h1 className="text-3xl font-bold text-primary mb-1 pb-2 border-b flex items-center">
               {isCloudChannel ? <Cloud className="w-8 h-8 mr-3 text-primary/80" /> : null}
@@ -502,15 +508,16 @@ export function MainContentView({
           <p className="text-lg">This chat contains no media items.</p>
         </div>
       ) : mainItemsContent }
+
       {backgroundContextMenu.visible && (
         <ContextMenu
           x={backgroundContextMenu.x}
           y={backgroundContextMenu.y}
           items={backgroundContextMenu.items}
           onClose={closeBackgroundContextMenu}
+          confiningElementRef={mainContentRef} 
         />
       )}
     </div>
   );
 }
-

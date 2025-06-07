@@ -11,15 +11,16 @@ interface ContextMenuProps {
   items: MenuItemType[];
   onClose: () => void;
   className?: string;
+  confiningElementRef?: React.RefObject<HTMLElement>;
 }
 
-export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose, className }) => {
+export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose, className, confiningElementRef }) => {
   const menuRef = useRef<HTMLDivElement>(null);
   const [menuStyle, setMenuStyle] = useState<React.CSSProperties>({
     position: 'absolute',
-    top: y, // Initial tentative position
-    left: x, // Initial tentative position
-    visibility: 'hidden', // Initially hidden
+    top: y,
+    left: x,
+    visibility: 'hidden', 
   });
 
   useEffect(() => {
@@ -38,49 +39,59 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose, 
     if (menuRef.current) {
       const menuWidth = menuRef.current.offsetWidth;
       const menuHeight = menuRef.current.offsetHeight;
-      const screenWidth = window.innerWidth;
-      const screenHeight = window.innerHeight;
+      
+      let boundaryRect;
+      if (confiningElementRef?.current) {
+        boundaryRect = confiningElementRef.current.getBoundingClientRect();
+      } else {
+        boundaryRect = { 
+          top: 0, 
+          left: 0, 
+          right: window.innerWidth, 
+          bottom: window.innerHeight, 
+          width: window.innerWidth, 
+          height: window.innerHeight 
+        };
+      }
 
-      let finalLeft = x; // Start with prop x (cursor position)
-      let finalTop = y;  // Start with prop y (cursor position)
+      let finalLeft = x;
+      let finalTop = y;
 
-      // Adjust if going off right edge
-      if (x + menuWidth > screenWidth) {
-        finalLeft = screenWidth - menuWidth - 5; // Place 5px from right screen edge
+      // Adjust if going off right edge of boundary
+      if (x + menuWidth > boundaryRect.right - 5) {
+        finalLeft = boundaryRect.right - menuWidth - 5;
       }
-      // Adjust if going off bottom edge
-      if (y + menuHeight > screenHeight) {
-        finalTop = screenHeight - menuHeight - 5; // Place 5px from bottom screen edge
+      // Adjust if going off bottom edge of boundary
+      if (y + menuHeight > boundaryRect.bottom - 5) {
+        finalTop = boundaryRect.bottom - menuHeight - 5;
       }
-      // Adjust if going off left edge (can happen if menu is wider than x or shifted by right edge adjustment)
-      if (finalLeft < 5) {
-        finalLeft = 5; // Place 5px from left screen edge
+      // Adjust if going off left edge of boundary (can happen if menu is wider than x or shifted)
+      if (finalLeft < boundaryRect.left + 5) {
+        finalLeft = boundaryRect.left + 5;
       }
-      // Adjust if going off top edge
-      if (finalTop < 5) {
-        finalTop = 5; // Place 5px from top screen edge
+      // Adjust if going off top edge of boundary
+      if (finalTop < boundaryRect.top + 5) {
+        finalTop = boundaryRect.top + 5;
       }
 
       setMenuStyle({
         position: 'absolute',
         top: finalTop,
         left: finalLeft,
-        visibility: 'visible', // Make visible now that position is calculated
+        visibility: 'visible',
       });
     }
-    // If menuRef.current is null (e.g., first render pass before ref is attached),
-    // menuStyle remains { visibility: 'hidden' }. The effect will run again once the ref is available.
-  }, [x, y, items]); // Rerun when x, y, or items (which affects menu size) change
+  }, [x, y, items, confiningElementRef]);
 
   return (
     <div
       ref={menuRef}
       style={menuStyle}
       className={cn(
-        "bg-popover text-popover-foreground border border-border rounded-md shadow-lg p-0.5 min-w-[160px] z-50", // Base styles
-        className // Allow overriding via prop
+        "bg-popover text-popover-foreground border border-border rounded-md shadow-lg p-0.5 min-w-[150px] text-xs z-50",
+        className
       )}
-      onMouseDown={(e) => e.stopPropagation()} // Prevent click outside from closing if click is on menu itself
+      onMouseDown={(e) => e.stopPropagation()} 
     >
       {items.map((item, index) => {
         if (item.isSeparator) {
@@ -90,7 +101,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose, 
           <div
             key={index}
             className={cn(
-              "flex items-center px-1.5 py-1 text-xs rounded-sm cursor-pointer hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground outline-none",
+              "flex items-center px-1.5 py-1 rounded-sm cursor-pointer hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground outline-none",
               item.disabled && "opacity-50 cursor-not-allowed hover:bg-transparent hover:text-popover-foreground",
               item.className
             )}
@@ -120,4 +131,3 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose, 
     </div>
   );
 };
-
