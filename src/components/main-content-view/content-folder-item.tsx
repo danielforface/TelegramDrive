@@ -1,19 +1,13 @@
 
 "use client";
 
-import type { CloudFolder } from "@/types";
+import type { CloudFolder, MenuItemType } from "@/types";
 import { Folder as FolderIcon, FolderOpen, FolderPlus, Trash2 } from "lucide-react";
 import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import React from "react";
+import { ContextMenu } from "@/components/context-menu"; // Import new ContextMenu
+import React, { useState } from "react";
 
 
 interface ContentFolderItemProps {
@@ -35,7 +29,14 @@ export function ContentFolderItem({
   onDelete,
   onCreateFolderInside
 }: ContentFolderItemProps) {
-  const [isMenuOpen, setIsMenuOpen] = React.useState(false);
+  
+  const [contextMenu, setContextMenu] = useState<{
+    visible: boolean;
+    x: number;
+    y: number;
+    items: MenuItemType[];
+  }>({ visible: false, x: 0, y: 0, items: [] });
+
 
   const totalItems = itemCountOverride !== undefined
     ? itemCountOverride
@@ -48,21 +49,51 @@ export function ContentFolderItem({
                          "general folder";
 
   const handleCardClick = (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest('[role="menuitem"]')) {
-      return;
-    }
     if (e.button !== 2 && onClick) { // Only trigger onClick for left-clicks
         onClick();
     }
   };
   
+  const folderMenuItems: MenuItemType[] = [];
+  if (isCloudChannelContext) {
+    if (onClick) {
+      folderMenuItems.push({
+        label: "Open Folder",
+        onClick: () => onClick(),
+        icon: <FolderOpen />,
+      });
+    }
+    if (onCreateFolderInside) {
+      folderMenuItems.push({
+        label: "Create New Folder Inside",
+        onClick: () => onCreateFolderInside(),
+        icon: <FolderPlus />,
+      });
+    }
+    if (onDelete) {
+      folderMenuItems.push({ isSeparator: true });
+      folderMenuItems.push({
+        label: "Delete Virtual Folder",
+        onClick: () => onDelete(),
+        icon: <Trash2 />,
+        className: "text-destructive hover:bg-destructive/10 focus:bg-destructive/10",
+      });
+    }
+  }
+
   const handleContextMenu = (event: React.MouseEvent) => {
       event.preventDefault();
-      setIsMenuOpen(true);
+      if (!isCloudChannelContext || folderMenuItems.length === 0) return;
+      setContextMenu({
+        visible: true,
+        x: event.clientX,
+        y: event.clientY,
+        items: folderMenuItems,
+      });
   };
 
-  const handleDropdownSelect = (event: Event) => {
-      // event.preventDefault(); // Usually not needed for Shadcn items
+  const closeContextMenu = () => {
+    setContextMenu({ ...contextMenu, visible: false });
   };
 
 
@@ -74,16 +105,12 @@ export function ContentFolderItem({
       )}
       style={style}
       onClick={handleCardClick}
-      onContextMenu={isCloudChannelContext ? handleContextMenu : undefined} // Only enable context menu for cloud folders
+      onContextMenu={isCloudChannelContext ? handleContextMenu : undefined} 
       onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
-             if (!(e.target as HTMLElement).closest('[data-radix-dropdown-menu-trigger]')) {
-                 if (e.shiftKey && isCloudChannelContext) { // Shift+Enter for context menu on cloud folders
-                     handleContextMenu(e as any);
-                 } else if (onClick) {
-                     onClick();
-                 }
-            }
+             if (onClick) {
+                 onClick();
+             }
         }
       }}
       tabIndex={0}
@@ -108,39 +135,17 @@ export function ContentFolderItem({
     </Card>
   );
 
-  if (isCloudChannelContext) {
-    return (
-      <DropdownMenu open={isMenuOpen} onOpenChange={setIsMenuOpen}>
-        <DropdownMenuTrigger asChild>{cardContent}</DropdownMenuTrigger>
-        <DropdownMenuContent className="w-56" align="start" onSelect={handleDropdownSelect}>
-          {onClick && (
-            <DropdownMenuItem onClick={(e) => {e.stopPropagation(); onClick();}}>
-              <FolderOpen className="mr-2 h-4 w-4" />
-              <span>Open Folder</span>
-            </DropdownMenuItem>
-          )}
-          {onCreateFolderInside && (
-            <DropdownMenuItem onClick={(e) => {e.stopPropagation(); onCreateFolderInside();}}>
-              <FolderPlus className="mr-2 h-4 w-4" />
-              <span>Create New Folder Inside</span>
-            </DropdownMenuItem>
-          )}
-          {onDelete && (
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={(e) => {e.stopPropagation(); onDelete();}}
-                className="text-destructive focus:text-destructive focus:bg-destructive/10"
-              >
-                <Trash2 className="mr-2 h-4 w-4" />
-                <span>Delete Virtual Folder</span>
-              </DropdownMenuItem>
-            </>
-          )}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    );
-  }
-
-  return cardContent;
+  return (
+    <div data-folder-item="true">
+      {cardContent}
+      {contextMenu.visible && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={contextMenu.items}
+          onClose={closeContextMenu}
+        />
+      )}
+    </div>
+  );
 }

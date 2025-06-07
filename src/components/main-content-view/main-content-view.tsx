@@ -2,24 +2,18 @@
 "use client";
 
 import * as React from "react";
-import type { CloudFile, CloudFolder, CloudChannelConfigV1, CloudChannelConfigEntry, InputPeer } from "@/types";
+import type { CloudFile, CloudFolder, CloudChannelConfigV1, CloudChannelConfigEntry, InputPeer, MenuItemType } from "@/types";
 import { ContentFileItem } from "./content-file-item";
 import { ContentFolderItem } from "./content-folder-item";
 import { Button } from "@/components/ui/button";
-import { Search, FolderOpen, Loader2, CalendarDays, XCircle as ClearIcon, UploadCloud, Cloud, FolderPlus, ArrowUpCircle, ChevronRight, MoreVertical, FolderUp, FolderPlus as CreateFolderIcon, ArrowLeftCircle, Trash2 } from "lucide-react";
+import { Search, FolderOpen, Loader2, CalendarDays, XCircle as ClearIcon, UploadCloud, Cloud, FolderPlus, ArrowUpCircle, ChevronRight, FolderUp, ArrowLeftCircle } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { format, isToday, isYesterday, startOfDay, isSameDay, isSameMonth } from "date-fns";
 import { parseVfsPathFromCaption, getEntriesForPath, normalizePath, getParentPath } from "@/lib/vfsUtils";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { ContextMenu } from "@/components/context-menu"; // Import new ContextMenu
 
 interface MainContentViewProps {
   folderName: string | null;
@@ -85,9 +79,14 @@ export function MainContentView({
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
-  const [isBackgroundContextMenuOpen, setIsBackgroundContextMenuOpen] = React.useState(false);
   const mainContentRef = useRef<HTMLDivElement>(null);
 
+  const [backgroundContextMenu, setBackgroundContextMenu] = useState<{
+    visible: boolean;
+    x: number;
+    y: number;
+    items: MenuItemType[];
+  }>({ visible: false, x: 0, y: 0, items: [] });
 
   useEffect(() => {
     if (!isCloudChannel) {
@@ -103,14 +102,41 @@ export function MainContentView({
   };
 
   const handleBackgroundContextMenu = (event: React.MouseEvent) => {
-    if (!isCloudChannel || !mainContentRef.current || !mainContentRef.current.contains(event.target as Node)) {
-        // Only trigger if right-click is directly on the background and it's a cloud channel
-        const clickedOnItem = (event.target as HTMLElement).closest('.grid > div'); // Adjust selector if item cards are different
-        if (clickedOnItem) return;
-    }
     event.preventDefault();
-    setIsBackgroundContextMenuOpen(true);
+    // Only trigger if right-click is directly on the background and it's a cloud channel
+    const clickedOnItem = (event.target as HTMLElement).closest('.grid > div') || (event.target as HTMLElement).closest('[data-file-item="true"]') || (event.target as HTMLElement).closest('[data-folder-item="true"]');
+    if (clickedOnItem || !isCloudChannel) {
+      setBackgroundContextMenu({ visible: false, x: 0, y: 0, items: [] });
+      return;
+    }
+
+    const menuItems: MenuItemType[] = [
+      {
+        label: "Create New Folder Here",
+        onClick: () => onOpenCreateVirtualFolderDialog(currentVirtualPath),
+        icon: <FolderPlus className="mr-2 h-4 w-4" />,
+        disabled: !isCloudChannel,
+      },
+      {
+        label: "Go Up One Level",
+        onClick: () => onNavigateVirtualPath(getParentPath(currentVirtualPath)),
+        icon: <ArrowLeftCircle className="mr-2 h-4 w-4" />,
+        disabled: !isCloudChannel || currentVirtualPath === '/',
+      },
+    ];
+
+    setBackgroundContextMenu({
+      visible: true,
+      x: event.clientX,
+      y: event.clientY,
+      items: menuItems,
+    });
   };
+
+  const closeBackgroundContextMenu = () => {
+    setBackgroundContextMenu({ visible: false, x: 0, y: 0, items: [] });
+  };
+
 
   const vfsItems = useMemo(() => {
     if (!isCloudChannel || !cloudConfig) return [];
@@ -149,7 +175,7 @@ export function MainContentView({
 
     return [
       ...displayedFolders.sort((a, b) => a.name.localeCompare(b.name)),
-      ...displayedFiles.sort((a, b) => (a.cloudFile.timestamp || 0) < (b.cloudFile.timestamp || 0) ? 1 : -1), // Sort files by timestamp desc
+      ...displayedFiles.sort((a, b) => (b.cloudFile.timestamp || 0) - (a.cloudFile.timestamp || 0)),
     ];
   }, [isCloudChannel, cloudConfig, files, currentVirtualPath]);
 
@@ -249,7 +275,7 @@ export function MainContentView({
             {vfsItems.map((item, index) => {
               if (item.type === 'folder') {
                 const syntheticFolder: CloudFolder = {
-                  id: item.name, // Use name as ID for synthetic object
+                  id: item.name, 
                   name: item.name,
                   files: [],
                   folders: [],
@@ -369,8 +395,8 @@ export function MainContentView({
   );
 
 
-  const viewContent = (
-    <div ref={mainContentRef} className="space-y-4 h-full flex flex-col p-1 md:p-2 lg:p-4" onContextMenu={handleBackgroundContextMenu}>
+  return (
+    <div ref={mainContentRef} className="space-y-4 h-full flex flex-col p-1 md:p-2 lg:p-4 relative" onContextMenu={handleBackgroundContextMenu}>
       <div className="flex-shrink-0">
           <h1 className="text-3xl font-bold text-primary mb-1 pb-2 border-b flex items-center">
               {isCloudChannel ? <Cloud className="w-8 h-8 mr-3 text-primary/80" /> : null}
@@ -456,28 +482,14 @@ export function MainContentView({
           <p className="text-lg">This chat contains no media items.</p>
         </div>
       ) : mainItemsContent }
-    </div>
-  );
-
-  return (
-    <DropdownMenu open={isBackgroundContextMenuOpen} onOpenChange={setIsBackgroundContextMenuOpen}>
-      <DropdownMenuTrigger asChild>
-        {viewContent}
-      </DropdownMenuTrigger>
-      {isCloudChannel && (
-        <DropdownMenuContent className="w-56">
-          <DropdownMenuItem onClick={() => onOpenCreateVirtualFolderDialog(currentVirtualPath)}>
-            <CreateFolderIcon className="mr-2 h-4 w-4" />
-            <span>Create New Folder Here</span>
-          </DropdownMenuItem>
-          {currentVirtualPath !== '/' && (
-            <DropdownMenuItem onClick={() => onNavigateVirtualPath(getParentPath(currentVirtualPath))}>
-              <ArrowLeftCircle className="mr-2 h-4 w-4" />
-              <span>Go Up One Level</span>
-            </DropdownMenuItem>
-          )}
-        </DropdownMenuContent>
+      {backgroundContextMenu.visible && (
+        <ContextMenu
+          x={backgroundContextMenu.x}
+          y={backgroundContextMenu.y}
+          items={backgroundContextMenu.items}
+          onClose={closeBackgroundContextMenu}
+        />
       )}
-    </DropdownMenu>
+    </div>
   );
 }

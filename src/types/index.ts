@@ -192,3 +192,12 @@ export interface CloudChannelConfigV1 {
 }
 
 export type CloudChannelType = 'channel' | 'supergroup';
+
+export interface MenuItemType {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  icon?: React.ReactNode;
+  isSeparator?: boolean;
+  className?: string; // For specific styling like destructive actions
+}

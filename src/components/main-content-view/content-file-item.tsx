@@ -1,19 +1,13 @@
 
 "use client";
 
-import React, { forwardRef, type MouseEvent } from "react";
-import type { CloudFile } from "@/types";
+import React, { forwardRef, type MouseEvent, useState } from "react";
+import type { CloudFile, MenuItemType } from "@/types";
 import { FileText, Image as ImageIcon, Video, FileAudio, FileQuestion, Download, Info, Eye, PlayCircle, Loader2, Trash2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { ContextMenu } from "@/components/context-menu"; // Import new ContextMenu
 
 interface ContentFileItemProps {
   file: CloudFile;
@@ -48,110 +42,118 @@ const FileTypeIcon = ({ type, name, dataAiHint }: { type: CloudFile['type'], nam
 
 export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
   ({ file, style, onDetailsClick, onQueueDownloadClick, onViewImageClick, onPlayVideoClick, isPreparingStream, preparingStreamForFileId, onDeleteFile }, ref) => {
-    const [isMenuOpen, setIsMenuOpen] = React.useState(false);
+    
+    const [contextMenu, setContextMenu] = useState<{
+      visible: boolean;
+      x: number;
+      y: number;
+      items: MenuItemType[];
+    }>({ visible: false, x: 0, y: 0, items: [] });
 
     const handleCardClick = (e: MouseEvent) => {
-      if ((e.target as HTMLElement).closest('[role="menuitem"]')) {
-        return;
-      }
       // If not a context menu click (right-click)
       if (e.button !== 2) {
         onDetailsClick(file);
       }
     };
 
-    const handleContextMenu = (event: React.MouseEvent) => {
-      event.preventDefault();
-      setIsMenuOpen(true);
-    };
-
-    const handleDropdownSelect = (event: Event) => {
-        // event.preventDefault(); // Not needed if items handle their own stopPropagation
-    };
-
     const isCurrentlyPreparingThisFile = isPreparingStream && preparingStreamForFileId === file.id;
 
+    const fileMenuItems: MenuItemType[] = [
+      {
+        label: "Details",
+        onClick: () => onDetailsClick(file),
+        icon: <Info />,
+      },
+      {
+        label: "Download",
+        onClick: () => onQueueDownloadClick(file),
+        icon: <Download />,
+      },
+    ];
+
+    if (file.type === 'image' && file.url) {
+      fileMenuItems.push({
+        label: "View Image",
+        onClick: () => onViewImageClick(file),
+        icon: <Eye />,
+      });
+    }
+    if (file.type === 'video') {
+      fileMenuItems.push({
+        label: isCurrentlyPreparingThisFile ? "Preparing..." : "Play Video",
+        onClick: () => onPlayVideoClick(file),
+        icon: isCurrentlyPreparingThisFile ? <Loader2 className="animate-spin" /> : <PlayCircle />,
+        disabled: isCurrentlyPreparingThisFile,
+      });
+    }
+    fileMenuItems.push({ isSeparator: true });
+    fileMenuItems.push({
+      label: "Delete File",
+      onClick: () => onDeleteFile(file),
+      icon: <Trash2 />,
+      className: "text-destructive hover:bg-destructive/10 focus:bg-destructive/10",
+    });
+
+
+    const handleContextMenu = (event: React.MouseEvent) => {
+      event.preventDefault();
+      setContextMenu({
+        visible: true,
+        x: event.clientX,
+        y: event.clientY,
+        items: fileMenuItems,
+      });
+    };
+
+    const closeContextMenu = () => {
+      setContextMenu({ ...contextMenu, visible: false });
+    };
+
     return (
-      <DropdownMenu open={isMenuOpen} onOpenChange={setIsMenuOpen}>
-        <DropdownMenuTrigger asChild>
-          <Card
-            ref={ref}
-            className={cn(
-              "flex flex-col h-40 w-full overflow-hidden rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200 animate-item-enter cursor-pointer",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 bg-card"
-            )}
-            style={style}
-            onClick={handleCardClick}
-            onContextMenu={handleContextMenu}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                if (!(e.target as HTMLElement).closest('[data-radix-dropdown-menu-trigger]')) {
-                   if (e.shiftKey) { // Example: Shift+Enter for context menu
-                     handleContextMenu(e as any);
-                   } else {
-                    onDetailsClick(file);
-                   }
-                }
-              }
-            }}
-            tabIndex={0}
-            aria-label={`File: ${file.name}, Type: ${file.type}`}
-          >
-            <TooltipProvider delayDuration={300}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="flex flex-col items-center justify-center text-center p-3 flex-grow w-full overflow-hidden">
-                    <FileTypeIcon type={file.type} name={file.name} dataAiHint={file.dataAiHint} />
-                    <p className="text-xs font-medium mt-2 truncate w-full px-1" title={file.name}>{file.name}</p>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" align="center">
-                  <p className="font-semibold">{file.name}</p>
-                  <p>Type: {file.type}</p>
-                  {file.size && <p>Size: {file.size}</p>}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          </Card>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent className="w-56" align="start" onSelect={handleDropdownSelect}>
-          <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onDetailsClick(file); }}>
-            <Info className="mr-2 h-4 w-4" />
-            <span>Details</span>
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onQueueDownloadClick(file); }}>
-            <Download className="mr-2 h-4 w-4" />
-            <span>Download</span>
-          </DropdownMenuItem>
-          {file.type === 'image' && file.url && (
-            <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onViewImageClick(file); }}>
-              <Eye className="mr-2 h-4 w-4" />
-              <span>View Image</span>
-            </DropdownMenuItem>
+      <div data-file-item="true">
+        <Card
+          ref={ref}
+          className={cn(
+            "flex flex-col h-40 w-full overflow-hidden rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200 animate-item-enter cursor-pointer",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 bg-card"
           )}
-          {file.type === 'video' && (
-            <DropdownMenuItem
-              onClick={(e) => { e.stopPropagation(); onPlayVideoClick(file); }}
-              disabled={isCurrentlyPreparingThisFile}
-            >
-              {isCurrentlyPreparingThisFile ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <PlayCircle className="mr-2 h-4 w-4" />
-              )}
-              <span>{isCurrentlyPreparingThisFile ? "Preparing..." : "Play Video"}</span>
-            </DropdownMenuItem>
-          )}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            onClick={(e) => { e.stopPropagation(); onDeleteFile(file); }}
-            className="text-destructive focus:text-destructive focus:bg-destructive/10"
-          >
-            <Trash2 className="mr-2 h-4 w-4" />
-            <span>Delete File</span>
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+          style={style}
+          onClick={handleCardClick}
+          onContextMenu={handleContextMenu}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              onDetailsClick(file);
+            }
+          }}
+          tabIndex={0}
+          aria-label={`File: ${file.name}, Type: ${file.type}`}
+        >
+          <TooltipProvider delayDuration={300}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="flex flex-col items-center justify-center text-center p-3 flex-grow w-full overflow-hidden">
+                  <FileTypeIcon type={file.type} name={file.name} dataAiHint={file.dataAiHint} />
+                  <p className="text-xs font-medium mt-2 truncate w-full px-1" title={file.name}>{file.name}</p>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" align="center">
+                <p className="font-semibold">{file.name}</p>
+                <p>Type: {file.type}</p>
+                {file.size && <p>Size: {file.size}</p>}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </Card>
+        {contextMenu.visible && (
+          <ContextMenu
+            x={contextMenu.x}
+            y={contextMenu.y}
+            items={contextMenu.items}
+            onClose={closeContextMenu}
+          />
+        )}
+      </div>
     );
   }
 );
