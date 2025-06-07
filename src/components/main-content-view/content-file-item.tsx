@@ -3,11 +3,11 @@
 
 import React, { forwardRef, type MouseEvent, useState } from "react";
 import type { CloudFile, MenuItemType } from "@/types";
-import { FileText, Image as ImageIcon, Video, FileAudio, FileQuestion, Download, Info, Eye, PlayCircle, Loader2, Trash2 } from "lucide-react";
+import { FileText, Image as ImageIcon, Video, FileAudio, FileQuestion, Download, Info, Eye, PlayCircle, Loader2, Trash2, Copy } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { ContextMenu } from "@/components/context-menu"; // Import new ContextMenu
+import { ContextMenu } from "@/components/context-menu"; 
 
 interface ContentFileItemProps {
   file: CloudFile;
@@ -19,6 +19,7 @@ interface ContentFileItemProps {
   isPreparingStream?: boolean;
   preparingStreamForFileId?: string | null;
   onDeleteFile: (file: CloudFile) => void;
+  onCopyFile: (file: CloudFile) => void; 
 }
 
 const FileTypeIcon = ({ type, name, dataAiHint }: { type: CloudFile['type'], name: string, dataAiHint?: string }) => {
@@ -41,7 +42,7 @@ const FileTypeIcon = ({ type, name, dataAiHint }: { type: CloudFile['type'], nam
 };
 
 export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
-  ({ file, style, onDetailsClick, onQueueDownloadClick, onViewImageClick, onPlayVideoClick, isPreparingStream, preparingStreamForFileId, onDeleteFile }, ref) => {
+  ({ file, style, onDetailsClick, onQueueDownloadClick, onViewImageClick, onPlayVideoClick, isPreparingStream, preparingStreamForFileId, onDeleteFile, onCopyFile }, ref) => {
     
     const [contextMenu, setContextMenu] = useState<{
       visible: boolean;
@@ -51,7 +52,6 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
     }>({ visible: false, x: 0, y: 0, items: [] });
 
     const handleCardClick = (e: MouseEvent) => {
-      // If not a context menu click (right-click)
       if (e.button !== 2) {
         onDetailsClick(file);
       }
@@ -63,12 +63,17 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
       {
         label: "Details",
         onClick: () => onDetailsClick(file),
-        icon: <Info />,
+        icon: <Info className="w-3.5 h-3.5"/>,
       },
       {
         label: "Download",
         onClick: () => onQueueDownloadClick(file),
-        icon: <Download />,
+        icon: <Download className="w-3.5 h-3.5"/>,
+      },
+      {
+        label: "Copy File",
+        onClick: () => onCopyFile(file),
+        icon: <Copy className="w-3.5 h-3.5"/>,
       },
     ];
 
@@ -76,14 +81,14 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
       fileMenuItems.push({
         label: "View Image",
         onClick: () => onViewImageClick(file),
-        icon: <Eye />,
+        icon: <Eye className="w-3.5 h-3.5"/>,
       });
     }
     if (file.type === 'video') {
       fileMenuItems.push({
         label: isCurrentlyPreparingThisFile ? "Preparing..." : "Play Video",
         onClick: () => onPlayVideoClick(file),
-        icon: isCurrentlyPreparingThisFile ? <Loader2 className="animate-spin" /> : <PlayCircle />,
+        icon: isCurrentlyPreparingThisFile ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlayCircle className="w-3.5 h-3.5"/>,
         disabled: isCurrentlyPreparingThisFile,
       });
     }
@@ -91,7 +96,7 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
     fileMenuItems.push({
       label: "Delete File",
       onClick: () => onDeleteFile(file),
-      icon: <Trash2 />,
+      icon: <Trash2 className="w-3.5 h-3.5"/>,
       className: "text-destructive hover:bg-destructive/10 focus:bg-destructive/10",
     });
 
@@ -159,3 +164,4 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
 );
 
 ContentFileItem.displayName = "ContentFileItem";
+

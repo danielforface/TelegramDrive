@@ -1,4 +1,5 @@
 
+
 export interface CloudFile {
   id: string;
   name: string;
@@ -175,7 +176,6 @@ export type { FileHash as AppFileHash };
 export interface CloudChannelConfigEntry {
   type: 'file' | 'folder'; // 'file' entries are not directly stored in config, but helps model structure
   name: string; // Original name, path is derived from structure
-  // For files, details are in the message itself + caption, not typically duplicated in config
   created_at: string; // ISO timestamp for the entry
   modified_at: string; // ISO timestamp for the entry
   entries?: { [name: string]: CloudChannelConfigEntry }; // For folders
@@ -201,3 +201,9 @@ export interface MenuItemType {
   isSeparator?: boolean;
   className?: string; // For specific styling like destructive actions
 }
+
+export type ClipboardItemType =
+  | { type: 'file'; file: CloudFile; originalPath: string | null; parentInputPeer?: InputPeer | null }
+  | { type: 'folder'; folderName: string; folderConfig: CloudChannelConfigEntry; originalPath: string; parentInputPeer?: InputPeer | null }
+  | null;
+

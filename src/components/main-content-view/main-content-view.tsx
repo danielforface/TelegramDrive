@@ -2,18 +2,18 @@
 "use client";
 
 import * as React from "react";
-import type { CloudFile, CloudFolder, CloudChannelConfigV1, CloudChannelConfigEntry, InputPeer, MenuItemType } from "@/types";
+import type { CloudFile, CloudFolder, CloudChannelConfigV1, CloudChannelConfigEntry, InputPeer, MenuItemType, ClipboardItemType } from "@/types";
 import { ContentFileItem } from "./content-file-item";
 import { ContentFolderItem } from "./content-folder-item";
 import { Button } from "@/components/ui/button";
-import { Search, FolderOpen, Loader2, CalendarDays, XCircle as ClearIcon, UploadCloud, Cloud, FolderPlus, ArrowUpCircle, ChevronRight, FolderUp, ArrowLeftCircle } from "lucide-react";
+import { Search, FolderOpen, Loader2, CalendarDays, XCircle as ClearIcon, UploadCloud, Cloud, FolderPlus, ArrowUpCircle, ChevronRight, FolderUp, ArrowLeftCircle, ClipboardPaste } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { format, isToday, isYesterday, startOfDay, isSameDay, isSameMonth } from "date-fns";
 import { parseVfsPathFromCaption, getEntriesForPath, normalizePath, getParentPath } from "@/lib/vfsUtils";
-import { ContextMenu } from "@/components/context-menu"; // Import new ContextMenu
+import { ContextMenu } from "@/components/context-menu"; 
 
 interface MainContentViewProps {
   folderName: string | null;
@@ -37,6 +37,10 @@ interface MainContentViewProps {
   onDeleteFile: (file: CloudFile) => void;
   onDeleteVirtualFolder: (folderPath: string, folderName: string, parentInputPeer?: InputPeer) => void;
   selectedFolderInputPeer?: InputPeer | null;
+  onCopyFile: (file: CloudFile) => void;
+  onCopyFolderStructure: (folderName: string, folderConfig: CloudChannelConfigEntry) => void;
+  onPasteItem: (targetPath: string) => void;
+  clipboardItem: ClipboardItemType;
 }
 
 const TABS_CONFIG = [
@@ -74,6 +78,10 @@ export function MainContentView({
   onDeleteFile,
   onDeleteVirtualFolder,
   selectedFolderInputPeer,
+  onCopyFile,
+  onCopyFolderStructure,
+  onPasteItem,
+  clipboardItem,
 }: MainContentViewProps) {
   const [activeTab, setActiveTab] = useState("all");
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
@@ -98,13 +106,11 @@ export function MainContentView({
 
 
   const handleSearchButtonClick = () => {
-    // Search functionality to be implemented
   };
 
   const handleBackgroundContextMenu = (event: React.MouseEvent) => {
     event.preventDefault();
-    // Only trigger if right-click is directly on the background and it's a cloud channel
-    const clickedOnItem = (event.target as HTMLElement).closest('.grid > div') || (event.target as HTMLElement).closest('[data-file-item="true"]') || (event.target as HTMLElement).closest('[data-folder-item="true"]');
+    const clickedOnItem = (event.target as HTMLElement).closest('[data-file-item="true"]') || (event.target as HTMLElement).closest('[data-folder-item="true"]');
     if (clickedOnItem || !isCloudChannel) {
       setBackgroundContextMenu({ visible: false, x: 0, y: 0, items: [] });
       return;
@@ -114,16 +120,26 @@ export function MainContentView({
       {
         label: "Create New Folder Here",
         onClick: () => onOpenCreateVirtualFolderDialog(currentVirtualPath),
-        icon: <FolderPlus className="mr-2 h-4 w-4" />,
+        icon: <FolderPlus className="w-3.5 h-3.5" />,
         disabled: !isCloudChannel,
       },
-      {
-        label: "Go Up One Level",
-        onClick: () => onNavigateVirtualPath(getParentPath(currentVirtualPath)),
-        icon: <ArrowLeftCircle className="mr-2 h-4 w-4" />,
-        disabled: !isCloudChannel || currentVirtualPath === '/',
-      },
     ];
+
+    if (clipboardItem) {
+      menuItems.push({
+        label: `Paste ${clipboardItem.type === 'file' ? `"${clipboardItem.file.name}"` : `"${clipboardItem.folderName}"`}`,
+        onClick: () => onPasteItem(currentVirtualPath),
+        icon: <ClipboardPaste className="w-3.5 h-3.5" />,
+      });
+    }
+
+    menuItems.push({
+      label: "Go Up One Level",
+      onClick: () => onNavigateVirtualPath(getParentPath(currentVirtualPath)),
+      icon: <ArrowLeftCircle className="w-3.5 h-3.5" />,
+      disabled: !isCloudChannel || currentVirtualPath === '/',
+    });
+
 
     setBackgroundContextMenu({
       visible: true,
@@ -134,7 +150,7 @@ export function MainContentView({
   };
 
   const closeBackgroundContextMenu = () => {
-    setBackgroundContextMenu({ visible: false, x: 0, y: 0, items: [] });
+    setBackgroundContextMenu({ ...backgroundContextMenu, visible: false });
   };
 
 
@@ -286,11 +302,13 @@ export function MainContentView({
                     <ContentFolderItem
                       key={`vfs-folder-${item.name}-${index}`}
                       folder={syntheticFolder}
+                      folderConfigEntry={item.entry}
                       itemCountOverride={item.itemCount}
                       style={{ animationDelay: `${index * 30}ms` }}
                       onClick={() => onNavigateVirtualPath(normalizePath(currentVirtualPath + item.name + '/'))}
                       onDelete={() => onDeleteVirtualFolder(normalizePath(currentVirtualPath + item.name + '/'), item.name, selectedFolderInputPeer)}
                       onCreateFolderInside={() => onOpenCreateVirtualFolderDialog(normalizePath(currentVirtualPath + item.name + '/'))}
+                      onCopyFolderStructure={onCopyFolderStructure}
                       isCloudChannelContext={true}
                     />
                 );
@@ -307,6 +325,7 @@ export function MainContentView({
                       isPreparingStream={isPreparingStream && preparingStreamForFileId === item.cloudFile.id}
                       preparingStreamForFileId={preparingStreamForFileId}
                       onDeleteFile={() => onDeleteFile(item.cloudFile)}
+                      onCopyFile={onCopyFile}
                     />
                 );
               }
@@ -355,6 +374,7 @@ export function MainContentView({
                     isPreparingStream={isPreparingStream && preparingStreamForFileId === file.id}
                     preparingStreamForFileId={preparingStreamForFileId}
                     onDeleteFile={() => onDeleteFile(file)}
+                    onCopyFile={onCopyFile}
                   />
               );
               return (
@@ -493,3 +513,4 @@ export function MainContentView({
     </div>
   );
 }
+

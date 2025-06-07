@@ -1,4 +1,5 @@
 
+
 'use client';
 
 import MTProto from '@mtproto/core/envs/browser';
@@ -713,7 +714,7 @@ export async function getChatMediaHistory(
     if (messagesArray && messagesArray.length > 0) {
       messagesArray.forEach((msg: any) => {
         if (isCloudChannelFetch && (msg.id === IDENTIFICATION_MESSAGE_ID || msg.id === CONFIG_MESSAGE_ID)) {
-            return; // Skip config/id messages
+            return; 
         }
 
         const shouldProcessForCloud = isCloudChannelFetch && (msg.media || msg.message);
@@ -766,7 +767,7 @@ export async function getChatMediaHistory(
               }
           } else if (isCloudChannelFetch && msg.message && !msg.media) {
             fileName = `vfs_text_entry_${msg.id}`;
-            fileType = 'unknown'; // Or a specific type for text entries if needed
+            fileType = 'unknown'; 
           }
 
 
@@ -1300,7 +1301,7 @@ export async function fetchAndVerifyManagedCloudChannels(): Promise<CloudFolder[
       offset_date: 0,
       offset_id: 0,
       offset_peer: { _: 'inputPeerEmpty' },
-      limit: 200,
+      limit: 200, // Increased limit to catch more channels potentially
       hash: 0,
     });
 
@@ -1424,7 +1425,8 @@ async function updateCloudChannelConfig(channelInputPeer: InputPeer, newConfig: 
 export async function addVirtualFolderToCloudChannel(
   channelInputPeer: InputPeer,
   parentVirtualPath: string,
-  newFolderName: string
+  newFolderName: string,
+  folderStructureToPaste?: { [name: string]: CloudChannelConfigEntry }
 ): Promise<CloudChannelConfigV1 | null> {
   if (!channelInputPeer) {
     throw new Error("Channel inputPeer is required.");
@@ -1450,17 +1452,25 @@ export async function addVirtualFolderToCloudChannel(
     targetEntries = targetEntries[segment].entries!;
   }
 
-  if (targetEntries[newFolderName]) {
+  let finalFolderName = newFolderName;
+  if (targetEntries[finalFolderName] && folderStructureToPaste) { // Name collision when pasting
+    finalFolderName = `${newFolderName}_copy`;
+    let copyIndex = 1;
+    while (targetEntries[finalFolderName]) {
+        finalFolderName = `${newFolderName}_copy${copyIndex++}`;
+    }
+  } else if (targetEntries[finalFolderName]) {
     throw new Error(`Folder "${newFolderName}" already exists at path "${parentVirtualPath}".`);
   }
 
+
   const now = new Date().toISOString();
-  targetEntries[newFolderName] = {
+  targetEntries[finalFolderName] = {
     type: 'folder',
-    name: newFolderName,
+    name: finalFolderName,
     created_at: now,
     modified_at: now,
-    entries: {},
+    entries: folderStructureToPaste || {}, 
   };
 
   currentConfig.last_updated_timestamp_utc = now;
@@ -1479,18 +1489,26 @@ async function verifyAndProcessSinglePotentialCloudChannel(
   channelObjectFromUpdate: any,
   usersForTitleContext: any[] = []
 ): Promise<void> {
-  if (!onNewCloudChannelVerifiedCallback || !channelObjectFromUpdate || channelObjectFromUpdate._ !== 'channel' || channelObjectFromUpdate.access_hash === undefined) {
+  if (!onNewCloudChannelVerifiedCallback || !channelObjectFromUpdate || !messageInputPeer || messageInputPeer._ !== 'inputPeerChannel') {
     return;
   }
 
   const definitiveInputPeer: InputPeer = {
     _: 'inputPeerChannel',
-    channel_id: channelObjectFromUpdate.id,
-    access_hash: channelObjectFromUpdate.access_hash,
+    channel_id: messageInputPeer.channel_id,
+    access_hash: messageInputPeer.access_hash,
   };
+  
+  // If channelObjectFromUpdate has more reliable access_hash, prefer it
+  if (channelObjectFromUpdate && channelObjectFromUpdate._ === 'channel' && channelObjectFromUpdate.id === definitiveInputPeer.channel_id && channelObjectFromUpdate.access_hash) {
+      definitiveInputPeer.access_hash = channelObjectFromUpdate.access_hash;
+  }
+
 
   let isIdentified = false;
   let parsedConfig: CloudChannelConfigV1 | null = null;
+  const channelTitleForVerification = channelObjectFromUpdate.title || `Channel ${definitiveInputPeer.channel_id}`;
+
 
   try {
     const messagesResult = await api.call('channels.getMessages', {
@@ -1506,7 +1524,7 @@ async function verifyAndProcessSinglePotentialCloudChannel(
       const configMessage = messagesResult.messages.find((m: any) => m.id === CONFIG_MESSAGE_ID && m._ === 'message');
 
       if (idMessage && typeof idMessage.message === 'string') {
-        const expectedIdText = `${IDENTIFICATION_MESSAGE_PREFIX}${channelObjectFromUpdate.title}${IDENTIFICATION_MESSAGE_SUFFIX}`;
+        const expectedIdText = `${IDENTIFICATION_MESSAGE_PREFIX}${channelTitleForVerification}${IDENTIFICATION_MESSAGE_SUFFIX}`;
         if (idMessage.message === expectedIdText) {
           isIdentified = true;
         }
@@ -1543,7 +1561,7 @@ async function verifyAndProcessSinglePotentialCloudChannel(
 
     if (cloudFolder) {
       onNewCloudChannelVerifiedCallback(cloudFolder, 'update');
-      await ensureChannelInCloudFolder(definitiveInputPeer, channelObjectFromUpdate.title || `Channel ${definitiveInputPeer.channel_id}`);
+      await ensureChannelInCloudFolder(definitiveInputPeer, channelTitleForVerification);
     }
   }
 }
@@ -1577,32 +1595,27 @@ async function handleTelegramUpdate(updateInfo: any): Promise<void> {
         const channelIdFromMessage = message.peer_id?.channel_id || message.to_id?.channel_id;
         if (channelIdFromMessage) {
           channelEntityFromUpdate = chatsFromUpdate.find((c:any) => String(c.id) === String(channelIdFromMessage));
-          if(channelEntityFromUpdate && channelEntityFromUpdate.access_hash !== undefined) {
-            peerFromMessageEvent = {
-                _: 'inputPeerChannel',
-                channel_id: channelEntityFromUpdate.id,
-                access_hash: channelEntityFromUpdate.access_hash,
-            };
-          }
+          peerFromMessageEvent = channelEntityFromUpdate ? {
+            _: 'inputPeerChannel',
+            channel_id: channelEntityFromUpdate.id,
+            access_hash: channelEntityFromUpdate.access_hash,
+          } : null;
         }
       }
     } else if (update._ === 'updateChatParticipantAdd' || update._ === 'updateChannel') {
-        // A new channel was created or we joined one, or channel metadata updated
         const channelId = update.channel_id || (update.channel ? update.channel.id : null) || (update.chat ? update.chat.id : null);
         if (channelId) {
             channelEntityFromUpdate = chatsFromUpdate.find((c: any) => String(c.id) === String(channelId));
-            if (channelEntityFromUpdate && channelEntityFromUpdate._ === 'channel' && channelEntityFromUpdate.access_hash !== undefined) {
-                 peerFromMessageEvent = {
-                    _: 'inputPeerChannel',
-                    channel_id: channelEntityFromUpdate.id,
-                    access_hash: channelEntityFromUpdate.access_hash
-                };
-            }
+             peerFromMessageEvent = channelEntityFromUpdate && channelEntityFromUpdate._ === 'channel' && channelEntityFromUpdate.access_hash !== undefined ? {
+                _: 'inputPeerChannel',
+                channel_id: channelEntityFromUpdate.id,
+                access_hash: channelEntityFromUpdate.access_hash
+            } : null;
         }
     }
 
 
-    if (channelEntityFromUpdate && peerFromMessageEvent) {
+    if (channelEntityFromUpdate && peerFromMessageEvent && peerFromMessageEvent.access_hash) {
       await verifyAndProcessSinglePotentialCloudChannel(peerFromMessageEvent, channelEntityFromUpdate, usersFromUpdate);
     }
   }
@@ -1702,10 +1715,8 @@ export async function deleteTelegramMessages(inputPeer: InputPeer, messageIds: n
   try {
     const result = await api.call('messages.deleteMessages', {
       id: messageIds,
-      revoke: true, // Delete for everyone
+      revoke: true, 
     });
-    // The result is usually an array of ptsUpdate objects, or messages.affectedMessages
-    // Success is implied if no error is thrown and we get some form of confirmation.
     return result && (Array.isArray(result) || result._ === 'messages.affectedMessages');
   } catch (error: any) {
     throw error;
@@ -1730,13 +1741,12 @@ export async function removeVirtualFolderFromCloudChannel(
   }
 
   const segments = normalizedPathToRemove.split('/').filter(segment => segment.length > 0);
-  const folderNameToDelete = segments.pop(); // The last segment is the folder name
+  const folderNameToDelete = segments.pop(); 
   if (!folderNameToDelete) {
     throw new Error("Invalid path for deletion, folder name not found.");
   }
 
   let parentEntries = currentConfig.root_entries;
-  // Navigate to the parent directory of the folder to be deleted
   for (const segment of segments) {
     if (!parentEntries[segment] || parentEntries[segment].type !== 'folder' || !parentEntries[segment].entries) {
       throw new Error(`Path segment "${segment}" not found or not a folder in config while trying to find parent of "${folderNameToDelete}".`);
@@ -1748,15 +1758,36 @@ export async function removeVirtualFolderFromCloudChannel(
     throw new Error(`Virtual folder "${folderNameToDelete}" not found at path "${segments.join('/') || '/'}" for deletion.`);
   }
 
-  // For now, we just delete the entry.
-  // A more robust solution might check if the virtual folder contains files (by scanning captions)
-  // or sub-virtual-folders and decide on a deletion strategy (e.g., only allow empty, or recursive -- complex).
   delete parentEntries[folderNameToDelete];
 
   currentConfig.last_updated_timestamp_utc = new Date().toISOString();
   const success = await updateCloudChannelConfig(channelInputPeer, currentConfig);
 
   return success ? currentConfig : null;
+}
+
+export async function editMessageCaption(
+  inputPeer: InputPeer,
+  messageId: number,
+  newCaption: string
+): Promise<boolean> {
+  if (!inputPeer) {
+    throw new Error("InputPeer is required to edit message caption.");
+  }
+  try {
+    const result = await api.call('messages.editMessage', {
+      peer: inputPeer,
+      id: messageId,
+      message: newCaption,
+      no_webpage: true, // Typically true for VFS captions
+    });
+    // Successful edit usually returns an Updates object or similar confirmation.
+    // For simplicity, we check if a result is returned.
+    return !!result;
+  } catch (error: any) {
+    // console.error("Error editing message caption:", error);
+    throw error; // Re-throw to be handled by caller
+  }
 }
 
 

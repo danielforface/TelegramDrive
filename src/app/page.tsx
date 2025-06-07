@@ -15,13 +15,13 @@ import { UploadDialog } from "@/components/upload-dialog";
 import { CreateCloudChannelDialog } from "@/components/create-cloud-channel-dialog";
 import { CreateVirtualFolderDialog } from "@/components/create-virtual-folder-dialog";
 import { DeleteItemConfirmationDialog } from "@/components/delete-item-confirmation-dialog";
-import type { CloudFolder, CloudFile, DownloadQueueItemType, ExtendedFile, DialogFilter, CloudChannelType, CloudChannelConfigV1, InputPeer } from "@/types";
+import type { CloudFolder, CloudFile, DownloadQueueItemType, ExtendedFile, DialogFilter, CloudChannelType, CloudChannelConfigV1, InputPeer, ClipboardItemType, CloudChannelConfigEntry } from "@/types";
 import { Button } from "@/components/ui/button";
 import { RefreshCw, Loader2, LayoutPanelLeft, MessageSquare, Cloud } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import * as telegramService from "@/services/telegramService";
 import { ALL_CHATS_FILTER_ID } from "@/services/telegramService";
-import { normalizePath, getParentPath } from "@/lib/vfsUtils";
+import { normalizePath, getParentPath, parseVfsPathFromCaption } from "@/lib/vfsUtils";
 
 
 const INITIAL_MASTER_CHATS_LOAD_LIMIT = 100;
@@ -148,6 +148,8 @@ export default function Home() {
   const [isDeleteItemDialogOpen, setIsDeleteItemDialogOpen] = useState(false);
   const [isProcessingDeletion, setIsProcessingDeletion] = useState(false);
 
+  const [clipboardItem, setClipboardItem] = useState<ClipboardItemType>(null);
+
 
   const activeDownloadsRef = useRef<Set<string>>(new Set());
   const downloadQueueRef = useRef<DownloadQueueItemType[]>([]);
@@ -159,9 +161,6 @@ export default function Home() {
   const telegramUpdateListenerInitializedRef = useRef(false);
 
   const { toast } = useToast();
-
-  // ORDERING OF useCallback-WRAPPED FUNCTIONS IS CRITICAL FOR SSR AND TO AVOID INITIALIZATION ERRORS.
-  // Functions must be defined before they are used as dependencies in other useCallback hooks.
 
   const handleReset = useCallback(async (performServerLogout = true) => {
     const currentIsConnected = isConnected;
@@ -247,8 +246,9 @@ export default function Home() {
     setItemToDelete(null);
     setIsDeleteItemDialogOpen(false);
     setIsProcessingDeletion(false);
+    setClipboardItem(null);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected, toast, videoStreamUrl]); // handleReset has minimal internal useCallback deps
+  }, [isConnected, toast, videoStreamUrl]); 
 
   const handleApiError = useCallback((error: any, title: string, defaultMessage: string) => {
     let description = error.message || defaultMessage;
@@ -447,7 +447,7 @@ export default function Home() {
       setIsLoadingDialogFilters(false);
     }
   }, [isConnected, handleApiError, activeDialogFilterId, hasFetchedDialogFiltersOnce, dialogFilters, fetchAndCacheDialogs, isReorderingFolders]);
-
+  
   const handleNewCloudChannelDiscovered = useCallback((newlyVerifiedFolder: CloudFolder, source: 'update' | 'initialScan') => {
     setAppManagedCloudFolders(prevFolders => {
         const exists = prevFolders.some(f => f.id === newlyVerifiedFolder.id);
@@ -1014,8 +1014,8 @@ export default function Home() {
         updateUiForFile(fileToUpload.id, 100, 'completed');
         toast({ title: "Upload Successful!", description: `${fileToUpload.name} uploaded to ${selectedFolder.name}.` });
 
-        if (selectedFolder && selectedFolder.id === selectedFolder?.id) { // Check if the selected folder is still the one being uploaded to
-           fetchInitialChatMedia(selectedFolder); // Re-fetch media for the current folder
+        if (selectedFolder && selectedFolder.id === selectedFolder?.id) { 
+           fetchInitialChatMedia(selectedFolder); 
         }
       } catch (error: any) {
         if (controller.signal.aborted || error.name === 'AbortError' || error.message?.includes('aborted')) {
@@ -1064,9 +1064,7 @@ export default function Home() {
                 return [...prevFolders, newCloudFolder].sort((a,b) => a.name.localeCompare(b.name));
             });
 
-            // Fetch all app managed channels again to ensure full sync and correct "Cloudifier Storage" folder update
             await fetchAppManagedCloudChannels(true);
-            // Also refresh dialog filters to pick up any changes to the "Cloudifier Storage" telegram folder
             await fetchDialogFilters(true);
 
         } else {
@@ -1079,7 +1077,7 @@ export default function Home() {
     }
   };
 
-  const handleCreateVirtualFolder = async (newFolderName: string) => {
+  const handleCreateVirtualFolder = async (newFolderName: string, structureToPaste?: { [name: string]: CloudChannelConfigEntry }) => {
     if (!selectedFolder || !selectedFolder.isAppManagedCloud || !selectedFolder.inputPeer) {
       toast({ title: "Error", description: "No cloud channel selected or inputPeer missing.", variant: "destructive" });
       return;
@@ -1089,7 +1087,8 @@ export default function Home() {
       const updatedConfig = await telegramService.addVirtualFolderToCloudChannel(
         selectedFolder.inputPeer,
         virtualFolderParentPath,
-        newFolderName
+        newFolderName,
+        structureToPaste
       );
 
       if (updatedConfig) {
@@ -1152,8 +1151,91 @@ export default function Home() {
     }
   };
 
+  const handleCopyFile = (file: CloudFile) => {
+    if (!selectedFolder || !selectedFolder.inputPeer) {
+      toast({ title: "Error", description: "Cannot copy: Selected folder or its peer is invalid.", variant: "destructive"});
+      return;
+    }
+    const currentFileVfsPath = parseVfsPathFromCaption(file.caption);
+    setClipboardItem({
+      type: 'file',
+      file: { ...file },
+      originalPath: currentFileVfsPath || currentVirtualPath, // Prefer specific path, fallback to current
+      parentInputPeer: selectedFolder.inputPeer
+    });
+    toast({ title: "File Copied", description: `"${file.name}" copied to clipboard.` });
+  };
 
-  // Utility and other handlers (keep these below main async logic handlers if they don't have useCallback deps on them)
+  const handleCopyFolderStructure = (folderName: string, folderConfig: CloudChannelConfigEntry) => {
+     if (!selectedFolder || !selectedFolder.isAppManagedCloud || !selectedFolder.inputPeer) {
+      toast({ title: "Error", description: "Cannot copy: Not in a cloud channel or peer is invalid.", variant: "destructive"});
+      return;
+    }
+    setClipboardItem({
+      type: 'folder',
+      folderName,
+      folderConfig: JSON.parse(JSON.stringify(folderConfig)), // Deep copy
+      originalPath: normalizePath(currentVirtualPath + folderName),
+      parentInputPeer: selectedFolder.inputPeer
+    });
+    toast({ title: "Folder Structure Copied", description: `Structure for "${folderName}" copied to clipboard.` });
+  };
+
+  const handlePasteItem = async (targetPath: string) => {
+    if (!clipboardItem) {
+      toast({ title: "Clipboard Empty", description: "Nothing to paste.", variant: "default" });
+      return;
+    }
+    if (!selectedFolder || !selectedFolder.inputPeer || !selectedFolder.isAppManagedCloud) {
+      toast({ title: "Paste Error", description: "Pasting is only supported within cloud channels.", variant: "destructive" });
+      return;
+    }
+
+    setIsProcessingVirtualFolder(true); // Re-use this loading state for now
+    const targetInputPeer = selectedFolder.inputPeer;
+
+    try {
+      if (clipboardItem.type === 'file') {
+        const { file, originalPath } = clipboardItem;
+        if (normalizePath(originalPath || '') === normalizePath(targetPath)) {
+          toast({ title: "Paste Skipped", description: "File is already in this location.", variant: "default" });
+          return;
+        }
+        
+        const newCaption = JSON.stringify({ path: normalizePath(targetPath) });
+        const success = await telegramService.editMessageCaption(
+          targetInputPeer,
+          file.messageId,
+          newCaption
+        );
+
+        if (success) {
+          toast({ title: "File Moved", description: `"${file.name}" moved to ${targetPath}.` });
+          setClipboardItem(null); // Clear clipboard after successful paste
+          // Refresh current view and potentially original folder view if it was different
+          fetchInitialChatMedia(selectedFolder);
+          // Consider more targeted refresh if performance becomes an issue
+        } else {
+          toast({ title: "Move Failed", description: "Could not update file caption.", variant: "destructive" });
+        }
+      } else if (clipboardItem.type === 'folder') {
+        const { folderName, folderConfig } = clipboardItem;
+        // Use handleCreateVirtualFolder which now supports pasting structure
+        // Ensure virtualFolderParentPath is set correctly for handleCreateVirtualFolder
+        setVirtualFolderParentPath(normalizePath(targetPath));
+        // Let handleCreateVirtualFolder handle its own loading state and dialog closing
+        setIsProcessingVirtualFolder(false); // Release general loading state
+        await handleCreateVirtualFolder(folderName, folderConfig.entries); // Pass entries for pasting
+        setClipboardItem(null); // Clear clipboard after successful paste
+      }
+    } catch (error: any) {
+      toast({ title: "Paste Error", description: error.message || "An unknown error occurred.", variant: "destructive" });
+    } finally {
+      setIsProcessingVirtualFolder(false);
+    }
+  };
+
+
   const peerToKey = useCallback((peer: any): string | null => {
     if (!peer) return null;
     if (peer._ === 'inputPeerUser') return `user:${String(peer.user_id)}`;
@@ -1169,6 +1251,7 @@ export default function Home() {
       setCurrentVirtualPath("/");
       fetchInitialChatMedia(folder);
       setIsChatSelectionDialogOpen(false);
+      setClipboardItem(null);
     } else {
       setSelectedFolder(null);
       setCurrentChatMedia([]);
@@ -1182,6 +1265,7 @@ export default function Home() {
       setCurrentVirtualPath("/");
       fetchInitialChatMedia(channel);
       setIsCloudStorageSelectorOpen(false);
+      setClipboardItem(null);
     } else {
       setSelectedFolder(null);
       setCurrentChatMedia([]);
@@ -1291,7 +1375,7 @@ export default function Home() {
         toast({ title: "Folder Order Saved", description: "The new folder order has been saved to Telegram." });
       } catch (error: any) {
         handleApiError(error, "Error Saving Order", "Could not save the folder order.");
-        setHasFetchedDialogFiltersOnce(false); // Force refresh if save fails
+        setHasFetchedDialogFiltersOnce(false); 
         await fetchDialogFilters();
       }
     }
@@ -1361,7 +1445,7 @@ export default function Home() {
                  setMasterChatListPaginationForFiltering(initialPaginationState);
             }
         }
-        setLastFetchedFilterId(null); // This will trigger re-fetch in useEffect
+        setLastFetchedFilterId(null); 
     }
   };
 
@@ -1380,20 +1464,26 @@ export default function Home() {
   };
 
   const handleDeleteFile = (file: CloudFile) => {
-    if (!file.inputPeer) {
+    if (!file.inputPeer && (!selectedFolder || !selectedFolder.inputPeer)) {
         toast({ title: "Error", description: "Cannot delete file: InputPeer is missing.", variant: "destructive" });
         return;
     }
-    setItemToDelete({ type: 'file', file, parentInputPeer: file.inputPeer });
+    const parentInputPeer = file.inputPeer || selectedFolder?.inputPeer;
+    if(!parentInputPeer) {
+      toast({ title: "Error", description: "Critical: Parent InputPeer for file deletion could not be determined.", variant: "destructive" });
+      return;
+    }
+    setItemToDelete({ type: 'file', file, parentInputPeer });
     setIsDeleteItemDialogOpen(true);
   };
 
   const handleDeleteVirtualFolder = (folderPath: string, folderName: string, parentInputPeer?: InputPeer | null) => {
-     if (!parentInputPeer) {
+     const actualParentInputPeer = parentInputPeer || selectedFolder?.inputPeer;
+     if (!actualParentInputPeer) {
         toast({ title: "Error", description: "Cannot delete virtual folder: Parent InputPeer is missing.", variant: "destructive" });
         return;
     }
-    setItemToDelete({ type: 'virtualFolder', path: folderPath, name: folderName, parentInputPeer });
+    setItemToDelete({ type: 'virtualFolder', path: folderPath, name: folderName, parentInputPeer: actualParentInputPeer });
     setIsDeleteItemDialogOpen(true);
   };
 
@@ -1429,14 +1519,14 @@ export default function Home() {
     } else if (filterType === 'dialogFilter') {
       if (cachedEntry?.error === 'FOLDER_ID_INVALID_FALLBACK') {
         if (masterCacheEntry?.pagination.hasMore && !masterCacheEntry.isLoading) {
-          fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, true); // Fetch more for fallback
+          fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, true); 
         }
       } else if (cachedEntry?.pagination.hasMore && !cachedEntry.isLoading) {
-        fetchDataForActiveFilter(true); // Fetch more for the specific filter
+        fetchDataForActiveFilter(true); 
       }
     } else if (filterType === 'dialogFilterChatlist') {
       if (masterCacheEntry?.pagination.hasMore && !masterCacheEntry.isLoading) {
-        fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, true); // Chatlists filter from All Chats
+        fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, true); 
       }
     }
   }, [activeFilterDetails, isLoadingDisplayedChats, chatDataCache, fetchDataForActiveFilter, fetchAndCacheDialogs]);
@@ -1450,7 +1540,7 @@ export default function Home() {
   useEffect(() => {
     checkExistingConnection();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // checkExistingConnection is wrapped in useCallback with its dependencies
+  }, []); 
 
   useEffect(() => {
     if (isLoadingDialogFilters) {
@@ -1516,6 +1606,7 @@ export default function Home() {
             setSelectedFolder(null);
             setCurrentChatMedia([]);
             setCurrentVirtualPath("/");
+            setClipboardItem(null);
         }
         setLastFetchedFilterId(filterIdToFetch);
         fetchDataForActiveFilter(false);
@@ -2050,6 +2141,10 @@ export default function Home() {
                     onDeleteFile={handleDeleteFile}
                     onDeleteVirtualFolder={handleDeleteVirtualFolder}
                     selectedFolderInputPeer={selectedFolder.inputPeer}
+                    onCopyFile={handleCopyFile}
+                    onCopyFolderStructure={handleCopyFolderStructure}
+                    onPasteItem={handlePasteItem}
+                    clipboardItem={clipboardItem}
                  />
             ) : (
                 <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground p-4">
@@ -2140,7 +2235,7 @@ export default function Home() {
       <CreateVirtualFolderDialog
         isOpen={isCreateVirtualFolderDialogOpen}
         onClose={() => setIsCreateVirtualFolderDialogOpen(false)}
-        onCreate={handleCreateVirtualFolder}
+        onCreate={(folderName) => handleCreateVirtualFolder(folderName)}
         isLoading={isProcessingVirtualFolder}
         parentPath={virtualFolderParentPath}
       />
@@ -2213,3 +2308,4 @@ function cachedDataForActiveFilterIsLoading(activeFilterDetails: DialogFilter | 
 }
 
     
+

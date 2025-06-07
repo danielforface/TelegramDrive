@@ -1,12 +1,12 @@
 
 "use client";
 
-import type { CloudFolder, MenuItemType } from "@/types";
-import { Folder as FolderIcon, FolderOpen, FolderPlus, Trash2 } from "lucide-react";
+import type { CloudFolder, MenuItemType, CloudChannelConfigEntry } from "@/types";
+import { Folder as FolderIcon, FolderOpen, FolderPlus, Trash2, CopyCheck } from "lucide-react";
 import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
-import { ContextMenu } from "@/components/context-menu"; // Import new ContextMenu
+import { ContextMenu } from "@/components/context-menu"; 
 import React, { useState } from "react";
 
 
@@ -18,6 +18,8 @@ interface ContentFolderItemProps {
   isCloudChannelContext?: boolean;
   onDelete?: () => void;
   onCreateFolderInside?: () => void;
+  onCopyFolderStructure?: (folderName: string, folderConfig: CloudChannelConfigEntry) => void;
+  folderConfigEntry?: CloudChannelConfigEntry; // Pass the config entry for copying
 }
 
 export function ContentFolderItem({
@@ -27,7 +29,9 @@ export function ContentFolderItem({
   itemCountOverride,
   isCloudChannelContext = false,
   onDelete,
-  onCreateFolderInside
+  onCreateFolderInside,
+  onCopyFolderStructure,
+  folderConfigEntry,
 }: ContentFolderItemProps) {
   
   const [contextMenu, setContextMenu] = useState<{
@@ -49,7 +53,7 @@ export function ContentFolderItem({
                          "general folder";
 
   const handleCardClick = (e: React.MouseEvent) => {
-    if (e.button !== 2 && onClick) { // Only trigger onClick for left-clicks
+    if (e.button !== 2 && onClick) { 
         onClick();
     }
   };
@@ -60,14 +64,21 @@ export function ContentFolderItem({
       folderMenuItems.push({
         label: "Open Folder",
         onClick: () => onClick(),
-        icon: <FolderOpen />,
+        icon: <FolderOpen className="w-3.5 h-3.5"/>,
       });
     }
     if (onCreateFolderInside) {
       folderMenuItems.push({
-        label: "Create New Folder Inside",
+        label: "Create Folder Inside",
         onClick: () => onCreateFolderInside(),
-        icon: <FolderPlus />,
+        icon: <FolderPlus className="w-3.5 h-3.5"/>,
+      });
+    }
+    if (onCopyFolderStructure && folderConfigEntry) {
+      folderMenuItems.push({
+        label: "Copy Folder Structure",
+        onClick: () => onCopyFolderStructure(folder.name, folderConfigEntry),
+        icon: <CopyCheck className="w-3.5 h-3.5"/>,
       });
     }
     if (onDelete) {
@@ -75,7 +86,7 @@ export function ContentFolderItem({
       folderMenuItems.push({
         label: "Delete Virtual Folder",
         onClick: () => onDelete(),
-        icon: <Trash2 />,
+        icon: <Trash2 className="w-3.5 h-3.5"/>,
         className: "text-destructive hover:bg-destructive/10 focus:bg-destructive/10",
       });
     }
@@ -149,3 +160,4 @@ export function ContentFolderItem({
     </div>
   );
 }
+
