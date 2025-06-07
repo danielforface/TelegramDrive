@@ -4,7 +4,7 @@
 import React, { forwardRef, type MouseEvent } from "react";
 import type { CloudFile } from "@/types";
 import { FileText, Image as ImageIcon, Video, FileAudio, FileQuestion, Download, Info, Eye, PlayCircle, Loader2, Trash2 } from "lucide-react";
-import { Card } from "@/components/ui/card"; // Removed CardContent, CardFooter
+import { Card } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import {
@@ -24,7 +24,7 @@ interface ContentFileItemProps {
   onPlayVideoClick: (file: CloudFile) => void;
   isPreparingStream?: boolean;
   preparingStreamForFileId?: string | null;
-  onDeleteFile: (file: CloudFile) => void; // New prop
+  onDeleteFile: (file: CloudFile) => void;
 }
 
 const FileTypeIcon = ({ type, name, dataAiHint }: { type: CloudFile['type'], name: string, dataAiHint?: string }) => {
@@ -48,23 +48,31 @@ const FileTypeIcon = ({ type, name, dataAiHint }: { type: CloudFile['type'], nam
 
 export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
   ({ file, style, onDetailsClick, onQueueDownloadClick, onViewImageClick, onPlayVideoClick, isPreparingStream, preparingStreamForFileId, onDeleteFile }, ref) => {
+    const [isMenuOpen, setIsMenuOpen] = React.useState(false);
 
     const handleCardClick = (e: MouseEvent) => {
-      // Prevent card click if dropdown trigger or item was clicked
-      if ((e.target as HTMLElement).closest('[data-radix-dropdown-menu-trigger]') || (e.target as HTMLElement).closest('[role="menuitem"]')) {
+      if ((e.target as HTMLElement).closest('[role="menuitem"]')) {
         return;
       }
-      onDetailsClick(file);
+      // If not a context menu click (right-click)
+      if (e.button !== 2) {
+        onDetailsClick(file);
+      }
+    };
+
+    const handleContextMenu = (event: React.MouseEvent) => {
+      event.preventDefault();
+      setIsMenuOpen(true);
     };
 
     const handleDropdownSelect = (event: Event) => {
-        event.preventDefault(); // Prevent triggering card click
+        // event.preventDefault(); // Not needed if items handle their own stopPropagation
     };
 
     const isCurrentlyPreparingThisFile = isPreparingStream && preparingStreamForFileId === file.id;
 
     return (
-      <DropdownMenu>
+      <DropdownMenu open={isMenuOpen} onOpenChange={setIsMenuOpen}>
         <DropdownMenuTrigger asChild>
           <Card
             ref={ref}
@@ -74,11 +82,15 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
             )}
             style={style}
             onClick={handleCardClick}
-            onContextMenu={(e) => e.stopPropagation()} // Allow dropdown trigger to handle context menu
+            onContextMenu={handleContextMenu}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 if (!(e.target as HTMLElement).closest('[data-radix-dropdown-menu-trigger]')) {
-                  handleCardClick(e as any);
+                   if (e.shiftKey) { // Example: Shift+Enter for context menu
+                     handleContextMenu(e as any);
+                   } else {
+                    onDetailsClick(file);
+                   }
                 }
               }
             }}
@@ -145,5 +157,3 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
 );
 
 ContentFileItem.displayName = "ContentFileItem";
-
-    

@@ -10,7 +10,7 @@ import { Search, FolderOpen, Loader2, CalendarDays, XCircle as ClearIcon, Upload
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { format, isToday, isYesterday, startOfDay, isSameDay, isSameMonth } from "date-fns";
 import { parseVfsPathFromCaption, getEntriesForPath, normalizePath, getParentPath } from "@/lib/vfsUtils";
 import {
@@ -40,9 +40,9 @@ interface MainContentViewProps {
   currentVirtualPath: string;
   onNavigateVirtualPath: (path: string) => void;
   onOpenCreateVirtualFolderDialog: (parentPath: string) => void;
-  onDeleteFile: (file: CloudFile) => void; // New prop
-  onDeleteVirtualFolder: (folderPath: string, folderName: string, parentInputPeer?: InputPeer) => void; // New prop
-  selectedFolderInputPeer?: InputPeer | null; // New prop
+  onDeleteFile: (file: CloudFile) => void;
+  onDeleteVirtualFolder: (folderPath: string, folderName: string, parentInputPeer?: InputPeer) => void;
+  selectedFolderInputPeer?: InputPeer | null;
 }
 
 const TABS_CONFIG = [
@@ -85,6 +85,8 @@ export function MainContentView({
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
+  const [isBackgroundContextMenuOpen, setIsBackgroundContextMenuOpen] = React.useState(false);
+  const mainContentRef = useRef<HTMLDivElement>(null);
 
 
   useEffect(() => {
@@ -100,6 +102,16 @@ export function MainContentView({
     // Search functionality to be implemented
   };
 
+  const handleBackgroundContextMenu = (event: React.MouseEvent) => {
+    if (!isCloudChannel || !mainContentRef.current || !mainContentRef.current.contains(event.target as Node)) {
+        // Only trigger if right-click is directly on the background and it's a cloud channel
+        const clickedOnItem = (event.target as HTMLElement).closest('.grid > div'); // Adjust selector if item cards are different
+        if (clickedOnItem) return;
+    }
+    event.preventDefault();
+    setIsBackgroundContextMenuOpen(true);
+  };
+
   const vfsItems = useMemo(() => {
     if (!isCloudChannel || !cloudConfig) return [];
 
@@ -110,11 +122,10 @@ export function MainContentView({
     if (folderEntriesFromConfig) {
       Object.entries(folderEntriesFromConfig).forEach(([name, entry]) => {
         if (entry.type === 'folder') {
-          const virtualFolderPath = normalizePath(normalizedCurrentPath + name + '/'); // Ensure trailing slash for matching
+          const virtualFolderPath = normalizePath(normalizedCurrentPath + name + '/');
           const subFoldersCount = Object.values(entry.entries || {}).filter(e => e.type === 'folder').length;
           const filesInThisVirtualFolderCount = files.filter(f => {
             const vfsPath = parseVfsPathFromCaption(f.caption);
-            // Ensure exact match for folder path, not just prefix
             return vfsPath === virtualFolderPath && f.messageId !== CONFIG_MESSAGE_ID && f.messageId !== IDENTIFICATION_MESSAGE_ID;
           }).length;
           const totalVirtualItems = subFoldersCount + filesInThisVirtualFolderCount;
@@ -130,7 +141,7 @@ export function MainContentView({
         if (fileMessage.messageId === CONFIG_MESSAGE_ID || fileMessage.messageId === IDENTIFICATION_MESSAGE_ID) {
             return;
         }
-        if (fileMessage.telegramMessage && (fileMessage.telegramMessage.media || (fileMessage.type !== 'unknown' && fileMessage.totalSizeInBytes && fileMessage.totalSizeInBytes > 0))) {
+        if (fileMessage.telegramMessage && (fileMessage.telegramMessage.media || (fileMessage.type !== 'unknown' && fileMessage.totalSizeInBytes && fileMessage.totalSizeInBytes > 0) || fileMessage.message)) {
              displayedFiles.push({ type: 'file', cloudFile: fileMessage });
         }
       }
@@ -138,7 +149,7 @@ export function MainContentView({
 
     return [
       ...displayedFolders.sort((a, b) => a.name.localeCompare(b.name)),
-      ...displayedFiles.sort((a, b) => a.cloudFile.name.localeCompare(b.cloudFile.name)),
+      ...displayedFiles.sort((a, b) => (a.cloudFile.timestamp || 0) < (b.cloudFile.timestamp || 0) ? 1 : -1), // Sort files by timestamp desc
     ];
   }, [isCloudChannel, cloudConfig, files, currentVirtualPath]);
 
@@ -225,12 +236,11 @@ export function MainContentView({
     );
   };
 
-  const mainContent = (
+  const mainItemsContent = (
     <div className="flex-grow overflow-y-auto space-y-0 pr-1 pb-4">
       {isCloudChannel ? (
-        // Cloud Channel VFS View
         vfsItems.length === 0 && !isLoading ? (
-          <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center py-10">
+          <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center py-10 h-full">
             <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
             <p className="text-lg">This folder is empty.</p>
           </div>
@@ -239,7 +249,7 @@ export function MainContentView({
             {vfsItems.map((item, index) => {
               if (item.type === 'folder') {
                 const syntheticFolder: CloudFolder = {
-                  id: item.name,
+                  id: item.name, // Use name as ID for synthetic object
                   name: item.name,
                   files: [],
                   folders: [],
@@ -279,7 +289,6 @@ export function MainContentView({
           </div>
         )
       ) : (
-        // Regular Chat Media View
         displayItemsRegular.length > 0 ? (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
             {displayItemsRegular.map((file, index) => {
@@ -332,14 +341,13 @@ export function MainContentView({
             })}
           </div>
         ) : (
-           <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center py-10">
+           <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center py-10 h-full">
               <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
               <p className="text-lg">No media items to display for the current selection.</p>
            </div>
         )
       )}
 
-      {/* Loading Indicators for both views */}
       {isLoadingMoreMedia && (isCloudChannel ? vfsItems.length > 0 : displayItemsRegular.length > 0) && (
         <div className="flex justify-center items-center p-4 mt-4">
           <Loader2 className="animate-spin h-8 w-8 text-primary" />
@@ -362,7 +370,7 @@ export function MainContentView({
 
 
   const viewContent = (
-    <div className="space-y-4 h-full flex flex-col p-1 md:p-2 lg:p-4">
+    <div ref={mainContentRef} className="space-y-4 h-full flex flex-col p-1 md:p-2 lg:p-4" onContextMenu={handleBackgroundContextMenu}>
       <div className="flex-shrink-0">
           <h1 className="text-3xl font-bold text-primary mb-1 pb-2 border-b flex items-center">
               {isCloudChannel ? <Cloud className="w-8 h-8 mr-3 text-primary/80" /> : null}
@@ -376,7 +384,7 @@ export function MainContentView({
            <>
              {currentVirtualPath !== '/' && (
                <Button variant="outline" onClick={() => onNavigateVirtualPath(getParentPath(currentVirtualPath))} className="w-full sm:w-auto">
-                 <FolderUp className="mr-2 h-4 w-4" /> Up
+                 <FolderUp className="mr-2 h-4 w-4" /> Up One Level
                </Button>
              )}
              <Button variant="outline" onClick={onOpenUploadDialog} className="w-full sm:w-auto">
@@ -429,12 +437,12 @@ export function MainContentView({
       </div>
 
       {isLoading && (isCloudChannel ? vfsItems.length === 0 : displayItemsRegular.length === 0) ? (
-          <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center">
+          <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center h-full">
               <Loader2 className="animate-spin h-12 w-12 text-primary mb-4" />
               <p className="text-lg">{isCloudChannel ? "Loading cloud storage contents..." : "Loading media..."}</p>
           </div>
       ) : noResultsForFilter ? (
-        <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center">
+        <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center h-full">
           <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
           <p className="text-lg">
             No media items found for the current filter
@@ -443,20 +451,20 @@ export function MainContentView({
           </p>
         </div>
       ) : noMediaAtAll ? (
-         <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center">
+         <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center h-full">
           <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
           <p className="text-lg">This chat contains no media items.</p>
         </div>
-      ) : mainContent }
+      ) : mainItemsContent }
     </div>
   );
 
-  if (isCloudChannel) {
-    return (
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          {viewContent}
-        </DropdownMenuTrigger>
+  return (
+    <DropdownMenu open={isBackgroundContextMenuOpen} onOpenChange={setIsBackgroundContextMenuOpen}>
+      <DropdownMenuTrigger asChild>
+        {viewContent}
+      </DropdownMenuTrigger>
+      {isCloudChannel && (
         <DropdownMenuContent className="w-56">
           <DropdownMenuItem onClick={() => onOpenCreateVirtualFolderDialog(currentVirtualPath)}>
             <CreateFolderIcon className="mr-2 h-4 w-4" />
@@ -469,11 +477,7 @@ export function MainContentView({
             </DropdownMenuItem>
           )}
         </DropdownMenuContent>
-      </DropdownMenu>
-    );
-  }
-
-  return viewContent; // For regular chats, no background context menu
+      )}
+    </DropdownMenu>
+  );
 }
-
-    
