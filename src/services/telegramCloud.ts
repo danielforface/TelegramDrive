@@ -463,16 +463,16 @@ export async function getChannelFullInfo(channelInputPeer: InputPeer): Promise<F
     const result = await telegramApiInstance.call('channels.getFullChannel', {
       channel: channelInputPeer,
     });
-    // result contains { full_chat, chats, users }
-    // The main details are in full_chat, chats/users provide context for entities within full_chat
     if (result && result.full_chat) {
-        // Combine full_chat with associated chats and users if needed by consuming components
-        // For now, returning the main full_chat object, which might already contain some resolved entities
-        return {
-            ...result.full_chat,
-            // Optionally enrich with user/chat objects from result.users and result.chats
-            // e.g. by mapping IDs to objects
+        const fullChatWithResolved = {
+          ...result.full_chat,
+          // Potentially resolve user/chat objects from result.users and result.chats if needed directly here
+          // For now, `result.full_chat` often contains enough, or consuming components can use `chats` and `users` arrays.
+          // Storing them on the returned object can be useful:
+          users: result.users || [],
+          chats: result.chats || [],
         };
+        return fullChatWithResolved;
     }
     return null;
   } catch (error: any) {
@@ -535,12 +535,8 @@ export async function exportChannelInviteLink(channelInputPeer: InputPeer): Prom
     throw new Error("Invalid input peer for exporting invite link.");
   }
   try {
-    // For a primary invite link, usually messages.exportChatInvite is used for basic chats/supergroups
-    // For channels, channels.exportInvite might be more direct if we want to manage the main link.
-    // For simplicity and general use, let's use messages.exportChatInvite
     const result = await telegramApiInstance.call('messages.exportChatInvite', {
       peer: channelInputPeer,
-      // additional params like expire_date, usage_limit can be added for more control
     });
     if (result && result._ === 'chatInviteExported' && result.link) {
       return result.link;
@@ -556,19 +552,21 @@ export async function updateChannelPhotoService(channelInputPeer: InputPeer, pho
     if (!channelInputPeer || channelInputPeer._ !== 'inputPeerChannel') {
         throw new Error("Invalid input peer for updating channel photo.");
     }
-    if (!photoInputFile) { // photoFileId is from upload.saveFilePart, photoInputFile is inputPhotoUploaded
+    if (!photoInputFile) { 
         throw new Error("InputPhoto (uploaded) is required to update channel photo.");
     }
     try {
         const result = await telegramApiInstance.call('channels.editPhoto', {
             channel: channelInputPeer,
-            photo: photoInputFile, // This should be of type InputChatUploadedPhoto or InputChatPhoto
+            photo: photoInputFile, 
         });
-        // The result is an 'updates' object containing the new photo details
         if (result && result.updates) {
-            const photoUpdate = result.updates.find((u: any) => u._ === 'updateChatParticipants' || u._ === 'updateChannel'); // or updateChannelPhoto
-            if (photoUpdate && (photoUpdate.participants?.chat?.photo || photoUpdate.photo) ) {
-                 return { photo: photoUpdate.participants?.chat?.photo || photoUpdate.photo, date: Date.now()/1000 };
+            const photoUpdate = result.updates.find((u: any) => u._ === 'updateChatParticipants' || u._ === 'updateChannelPhoto' || (u._ === 'updateChannel' && u.photo));
+            if (photoUpdate) {
+                const newPhotoObject = photoUpdate.photo || (photoUpdate.participants ? photoUpdate.participants.chat?.photo : null);
+                 if(newPhotoObject) {
+                    return { photo: newPhotoObject, date: Date.now()/1000 };
+                 }
             }
         }
         return null;
@@ -577,3 +575,5 @@ export async function updateChannelPhotoService(channelInputPeer: InputPeer, pho
         throw error;
     }
 }
+
+    

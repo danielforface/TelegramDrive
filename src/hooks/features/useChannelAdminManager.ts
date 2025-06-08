@@ -31,6 +31,13 @@ export function useChannelAdminManager({
   const [isLoadingParticipants, setIsLoadingParticipants] = useState(false);
   const [hasMoreParticipants, setHasMoreParticipants] = useState(true);
 
+  // For Add Members Tab
+  const [memberSearchTerm, setMemberSearchTerm] = useState("");
+  const [memberSearchResults, setMemberSearchResults] = useState<any[]>([]); // Store user objects
+  const [isSearchingMembers, setIsSearchingMembers] = useState(false);
+  const [isAddingMember, setIsAddingMember] = useState(false);
+
+
   const resetAdminManagerState = useCallback(() => {
     setChannelDetails(null);
     setIsLoadingChannelDetails(false);
@@ -42,6 +49,10 @@ export function useChannelAdminManager({
     setParticipants([]);
     setIsLoadingParticipants(false);
     setHasMoreParticipants(true);
+    setMemberSearchTerm("");
+    setMemberSearchResults([]);
+    setIsSearchingMembers(false);
+    setIsAddingMember(false);
   }, []);
   
   const fetchChannelDetails = useCallback(async (channelToFetch: CloudFolder | null) => {
@@ -55,15 +66,16 @@ export function useChannelAdminManager({
       const details = await telegramService.getChannelFullInfo(channelToFetch.inputPeer);
       setChannelDetails(details);
       if (details && onChannelDetailsUpdated) {
+        // Pass the updated fullChannelInfo back up to the page state via the callback
         onChannelDetailsUpdated({ ...channelToFetch, fullChannelInfo: details });
       }
     } catch (error: any) {
-      handleGlobalApiError(error, "Error Fetching Channel Details", "Could not load channel information.");
+      handleGlobalApiError(error, "Error Fetching Channel Details", "Could not load channel information. Ensure you have admin rights.");
       setChannelDetails(null);
     } finally {
       setIsLoadingChannelDetails(false);
     }
-  }, [handleGlobalApiError, onChannelDetailsUpdated]); // setChannelDetails, setIsLoadingChannelDetails are stable
+  }, [handleGlobalApiError, onChannelDetailsUpdated]);
 
   const updateChannelDescription = useCallback(async (inputPeer: InputPeer, about: string) => {
     setIsUpdatingAbout(true);
@@ -71,8 +83,9 @@ export function useChannelAdminManager({
       const success = await telegramService.updateChannelAbout(inputPeer, about);
       if (success) {
         toast({ title: "Description Updated", description: "Channel description has been successfully updated." });
-        setChannelDetails(prev => prev ? { ...prev, about: about } : null);
-        if (selectedManagingChannel && onChannelDetailsUpdated) { // Use selectedManagingChannel from closure
+        const newDetails = prevDetails => prevDetails ? { ...prevDetails, about: about } : null;
+        setChannelDetails(newDetails);
+        if (selectedManagingChannel && onChannelDetailsUpdated) {
              onChannelDetailsUpdated({ ...selectedManagingChannel, fullChannelInfo: {...(channelDetails || {} as FullChat), about: about }});
         }
       } else {
@@ -105,7 +118,8 @@ export function useChannelAdminManager({
       const success = await telegramService.updateChatUsername(inputPeer, username);
       if (success) {
         toast({ title: "Username Updated", description: `Channel username set to "${username}".` });
-        setChannelDetails(prev => prev ? { ...prev, username: username } : null);
+        const newDetails = prevDetails => prevDetails ? { ...prevDetails, username: username } : null;
+        setChannelDetails(newDetails);
          if (selectedManagingChannel && onChannelDetailsUpdated) {
              onChannelDetailsUpdated({ ...selectedManagingChannel, fullChannelInfo: {...(channelDetails || {} as FullChat), username: username }});
         }
@@ -125,7 +139,8 @@ export function useChannelAdminManager({
       const link = await telegramService.exportChannelInviteLink(inputPeer);
       if (link) {
         toast({ title: "Invite Link Generated", description: `Link: ${link}` });
-        setChannelDetails(prev => prev ? { ...prev, exported_invite: { ...(prev.exported_invite || {}), link: link, _:"chatInviteExported" } } : null);
+        const newDetails = prevDetails => prevDetails ? { ...prevDetails, exported_invite: { ...(prevDetails.exported_invite || {}), link: link, _:"chatInviteExported" } } : null;
+        setChannelDetails(newDetails);
          if (selectedManagingChannel && onChannelDetailsUpdated) {
              onChannelDetailsUpdated({ ...selectedManagingChannel, fullChannelInfo: {...(channelDetails || {} as FullChat), exported_invite: { ...(channelDetails?.exported_invite || {}), link:link, _:"chatInviteExported"} }});
         }
@@ -169,8 +184,9 @@ export function useChannelAdminManager({
 
         if (updatedPhotoInfo && updatedPhotoInfo.photo) {
             toast({ title: "Channel Photo Updated", description: "The channel photo has been successfully updated." });
-            setChannelDetails(prev => prev ? { ...prev, chat_photo: updatedPhotoInfo.photo } : null);
-            if (selectedManagingChannel && onChannelDetailsUpdated) { // Use selectedManagingChannel from closure
+            const newDetails = prevDetails => prevDetails ? { ...prevDetails, chat_photo: updatedPhotoInfo.photo } : null;
+            setChannelDetails(newDetails);
+            if (selectedManagingChannel && onChannelDetailsUpdated) { 
                  onChannelDetailsUpdated({ ...selectedManagingChannel, fullChannelInfo: {...(channelDetails || {} as FullChat), chat_photo: updatedPhotoInfo.photo }});
             }
         } else {
@@ -184,6 +200,7 @@ export function useChannelAdminManager({
   }, [toast, handleGlobalApiError, selectedManagingChannel, onChannelDetailsUpdated, channelDetails]);
 
   const fetchParticipants = useCallback(async (inputPeer: InputPeer, offset: number = 0, limit: number = 50) => {
+    if (!inputPeer) return;
     setIsLoadingParticipants(true);
     try {
       const response: ChannelParticipantsResponse = await telegramService.telegramApiInstance.call('channels.getParticipants', {
@@ -208,33 +225,90 @@ export function useChannelAdminManager({
       }
     } catch (error: any) {
       handleGlobalApiError(error, "Error Fetching Participants", "Could not load channel participants.");
-      setParticipants(prev => offset === 0 ? [] : prev);
+      setParticipants(prev => offset === 0 ? [] : prev); // Keep existing on error if paginating
       setHasMoreParticipants(false);
     } finally {
       setIsLoadingParticipants(false);
     }
-  }, [handleGlobalApiError]); // Removed participants from here, setParticipants is stable
+  }, [handleGlobalApiError]);
 
 
-  // Effect to fetch/reset channel details when selectedManagingChannel changes
+  const handleSearchMembers = useCallback(async () => {
+    if (!memberSearchTerm.trim() || !selectedManagingChannel?.inputPeer) {
+      setMemberSearchResults([]);
+      return;
+    }
+    setIsSearchingMembers(true);
+    setMemberSearchResults([]);
+    try {
+      // Using contacts.search. Limit to a reasonable number for UI.
+      // This searches users AND contacts.
+      const result = await telegramService.telegramApiInstance.call('contacts.search', {
+        q: memberSearchTerm,
+        limit: 10,
+      });
+      setMemberSearchResults(result.users || []);
+      if (!result.users || result.users.length === 0) {
+        toast({ title: "No Users Found", description: `No users matched "${memberSearchTerm}".`});
+      }
+    } catch (error: any) {
+      handleGlobalApiError(error, "Error Searching Users", "Could not perform user search.");
+      setMemberSearchResults([]);
+    } finally {
+      setIsSearchingMembers(false);
+    }
+  }, [memberSearchTerm, selectedManagingChannel?.inputPeer, toast, handleGlobalApiError]);
+
+  const handleAddMemberToChannel = useCallback(async (channelInputPeer: InputPeer, userToAdd: any) => {
+    if (!userToAdd.id) {
+      toast({ title: "Error", description: "Invalid user data for adding.", variant: "destructive"});
+      return;
+    }
+    setIsAddingMember(true);
+    try {
+      const inputUser: InputPeer = {
+        _: 'inputUser', // It's inputUser, not inputPeerUser for channels.inviteToChannel
+        user_id: userToAdd.id,
+        access_hash: userToAdd.access_hash,
+      };
+      
+      await telegramService.telegramApiInstance.call('channels.inviteToChannel', {
+        channel: channelInputPeer,
+        users: [inputUser],
+      });
+      toast({ title: "Member Invited", description: `${userToAdd.first_name || 'User'} invited to the channel.` });
+      // Optionally, re-fetch participants or update UI optimistically
+      if (channelInputPeer) fetchParticipants(channelInputPeer, 0); // Refresh participant list
+    } catch (error: any) {
+      // Handle specific errors like USER_NOT_MUTUAL_CONTACT, CHANNELS_TOO_MUCH, USERS_TOO_MUCH etc.
+      handleGlobalApiError(error, "Error Adding Member", error.message || "Could not add member to channel.");
+    } finally {
+      setIsAddingMember(false);
+    }
+  }, [toast, handleGlobalApiError, fetchParticipants]);
+
+
   useEffect(() => {
     if (selectedManagingChannel && selectedManagingChannel.inputPeer) {
-      resetAdminManagerState(); // Reset states before fetching new details
-      fetchChannelDetails(selectedManagingChannel);
-    } else if (!selectedManagingChannel) { // Explicitly reset if selection is cleared
-      resetAdminManagerState();
+      if (channelDetails?.id !== selectedManagingChannel.id || // If different channel is selected
+          (!channelDetails && !isLoadingChannelDetails) || // Or no details loaded yet
+          (selectedManagingChannel.fullChannelInfo && !channelDetails)) { // Or page passed initial info
+        
+        if (selectedManagingChannel.fullChannelInfo && !channelDetails) {
+            setChannelDetails(selectedManagingChannel.fullChannelInfo); // Use pre-loaded if available
+        } else {
+            fetchChannelDetails(selectedManagingChannel);
+        }
+        setParticipants([]); 
+        setHasMoreParticipants(true);
+        setMemberSearchTerm("");
+        setMemberSearchResults([]);
+      }
+    } else if (!selectedManagingChannel) {
+       resetAdminManagerState();
     }
-  }, [selectedManagingChannel, fetchChannelDetails, resetAdminManagerState]);
-  // Note: `selectedManagingChannel` object itself as dependency. If it changes, effect runs.
-  // `fetchChannelDetails` and `resetAdminManagerState` are stable due to useCallback with stable dependencies.
-
-  // Effect to fetch participants when channelDetails are available (and other conditions met)
-  useEffect(() => {
-    if (channelDetails && selectedManagingChannel?.inputPeer && participants.length === 0 && hasMoreParticipants && !isLoadingParticipants) {
-      fetchParticipants(selectedManagingChannel.inputPeer, 0);
-    }
-  }, [channelDetails, selectedManagingChannel?.inputPeer, participants.length, hasMoreParticipants, isLoadingParticipants, fetchParticipants]);
-
+  }, [selectedManagingChannel, fetchChannelDetails, channelDetails, isLoadingChannelDetails, resetAdminManagerState]);
+  
   return {
     channelDetails,
     isLoadingChannelDetails,
@@ -246,7 +320,6 @@ export function useChannelAdminManager({
     participants,
     isLoadingParticipants,
     hasMoreParticipants,
-    // fetchChannelDetails, // Not needed to be exported if only called internally by useEffect
     updateChannelDescription,
     checkUsernameAvailability,
     setChannelUsername,
@@ -254,6 +327,14 @@ export function useChannelAdminManager({
     updateChannelPhoto,
     fetchParticipants,
     resetAdminManagerState,
+    // Add Members state and handlers
+    memberSearchTerm,
+    setMemberSearchTerm,
+    handleSearchMembers,
+    isSearchingMembers,
+    memberSearchResults,
+    handleAddMemberToChannel,
+    isAddingMember,
   };
 }
 
