@@ -75,7 +75,8 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose, 
       }
 
       // Apply the requested 100px shift to the left
-      finalLeft = finalLeft - 100;
+      finalLeft = finalLeft - 200;
+      finalTop = finalTop - 100;
 
       // Re-check and enforce the left boundary after the shift
       if (finalLeft < boundaryRect.left + 5) {

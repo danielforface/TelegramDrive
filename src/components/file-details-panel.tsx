@@ -136,10 +136,9 @@ export function FileDetailsPanel({ file, isOpen, onClose, onQueueDownload }: Fil
         </ScrollArea>
 
         <SheetFooter className="p-6 border-t flex-shrink-0">
-          <div className="flex justify-between w-full items-center">
-            <Button variant="outline" onClick={onClose}>
-              <X className="mr-2 h-4 w-4" /> Close
-            </Button>
+          <div className="flex justify-end w-full items-center"> 
+            {/* The explicit Close button was here and has been removed. */}
+            {/* The Download button is now the only one in the footer if it was previously structured with justify-between */}
             <Button onClick={handleDownloadClick} disabled={!file}>
               <Download className="mr-2 h-4 w-4" /> Download
             </Button>
@@ -149,4 +148,3 @@ export function FileDetailsPanel({ file, isOpen, onClose, onQueueDownload }: Fil
     </Sheet>
   );
 }
-
