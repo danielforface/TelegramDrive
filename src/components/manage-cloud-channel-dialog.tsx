@@ -9,7 +9,6 @@ import {
   DialogHeader,
   DialogTitle,
   DialogDescription,
-  DialogFooter,
   DialogClose,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -311,15 +310,7 @@ export function ManageCloudChannelDialog({
             </ScrollArea>
           </Tabs>
         )}
-
-        <DialogFooter className="p-4 border-t flex-shrink-0 sticky bottom-0 bg-background z-10">
-          {/* The explicit Close button was here and has been removed. The X icon in DialogHeader handles closing. */}
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
-
-    
-
-    
