@@ -19,13 +19,13 @@ const defaultAllChatsFilter: DialogFilter = {
 
 interface UseDialogFiltersManagerProps {
   isConnected: boolean;
-  setIsConnected?: (isConnected: boolean) => void; // Optional: For page to update this hook's internal sense
+  setIsConnected?: (isConnected: boolean) => void;
   toast: ReturnType<typeof useToast>['toast'];
   handleGlobalApiError: (error: any, title: string, defaultMessage: string, doPageReset?: boolean) => void;
   setChatsDataCacheForFilter: (filterId: number, data: { folders: CloudFolder[], pagination: GetChatsPaginatedResponse, isLoading: boolean, error?: string | null }) => void;
   resetMasterChatListForFilteringInCache: () => void;
   updateMasterChatListInCache: (folders: CloudFolder[], pagination: GetChatsPaginatedResponse) => void;
-  getChatDataCacheEntry: (cacheKey: number) => any; 
+  getChatDataCacheEntry: (cacheKey: number) => any;
   fetchAndCacheDialogsForListManager: (cacheKeyToFetch: number, isLoadingMore: boolean, folderIdForApiCall?: number, customLimit?: number) => Promise<void>;
   setLastFetchedFilterIdForChatListManager: (filterId: number | null) => void;
 }
@@ -36,15 +36,15 @@ const INITIAL_SPECIFIC_FOLDER_CHATS_LOAD_LIMIT = 20;
 
 export function useDialogFiltersManager({
   isConnected: initialIsConnected,
-  setIsConnected: setExternalIsConnected, // Optional prop to allow parent to update isConnected
+  setIsConnected: setExternalIsConnected,
   toast,
   handleGlobalApiError,
   fetchAndCacheDialogsForListManager,
   setLastFetchedFilterIdForChatListManager,
 }: UseDialogFiltersManagerProps) {
   const [dialogFilters, setDialogFilters] = useState<DialogFilter[]>([defaultAllChatsFilter]);
-  const [activeDialogFilterId, setActiveDialogFilterId] = useState<number>(ALL_CHATS_FILTER_ID);
-  const [activeFilterDetails, setActiveFilterDetails] = useState<DialogFilter | null>(defaultAllChatsFilter);
+  const [activeDialogFilterId, setActiveDialogFilterIdInternal] = useState<number>(ALL_CHATS_FILTER_ID);
+  const [activeFilterDetails, setActiveFilterDetailsInternal] = useState<DialogFilter | null>(defaultAllChatsFilter);
   const [isLoadingDialogFilters, setIsLoadingDialogFilters] = useState(true);
   const [hasFetchedDialogFiltersOnce, setHasFetchedDialogFiltersOnce] = useState(false);
   const [isReorderingFolders, setIsReorderingFolders] = useState(false);
@@ -60,6 +60,10 @@ export function useDialogFiltersManager({
       setExternalIsConnected(connected);
     }
   }, [setExternalIsConnected]);
+
+  // Stable setters for page.tsx to use
+  const setActiveDialogFilterId = useCallback(setActiveDialogFilterIdInternal, []);
+  const setActiveFilterDetails = useCallback(setActiveFilterDetailsInternal, []);
 
 
   const fetchDialogFilters = useCallback(async (forceRefresh = false) => {
@@ -100,23 +104,20 @@ export function useDialogFiltersManager({
       });
 
       const finalFilters = processedFilters.length > 0 ? processedFilters : [defaultAllChatsFilter];
-      setDialogFilters(finalFilters);
+      setDialogFilters(finalFilters); // This causes a re-render
       setHasFetchedDialogFiltersOnce(true);
 
-      const currentActiveStillExists = finalFilters.some(f => f.id === activeDialogFilterId);
+      // Ensure activeDialogFilterId is valid after filters are fetched/updated
+      const currentActiveIdBeforeUpdate = activeDialogFilterId; // Use the state variable
+      const currentActiveStillExists = finalFilters.some(f => f.id === currentActiveIdBeforeUpdate);
+
       if (!currentActiveStillExists && finalFilters.length > 0) {
-        setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
-        setActiveFilterDetails(finalFilters.find(f => f.id === ALL_CHATS_FILTER_ID) || defaultAllChatsFilter);
+        const newActiveIdToSet = finalFilters.find(f => f.id === ALL_CHATS_FILTER_ID) ? ALL_CHATS_FILTER_ID : finalFilters[0].id;
+        setActiveDialogFilterIdInternal(newActiveIdToSet); // Update internal state
       } else if (finalFilters.length === 0) {
-        setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
-        setActiveFilterDetails(defaultAllChatsFilter);
-      } else {
-        // Ensure activeFilterDetails is updated if the activeDialogFilterId is still valid
-        const currentActive = finalFilters.find(f => f.id === activeDialogFilterId);
-        if (currentActive && (activeFilterDetails?.id !== currentActive.id || activeFilterDetails?.title !== currentActive.title)) {
-            setActiveFilterDetails(currentActive);
-        }
+        setActiveDialogFilterIdInternal(ALL_CHATS_FILTER_ID); // Update internal state
       }
+      // The page.tsx useEffect will derive activeFilterDetails based on the possibly updated activeDialogFilterId and new dialogFilters.
 
       if (forceRefresh || finalFilters.length > 0) {
         await fetchAndCacheDialogsForListManager(ALL_CHATS_FILTER_ID, false, undefined, INITIAL_MASTER_CHATS_LOAD_LIMIT);
@@ -130,21 +131,23 @@ export function useDialogFiltersManager({
     } catch (error: any) {
       handleGlobalApiError(error, "Error Fetching Folders", "Could not load your chat folders.");
       setDialogFilters([defaultAllChatsFilter]);
-      setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
-      setActiveFilterDetails(defaultAllChatsFilter);
+      setActiveDialogFilterIdInternal(ALL_CHATS_FILTER_ID); // Update internal state
+      // setActiveFilterDetailsInternal(defaultAllChatsFilter); // Page.tsx derives this
       setHasFetchedDialogFiltersOnce(false);
     } finally {
       setIsLoadingDialogFilters(false);
     }
-  }, [isConnectedInternal, handleGlobalApiError, activeDialogFilterId, activeFilterDetails, hasFetchedDialogFiltersOnce, dialogFilters, fetchAndCacheDialogsForListManager, isReorderingFolders]);
+  }, [
+      isConnectedInternal, handleGlobalApiError, hasFetchedDialogFiltersOnce, dialogFilters.length, isReorderingFolders,
+      fetchAndCacheDialogsForListManager, activeDialogFilterId, // Include activeDialogFilterId as it's read
+  ]);
 
   const handleSelectDialogFilter = useCallback((filterId: number) => {
-    if (activeDialogFilterId === filterId && !isReorderingFolders) return;
-    setActiveDialogFilterId(filterId);
-    const newFilter = dialogFilters.find(f => f.id === filterId) || defaultAllChatsFilter;
-    setActiveFilterDetails(newFilter);
-    setLastFetchedFilterIdForChatListManager(null); 
-  }, [activeDialogFilterId, isReorderingFolders, dialogFilters, setLastFetchedFilterIdForChatListManager]);
+    if (isReorderingFolders) return;
+    setActiveDialogFilterIdInternal(filterId); // Update internal state
+    // activeFilterDetails will be derived by page.tsx based on this new ID.
+    setLastFetchedFilterIdForChatListManager(null);
+  }, [isReorderingFolders, setLastFetchedFilterIdForChatListManager]);
 
   const handleToggleReorderFolders = useCallback(async () => {
     if (isReorderingFolders) {
@@ -156,7 +159,7 @@ export function useDialogFiltersManager({
         toast({ title: "Folder Order Saved", description: "The new folder order has been saved to Telegram." });
       } catch (error: any) {
         handleGlobalApiError(error, "Error Saving Order", "Could not save the folder order.");
-        await fetchDialogFilters(true); 
+        await fetchDialogFilters(true);
       }
     }
     setIsReorderingFolders(prev => !prev);
@@ -196,16 +199,16 @@ export function useDialogFiltersManager({
   }, [toast, handleGlobalApiError]);
 
   const handleRefreshCurrentFilterView = useCallback(() => {
-     if (activeFilterDetails) {
+     if (activeFilterDetails) { // Use the internal state for the toast
         toast({ title: `Refreshing "${activeFilterDetails.title}"...`});
-        setLastFetchedFilterIdForChatListManager(null); 
+        setLastFetchedFilterIdForChatListManager(null);
     }
   }, [activeFilterDetails, toast, setLastFetchedFilterIdForChatListManager]);
 
   const resetDialogFiltersState = useCallback(() => {
     setDialogFilters([defaultAllChatsFilter]);
-    setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
-    setActiveFilterDetails(defaultAllChatsFilter);
+    setActiveDialogFilterIdInternal(ALL_CHATS_FILTER_ID);
+    setActiveFilterDetailsInternal(defaultAllChatsFilter);
     setIsLoadingDialogFilters(true);
     setHasFetchedDialogFiltersOnce(false);
     setIsReorderingFolders(false);
@@ -213,11 +216,11 @@ export function useDialogFiltersManager({
 
   return {
     dialogFilters,
-    setDialogFilters,
-    activeDialogFilterId,
-    setActiveDialogFilterId,
-    activeFilterDetails,
-    setActiveFilterDetails,
+    setDialogFilters, // This setter might not be needed externally if fetchDialogFilters is robust
+    activeDialogFilterId, // Return the state variable
+    activeFilterDetails,  // Return the state variable
+    setActiveDialogFilterId, // Return the stable setter for page.tsx (though page.tsx shouldn't call it directly)
+    setActiveFilterDetails,  // Return the stable setter for page.tsx
     isLoadingDialogFilters,
     setIsLoadingDialogFilters,
     hasFetchedDialogFiltersOnce,
@@ -231,8 +234,7 @@ export function useDialogFiltersManager({
     handleRefreshCurrentFilterView,
     defaultAllChatsFilter,
     resetDialogFiltersState,
-    setIsConnected, // Expose setter for parent
+    setIsConnected,
   };
 }
-
     
