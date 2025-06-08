@@ -19,7 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge"; // Added import
+import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, X, Info, Link2, Users, Image as ImageIcon, CheckCircle, Edit3, Copy, Settings2 } from "lucide-react";
 import { useChannelAdminManager } from '@/hooks/features/useChannelAdminManager';
@@ -313,13 +313,13 @@ export function ManageCloudChannelDialog({
         )}
 
         <DialogFooter className="p-4 border-t flex-shrink-0 sticky bottom-0 bg-background z-10">
-          <Button variant="outline" onClick={onClose}>
-            Close
-          </Button>
+          {/* The explicit Close button was here and has been removed. The X icon in DialogHeader handles closing. */}
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
+
+    
 
     
