@@ -9,8 +9,8 @@ import type { useToast } from "@/hooks/use-toast";
 interface UseChannelAdminManagerProps {
   toast: ReturnType<typeof useToast>['toast'];
   handleGlobalApiError: (error: any, title: string, defaultMessage: string, doPageReset?: boolean) => void;
-  selectedManagingChannel: CloudFolder | null; // From usePageDialogsVisibility
-  onChannelDetailsUpdated?: (updatedFolder: CloudFolder) => void; // Callback to update folder list in page.tsx
+  selectedManagingChannel: CloudFolder | null;
+  onChannelDetailsUpdated?: (updatedFolder: CloudFolder) => void;
 }
 
 export function useChannelAdminManager({
@@ -30,15 +30,32 @@ export function useChannelAdminManager({
   const [participants, setParticipants] = useState<ChannelParticipant[]>([]);
   const [isLoadingParticipants, setIsLoadingParticipants] = useState(false);
   const [hasMoreParticipants, setHasMoreParticipants] = useState(true);
-  // const [participantsOffset, setParticipantsOffset] = useState<string | undefined>(undefined); // For pagination if needed
 
-  const fetchChannelDetails = useCallback(async (inputPeer: InputPeer) => {
+  const resetAdminManagerState = useCallback(() => {
+    setChannelDetails(null);
+    setIsLoadingChannelDetails(false);
+    setIsUpdatingAbout(false);
+    setIsUpdatingUsername(false);
+    setIsCheckingUsername(false);
+    setIsExportingInvite(false);
+    setIsUpdatingPhoto(false);
+    setParticipants([]);
+    setIsLoadingParticipants(false);
+    setHasMoreParticipants(true);
+  }, []);
+  
+  const fetchChannelDetails = useCallback(async (channelToFetch: CloudFolder | null) => {
+    if (!channelToFetch || !channelToFetch.inputPeer) {
+      setChannelDetails(null);
+      setIsLoadingChannelDetails(false);
+      return;
+    }
     setIsLoadingChannelDetails(true);
     try {
-      const details = await telegramService.getChannelFullInfo(inputPeer);
+      const details = await telegramService.getChannelFullInfo(channelToFetch.inputPeer);
       setChannelDetails(details);
-      if (details && selectedManagingChannel && onChannelDetailsUpdated) {
-        onChannelDetailsUpdated({ ...selectedManagingChannel, fullChannelInfo: details });
+      if (details && onChannelDetailsUpdated) {
+        onChannelDetailsUpdated({ ...channelToFetch, fullChannelInfo: details });
       }
     } catch (error: any) {
       handleGlobalApiError(error, "Error Fetching Channel Details", "Could not load channel information.");
@@ -46,7 +63,7 @@ export function useChannelAdminManager({
     } finally {
       setIsLoadingChannelDetails(false);
     }
-  }, [handleGlobalApiError, onChannelDetailsUpdated, selectedManagingChannel]);
+  }, [handleGlobalApiError, onChannelDetailsUpdated]); // setChannelDetails, setIsLoadingChannelDetails are stable
 
   const updateChannelDescription = useCallback(async (inputPeer: InputPeer, about: string) => {
     setIsUpdatingAbout(true);
@@ -55,8 +72,8 @@ export function useChannelAdminManager({
       if (success) {
         toast({ title: "Description Updated", description: "Channel description has been successfully updated." });
         setChannelDetails(prev => prev ? { ...prev, about: about } : null);
-        if (channelDetails && selectedManagingChannel && onChannelDetailsUpdated) {
-             onChannelDetailsUpdated({ ...selectedManagingChannel, fullChannelInfo: {...channelDetails, about: about }});
+        if (selectedManagingChannel && onChannelDetailsUpdated) { // Use selectedManagingChannel from closure
+             onChannelDetailsUpdated({ ...selectedManagingChannel, fullChannelInfo: {...(channelDetails || {} as FullChat), about: about }});
         }
       } else {
         throw new Error("Server indicated failure to update description.");
@@ -66,7 +83,7 @@ export function useChannelAdminManager({
     } finally {
       setIsUpdatingAbout(false);
     }
-  }, [toast, handleGlobalApiError, channelDetails, selectedManagingChannel, onChannelDetailsUpdated]);
+  }, [toast, handleGlobalApiError, selectedManagingChannel, onChannelDetailsUpdated, channelDetails]);
 
   const checkUsernameAvailability = useCallback(async (inputPeer: InputPeer, username: string) => {
     setIsCheckingUsername(true);
@@ -89,8 +106,8 @@ export function useChannelAdminManager({
       if (success) {
         toast({ title: "Username Updated", description: `Channel username set to "${username}".` });
         setChannelDetails(prev => prev ? { ...prev, username: username } : null);
-         if (channelDetails && selectedManagingChannel && onChannelDetailsUpdated) {
-             onChannelDetailsUpdated({ ...selectedManagingChannel, fullChannelInfo: {...channelDetails, username: username }});
+         if (selectedManagingChannel && onChannelDetailsUpdated) {
+             onChannelDetailsUpdated({ ...selectedManagingChannel, fullChannelInfo: {...(channelDetails || {} as FullChat), username: username }});
         }
       } else {
         throw new Error("Server indicated failure to update username.");
@@ -100,7 +117,7 @@ export function useChannelAdminManager({
     } finally {
       setIsUpdatingUsername(false);
     }
-  }, [toast, handleGlobalApiError, channelDetails, selectedManagingChannel, onChannelDetailsUpdated]);
+  }, [toast, handleGlobalApiError, selectedManagingChannel, onChannelDetailsUpdated, channelDetails]);
 
   const generateInviteLink = useCallback(async (inputPeer: InputPeer) => {
     setIsExportingInvite(true);
@@ -109,8 +126,8 @@ export function useChannelAdminManager({
       if (link) {
         toast({ title: "Invite Link Generated", description: `Link: ${link}` });
         setChannelDetails(prev => prev ? { ...prev, exported_invite: { ...(prev.exported_invite || {}), link: link, _:"chatInviteExported" } } : null);
-         if (channelDetails && selectedManagingChannel && onChannelDetailsUpdated) {
-             onChannelDetailsUpdated({ ...selectedManagingChannel, fullChannelInfo: {...channelDetails, exported_invite: { ...(channelDetails.exported_invite || {}), link:link, _:"chatInviteExported"} }});
+         if (selectedManagingChannel && onChannelDetailsUpdated) {
+             onChannelDetailsUpdated({ ...selectedManagingChannel, fullChannelInfo: {...(channelDetails || {} as FullChat), exported_invite: { ...(channelDetails?.exported_invite || {}), link:link, _:"chatInviteExported"} }});
         }
       } else {
         toast({ title: "Failed to Generate Link", description: "Could not generate an invite link.", variant: "destructive" });
@@ -120,7 +137,7 @@ export function useChannelAdminManager({
     } finally {
       setIsExportingInvite(false);
     }
-  }, [toast, handleGlobalApiError, channelDetails, selectedManagingChannel, onChannelDetailsUpdated]);
+  }, [toast, handleGlobalApiError, selectedManagingChannel, onChannelDetailsUpdated, channelDetails]);
 
   const updateChannelPhoto = useCallback(async (inputPeer: InputPeer, photoFile: File) => {
     setIsUpdatingPhoto(true);
@@ -153,8 +170,8 @@ export function useChannelAdminManager({
         if (updatedPhotoInfo && updatedPhotoInfo.photo) {
             toast({ title: "Channel Photo Updated", description: "The channel photo has been successfully updated." });
             setChannelDetails(prev => prev ? { ...prev, chat_photo: updatedPhotoInfo.photo } : null);
-            if (channelDetails && selectedManagingChannel && onChannelDetailsUpdated) {
-                 onChannelDetailsUpdated({ ...selectedManagingChannel, fullChannelInfo: {...channelDetails, chat_photo: updatedPhotoInfo.photo }});
+            if (selectedManagingChannel && onChannelDetailsUpdated) { // Use selectedManagingChannel from closure
+                 onChannelDetailsUpdated({ ...selectedManagingChannel, fullChannelInfo: {...(channelDetails || {} as FullChat), chat_photo: updatedPhotoInfo.photo }});
             }
         } else {
             throw new Error("Server indicated failure to update photo after upload.");
@@ -164,8 +181,7 @@ export function useChannelAdminManager({
     } finally {
         setIsUpdatingPhoto(false);
     }
-  }, [toast, handleGlobalApiError, channelDetails, selectedManagingChannel, onChannelDetailsUpdated]);
-
+  }, [toast, handleGlobalApiError, selectedManagingChannel, onChannelDetailsUpdated, channelDetails]);
 
   const fetchParticipants = useCallback(async (inputPeer: InputPeer, offset: number = 0, limit: number = 50) => {
     setIsLoadingParticipants(true);
@@ -187,56 +203,37 @@ export function useChannelAdminManager({
         setParticipants(prev => offset === 0 ? enrichedParticipants : [...prev, ...enrichedParticipants]);
         setHasMoreParticipants(enrichedParticipants.length === limit); 
       } else {
-        setParticipants(offset === 0 ? [] : participants); // Use current 'participants' state for else case
+        setParticipants(prev => offset === 0 ? [] : prev);
         setHasMoreParticipants(false);
       }
     } catch (error: any) {
       handleGlobalApiError(error, "Error Fetching Participants", "Could not load channel participants.");
-      setParticipants(offset === 0 ? [] : participants); // Use current 'participants' state for else case
+      setParticipants(prev => offset === 0 ? [] : prev);
       setHasMoreParticipants(false);
     } finally {
       setIsLoadingParticipants(false);
     }
-  }, [handleGlobalApiError]); // REMOVED `participants` from dependency array
+  }, [handleGlobalApiError]); // Removed participants from here, setParticipants is stable
 
 
+  // Effect to fetch/reset channel details when selectedManagingChannel changes
   useEffect(() => {
-    const currentInputPeer = selectedManagingChannel?.inputPeer;
-    const currentChannelId = selectedManagingChannel?.id;
-
-    if (currentInputPeer && currentChannelId) {
-      fetchChannelDetails(currentInputPeer);
-      // Reset participants for the new channel
-      setParticipants([]);
-      setHasMoreParticipants(true);
-      // Initial participants fetch can be triggered here or by tab activation.
-      // Example: fetchParticipants(currentInputPeer, 0); 
-    } else {
-      // No channel selected or peer missing, reset details
-      setChannelDetails(null);
-      setParticipants([]);
-      setHasMoreParticipants(true);
+    if (selectedManagingChannel && selectedManagingChannel.inputPeer) {
+      resetAdminManagerState(); // Reset states before fetching new details
+      fetchChannelDetails(selectedManagingChannel);
+    } else if (!selectedManagingChannel) { // Explicitly reset if selection is cleared
+      resetAdminManagerState();
     }
-  // Dependencies should primarily rely on the identity of the selected channel
-  // and stable callbacks.
-  // `fetchChannelDetails` should be stable if its own dependencies are stable.
-  // `setParticipants` and `setHasMoreParticipants` are stable setState functions.
-  }, [selectedManagingChannel?.id, fetchChannelDetails, setParticipants, setHasMoreParticipants, setChannelDetails]);
+  }, [selectedManagingChannel, fetchChannelDetails, resetAdminManagerState]);
+  // Note: `selectedManagingChannel` object itself as dependency. If it changes, effect runs.
+  // `fetchChannelDetails` and `resetAdminManagerState` are stable due to useCallback with stable dependencies.
 
-
-  const resetAdminManagerState = useCallback(() => {
-    setChannelDetails(null);
-    setIsLoadingChannelDetails(false);
-    setIsUpdatingAbout(false);
-    setIsUpdatingUsername(false);
-    setIsCheckingUsername(false);
-    setIsExportingInvite(false);
-    setIsUpdatingPhoto(false);
-    setParticipants([]);
-    setIsLoadingParticipants(false);
-    setHasMoreParticipants(true);
-  }, []);
-
+  // Effect to fetch participants when channelDetails are available (and other conditions met)
+  useEffect(() => {
+    if (channelDetails && selectedManagingChannel?.inputPeer && participants.length === 0 && hasMoreParticipants && !isLoadingParticipants) {
+      fetchParticipants(selectedManagingChannel.inputPeer, 0);
+    }
+  }, [channelDetails, selectedManagingChannel?.inputPeer, participants.length, hasMoreParticipants, isLoadingParticipants, fetchParticipants]);
 
   return {
     channelDetails,
@@ -249,7 +246,7 @@ export function useChannelAdminManager({
     participants,
     isLoadingParticipants,
     hasMoreParticipants,
-    fetchChannelDetails, 
+    // fetchChannelDetails, // Not needed to be exported if only called internally by useEffect
     updateChannelDescription,
     checkUsernameAvailability,
     setChannelUsername,
