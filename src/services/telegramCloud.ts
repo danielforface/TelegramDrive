@@ -577,18 +577,28 @@ export async function inviteUserToChannel(channelInputPeer: InputPeer, userToInv
 }
 
 export async function getContacts(): Promise<any[]> {
+  console.log("[TelegramCloud_GetContacts] Attempting to fetch contacts...");
   try {
     const result = await telegramApiInstance.call('contacts.getContacts', { hash: 0 });
-    // The result is of type contacts.Contacts, which has 'contacts' and 'users' arrays.
-    // We need to map the user_ids from 'contacts' to the full User objects in 'users'.
+    console.log("[TelegramCloud_GetContacts] Raw API Result:", JSON.stringify(result, null, 2));
+
     if (result && result.contacts && result.users) {
+      console.log(`[TelegramCloud_GetContacts] Received ${result.contacts.length} contact entries and ${result.users.length} user objects.`);
       const contactUsers = result.contacts.map((contact: any) => {
-        return result.users.find((user: any) => String(user.id) === String(contact.user_id));
-      }).filter((user: any) => user !== undefined); // Filter out any undefined if a user_id didn't match
+        const foundUser = result.users.find((user: any) => String(user.id) === String(contact.user_id));
+        if (!foundUser) {
+          console.warn(`[TelegramCloud_GetContacts] User ID ${contact.user_id} from contacts not found in users array.`);
+        }
+        return foundUser;
+      }).filter((user: any) => user !== undefined);
+      
+      console.log(`[TelegramCloud_GetContacts] Processed ${contactUsers.length} contacts successfully.`);
       return contactUsers;
     }
-    return []; // Return empty if the expected structure isn't there
+    console.warn("[TelegramCloud_GetContacts] Unexpected structure in contacts.getContacts response. 'contacts' or 'users' array missing. Result:", result);
+    return [];
   } catch (error) {
+    console.error("[TelegramCloud_GetContacts] Error fetching contacts:", error);
     throw error;
   }
 }
