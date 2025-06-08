@@ -64,13 +64,15 @@ export {
   updateChatUsername,
   exportChannelInviteLink,
   updateChannelPhotoService,
-  // getChannelParticipantsList, // Placeholder for future
-  // editChannelAdminRights, // Placeholder for future
-} from './telegramCloud'; // Assuming admin functions are co-located or imported into telegramCloud
+  editChannelTitle,
+  searchUsers,
+  inviteUserToChannel,
+} from './telegramCloud'; 
 
 // Real-time Updates
 export { initializeTelegramUpdateListener } from './telegramUpdates';
 
 // Re-export formatFileSize from lib/utils if it was previously exported from here
 export { formatFileSize };
+
 

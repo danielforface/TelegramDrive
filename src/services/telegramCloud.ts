@@ -466,9 +466,6 @@ export async function getChannelFullInfo(channelInputPeer: InputPeer): Promise<F
     if (result && result.full_chat) {
         const fullChatWithResolved = {
           ...result.full_chat,
-          // Potentially resolve user/chat objects from result.users and result.chats if needed directly here
-          // For now, `result.full_chat` often contains enough, or consuming components can use `chats` and `users` arrays.
-          // Storing them on the returned object can be useful:
           users: result.users || [],
           chats: result.chats || [],
         };
@@ -476,7 +473,6 @@ export async function getChannelFullInfo(channelInputPeer: InputPeer): Promise<F
     }
     return null;
   } catch (error: any) {
-    // console.error(`Error fetching full info for channel ${channelInputPeer.channel_id}:`, error);
     throw error;
   }
 }
@@ -492,7 +488,6 @@ export async function updateChannelAbout(channelInputPeer: InputPeer, about: str
     });
     return result === true || (typeof result === 'object' && result._ === 'boolTrue');
   } catch (error: any) {
-    // console.error(`Error updating about for channel ${channelInputPeer.channel_id}:`, error);
     throw error;
   }
 }
@@ -506,10 +501,8 @@ export async function checkChatUsername(channelInputPeer: InputPeer, username: s
       channel: channelInputPeer,
       username: username,
     });
-    return result === true || (typeof result === 'object' && result._ === 'boolTrue'); // True if username is available/valid
+    return result === true || (typeof result === 'object' && result._ === 'boolTrue'); 
   } catch (error: any) {
-    // Specific errors like USERNAME_INVALID, USERNAME_OCCUPIED will be thrown
-    // console.error(`Error checking username for channel ${channelInputPeer.channel_id}:`, error);
     throw error;
   }
 }
@@ -525,7 +518,6 @@ export async function updateChatUsername(channelInputPeer: InputPeer, username: 
     });
     return result === true || (typeof result === 'object' && result._ === 'boolTrue');
   } catch (error: any) {
-    // console.error(`Error updating username for channel ${channelInputPeer.channel_id}:`, error);
     throw error;
   }
 }
@@ -543,7 +535,6 @@ export async function exportChannelInviteLink(channelInputPeer: InputPeer): Prom
     }
     return null;
   } catch (error: any) {
-    // console.error(`Error exporting invite link for channel ${channelInputPeer.channel_id}:`, error);
     throw error;
   }
 }
@@ -571,9 +562,63 @@ export async function updateChannelPhotoService(channelInputPeer: InputPeer, pho
         }
         return null;
     } catch (error: any) {
-        // console.error(`Error updating photo for channel ${channelInputPeer.channel_id}:`, error);
         throw error;
     }
 }
 
+export async function editChannelTitle(channelInputPeer: InputPeer, newTitle: string): Promise<boolean> {
+  if (!channelInputPeer || channelInputPeer._ !== 'inputPeerChannel') {
+    throw new Error("Invalid input peer for editing channel title.");
+  }
+  if (!newTitle.trim()) {
+    throw new Error("Channel title cannot be empty.");
+  }
+  try {
+    const result = await telegramApiInstance.call('channels.editTitle', {
+      channel: channelInputPeer,
+      title: newTitle.trim(),
+    });
+    return result === true || (typeof result === 'object' && result._ === 'boolTrue');
+  } catch (error: any) {
+    throw error;
+  }
+}
+
+export async function searchUsers(query: string, limit: number = 10): Promise<any[]> {
+  if (!query.trim()) {
+    return [];
+  }
+  try {
+    const result = await telegramApiInstance.call('contacts.search', {
+      q: query,
+      limit: limit,
+    });
+    // result typically contains { users: User[], chats: Chat[] }
+    // For adding members to a channel, we are interested in users.
+    return result.users || [];
+  } catch (error: any) {
+    // console.error("Error searching users:", error);
+    throw error; // Let the caller handle UI feedback
+  }
+}
+
+export async function inviteUserToChannel(channelInputPeer: InputPeer, userToInviteInputPeer: InputPeer): Promise<boolean> {
+  if (!channelInputPeer || channelInputPeer._ !== 'inputPeerChannel') {
+    throw new Error("Invalid channel input peer for inviting user.");
+  }
+  if (!userToInviteInputPeer || userToInviteInputPeer._ !== 'inputPeerUser') {
+    throw new Error("Invalid user input peer for inviting to channel.");
+  }
+  try {
+    const result = await telegramApiInstance.call('channels.inviteToChannel', {
+      channel: channelInputPeer,
+      users: [userToInviteInputPeer],
+    });
+    // Successful result is an Updates object.
+    return !!result; 
+  } catch (error: any) {
+    // console.error(`Error inviting user ${userToInviteInputPeer.user_id} to channel ${channelInputPeer.channel_id}:`, error);
+    throw error; // Let the caller handle UI feedback, specific errors like USER_PRIVACY_RESTRICTED etc.
+  }
+}
     
