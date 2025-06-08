@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import type { DialogFilter, GetChatsPaginatedResponse, CloudFolder } from '@/types';
 import * as telegramService from '@/services/telegramService';
 import { ALL_CHATS_FILTER_ID } from "@/services/telegramService";
@@ -19,13 +19,13 @@ const defaultAllChatsFilter: DialogFilter = {
 
 interface UseDialogFiltersManagerProps {
   isConnected: boolean;
+  setIsConnected?: (isConnected: boolean) => void; // Optional: For page to update this hook's internal sense
   toast: ReturnType<typeof useToast>['toast'];
   handleGlobalApiError: (error: any, title: string, defaultMessage: string, doPageReset?: boolean) => void;
-  // Callbacks to chatListManager
   setChatsDataCacheForFilter: (filterId: number, data: { folders: CloudFolder[], pagination: GetChatsPaginatedResponse, isLoading: boolean, error?: string | null }) => void;
   resetMasterChatListForFilteringInCache: () => void;
   updateMasterChatListInCache: (folders: CloudFolder[], pagination: GetChatsPaginatedResponse) => void;
-  getChatDataCacheEntry: (cacheKey: number) => any; // To get existing cache data for loading logic
+  getChatDataCacheEntry: (cacheKey: number) => any; 
   fetchAndCacheDialogsForListManager: (cacheKeyToFetch: number, isLoadingMore: boolean, folderIdForApiCall?: number, customLimit?: number) => Promise<void>;
   setLastFetchedFilterIdForChatListManager: (filterId: number | null) => void;
 }
@@ -35,7 +35,8 @@ const INITIAL_SPECIFIC_FOLDER_CHATS_LOAD_LIMIT = 20;
 
 
 export function useDialogFiltersManager({
-  isConnected,
+  isConnected: initialIsConnected,
+  setIsConnected: setExternalIsConnected, // Optional prop to allow parent to update isConnected
   toast,
   handleGlobalApiError,
   fetchAndCacheDialogsForListManager,
@@ -47,9 +48,22 @@ export function useDialogFiltersManager({
   const [isLoadingDialogFilters, setIsLoadingDialogFilters] = useState(true);
   const [hasFetchedDialogFiltersOnce, setHasFetchedDialogFiltersOnce] = useState(false);
   const [isReorderingFolders, setIsReorderingFolders] = useState(false);
+  const [isConnectedInternal, setIsConnectedInternal] = useState(initialIsConnected);
+
+  useEffect(() => {
+    setIsConnectedInternal(initialIsConnected);
+  }, [initialIsConnected]);
+
+  const setIsConnected = useCallback((connected: boolean) => {
+    setIsConnectedInternal(connected);
+    if (setExternalIsConnected) {
+      setExternalIsConnected(connected);
+    }
+  }, [setExternalIsConnected]);
+
 
   const fetchDialogFilters = useCallback(async (forceRefresh = false) => {
-    if (!isConnected) {
+    if (!isConnectedInternal) {
       setIsLoadingDialogFilters(false);
       return;
     }
@@ -92,8 +106,16 @@ export function useDialogFiltersManager({
       const currentActiveStillExists = finalFilters.some(f => f.id === activeDialogFilterId);
       if (!currentActiveStillExists && finalFilters.length > 0) {
         setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
+        setActiveFilterDetails(finalFilters.find(f => f.id === ALL_CHATS_FILTER_ID) || defaultAllChatsFilter);
       } else if (finalFilters.length === 0) {
         setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
+        setActiveFilterDetails(defaultAllChatsFilter);
+      } else {
+        // Ensure activeFilterDetails is updated if the activeDialogFilterId is still valid
+        const currentActive = finalFilters.find(f => f.id === activeDialogFilterId);
+        if (currentActive && (activeFilterDetails?.id !== currentActive.id || activeFilterDetails?.title !== currentActive.title)) {
+            setActiveFilterDetails(currentActive);
+        }
       }
 
       if (forceRefresh || finalFilters.length > 0) {
@@ -109,18 +131,19 @@ export function useDialogFiltersManager({
       handleGlobalApiError(error, "Error Fetching Folders", "Could not load your chat folders.");
       setDialogFilters([defaultAllChatsFilter]);
       setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
+      setActiveFilterDetails(defaultAllChatsFilter);
       setHasFetchedDialogFiltersOnce(false);
     } finally {
       setIsLoadingDialogFilters(false);
     }
-  }, [isConnected, handleGlobalApiError, activeDialogFilterId, hasFetchedDialogFiltersOnce, dialogFilters, fetchAndCacheDialogsForListManager, isReorderingFolders, toast]);
+  }, [isConnectedInternal, handleGlobalApiError, activeDialogFilterId, activeFilterDetails, hasFetchedDialogFiltersOnce, dialogFilters, fetchAndCacheDialogsForListManager, isReorderingFolders]);
 
   const handleSelectDialogFilter = useCallback((filterId: number) => {
     if (activeDialogFilterId === filterId && !isReorderingFolders) return;
     setActiveDialogFilterId(filterId);
     const newFilter = dialogFilters.find(f => f.id === filterId) || defaultAllChatsFilter;
     setActiveFilterDetails(newFilter);
-    setLastFetchedFilterIdForChatListManager(null); // Trigger reload in chat list manager
+    setLastFetchedFilterIdForChatListManager(null); 
   }, [activeDialogFilterId, isReorderingFolders, dialogFilters, setLastFetchedFilterIdForChatListManager]);
 
   const handleToggleReorderFolders = useCallback(async () => {
@@ -133,7 +156,7 @@ export function useDialogFiltersManager({
         toast({ title: "Folder Order Saved", description: "The new folder order has been saved to Telegram." });
       } catch (error: any) {
         handleGlobalApiError(error, "Error Saving Order", "Could not save the folder order.");
-        await fetchDialogFilters(true); // Force refresh if save fails
+        await fetchDialogFilters(true); 
       }
     }
     setIsReorderingFolders(prev => !prev);
@@ -175,9 +198,18 @@ export function useDialogFiltersManager({
   const handleRefreshCurrentFilterView = useCallback(() => {
      if (activeFilterDetails) {
         toast({ title: `Refreshing "${activeFilterDetails.title}"...`});
-        setLastFetchedFilterIdForChatListManager(null); // This will trigger a fetch in useChatListManager
+        setLastFetchedFilterIdForChatListManager(null); 
     }
   }, [activeFilterDetails, toast, setLastFetchedFilterIdForChatListManager]);
+
+  const resetDialogFiltersState = useCallback(() => {
+    setDialogFilters([defaultAllChatsFilter]);
+    setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
+    setActiveFilterDetails(defaultAllChatsFilter);
+    setIsLoadingDialogFilters(true);
+    setHasFetchedDialogFiltersOnce(false);
+    setIsReorderingFolders(false);
+  }, []);
 
   return {
     dialogFilters,
@@ -197,6 +229,10 @@ export function useDialogFiltersManager({
     handleMoveFilter,
     handleShareFilter,
     handleRefreshCurrentFilterView,
-    defaultAllChatsFilter, // Export for use in page.tsx initial state for activeFilterDetails
+    defaultAllChatsFilter,
+    resetDialogFiltersState,
+    setIsConnected, // Expose setter for parent
   };
 }
+
+    

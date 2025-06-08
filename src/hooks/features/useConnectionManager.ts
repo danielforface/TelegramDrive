@@ -1,19 +1,20 @@
 
 "use client";
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react'; // Added useEffect
 import type { useToast } from "@/hooks/use-toast";
 import * as telegramService from '@/services/telegramService';
 import type { CloudFolder } from '@/types';
 
 interface UseConnectionManagerProps {
   toast: ReturnType<typeof useToast>['toast'];
-  onInitialConnect: () => Promise<void>; // Callback to fetch initial data
-  onResetApp: () => void; // Callback to reset all page state
+  onInitialConnect: () => Promise<void>; 
+  onResetApp: () => void; 
   setAuthStep: (step: 'initial' | 'awaiting_code' | 'awaiting_password') => void;
   handleGlobalApiError: (error: any, title: string, defaultMessage: string, doPageReset?: boolean) => void;
   handleNewCloudChannelDiscoveredAppLevel: (folder: CloudFolder, source: 'update' | 'initialScan') => void;
-  setGlobalPhoneNumberForDisplay: (phone: string) => void;
+  setGlobalPhoneNumberForDisplay: (phone: string) => void; // Renamed from appPhoneNumber setter for clarity
+  appPhoneNumber: string; // Current phone number for display, from AuthManager
 }
 
 export function useConnectionManager({
@@ -23,15 +24,23 @@ export function useConnectionManager({
   setAuthStep,
   handleGlobalApiError,
   handleNewCloudChannelDiscoveredAppLevel,
-  setGlobalPhoneNumberForDisplay,
+  setGlobalPhoneNumberForDisplay, // Renamed prop
+  appPhoneNumber, // Added prop
 }: UseConnectionManagerProps) {
   const [isConnected, setIsConnected] = useState(false);
-  const [isConnecting, setIsConnecting] = useState(false); // General connecting state for the app
+  const [isConnecting, setIsConnecting] = useState(false);
   const telegramUpdateListenerInitializedRef = useRef(false);
+  const [currentAppPhoneNumber, setCurrentAppPhoneNumber] = useState(appPhoneNumber); // Local state for phone number
+
+  // Update local phone number when the prop changes (from AuthManager)
+  useEffect(() => {
+    setCurrentAppPhoneNumber(appPhoneNumber);
+    setGlobalPhoneNumberForDisplay(appPhoneNumber); // Ensure global display is also updated
+  }, [appPhoneNumber, setGlobalPhoneNumberForDisplay]);
 
 
   const handleReset = useCallback(async (performServerLogout = true) => {
-    const currentIsConnected = isConnected; // Capture current state
+    const currentIsConnected = isConnected; 
 
     if (performServerLogout && currentIsConnected) {
       toast({ title: "Disconnecting...", description: "Logging out from Telegram." });
@@ -46,26 +55,30 @@ export function useConnectionManager({
     }
 
     setIsConnected(false);
-    setIsConnecting(false); // Ensure this is reset
+    setIsConnecting(false); 
     setAuthStep('initial');
-    setGlobalPhoneNumberForDisplay('');
+    setCurrentAppPhoneNumber(''); // Reset local phone number
+    setGlobalPhoneNumberForDisplay(''); // Reset global display
     telegramUpdateListenerInitializedRef.current = false;
-    onResetApp(); // Call the main app reset function
+    onResetApp(); 
   }, [isConnected, toast, setAuthStep, onResetApp, setGlobalPhoneNumberForDisplay]);
 
 
   const checkExistingConnection = useCallback(async () => {
-    setIsConnecting(true); // Use global connecting state
+    setIsConnecting(true); 
     try {
       const previouslyConnected = await telegramService.isUserConnected();
       if (previouslyConnected) {
         const storedUser = telegramService.getUserSessionDetails();
-        if (storedUser && storedUser.phone) setGlobalPhoneNumberForDisplay(storedUser.phone);
+        if (storedUser && storedUser.phone) {
+            setCurrentAppPhoneNumber(storedUser.phone);
+            setGlobalPhoneNumberForDisplay(storedUser.phone);
+        }
 
         setIsConnected(true);
-        setAuthStep('initial'); // Should be initial if already connected
+        setAuthStep('initial'); 
 
-        await onInitialConnect(); // Fetch initial data
+        await onInitialConnect(); 
 
         if (!telegramUpdateListenerInitializedRef.current) {
           telegramService.initializeTelegramUpdateListener(handleNewCloudChannelDiscoveredAppLevel);
@@ -73,9 +86,10 @@ export function useConnectionManager({
         }
       } else {
         setIsConnected(false);
+        setCurrentAppPhoneNumber('');
         setGlobalPhoneNumberForDisplay('');
         setAuthStep('initial');
-        handleReset(false); // Reset app state but don't try to logout from server if not connected
+        handleReset(false); 
       }
     } catch (error: any) {
       const errorMessage = error.message || (error.originalErrorObject?.error_message);
@@ -91,7 +105,6 @@ export function useConnectionManager({
         handleGlobalApiError(error, "Connection Check Error", `Failed to verify existing connection. ${errorMessage}`, true);
       }
       setIsConnected(false);
-      // Further state reset handled by handleGlobalApiError or handleReset
     } finally {
       setIsConnecting(false);
     }
@@ -105,9 +118,13 @@ export function useConnectionManager({
     setGlobalPhoneNumberForDisplay
   ]);
 
-  const onAuthSuccessMain = useCallback(async (/* user: any */) => {
+  const onAuthSuccessMain = useCallback(async (user: any) => {
     setIsConnected(true);
-    setIsConnecting(true); // To show loading for initial data fetch
+    setIsConnecting(true); 
+    if (user && user.phone) { // Update phone number on successful auth
+        setCurrentAppPhoneNumber(user.phone);
+        setGlobalPhoneNumberForDisplay(user.phone);
+    }
     try {
       await onInitialConnect();
       if (!telegramUpdateListenerInitializedRef.current) {
@@ -120,17 +137,20 @@ export function useConnectionManager({
     } finally {
         setIsConnecting(false);
     }
-  }, [onInitialConnect, toast, handleNewCloudChannelDiscoveredAppLevel]);
+  }, [onInitialConnect, toast, handleNewCloudChannelDiscoveredAppLevel, setGlobalPhoneNumberForDisplay]);
 
 
   return {
     isConnected,
-    setIsConnected, // Expose setter for direct manipulation if needed from auth success
     isConnecting,
-    setIsConnecting, // Global connecting state
+    setIsConnecting, 
     checkExistingConnection,
     handleReset,
     onAuthSuccessMain,
     telegramUpdateListenerInitializedRef,
+    appPhoneNumber: currentAppPhoneNumber, // Expose local state for display
+    setAppPhoneNumber: setCurrentAppPhoneNumber, // Expose setter for authManager to update
   };
 }
+
+    

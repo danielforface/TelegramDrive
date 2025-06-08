@@ -1,5 +1,4 @@
 
-
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
@@ -15,10 +14,10 @@ import { UploadDialog } from "@/components/upload-dialog";
 import { CreateCloudChannelDialog } from "@/components/create-cloud-channel-dialog";
 import { CreateVirtualFolderDialog } from "@/components/create-virtual-folder-dialog";
 import { DeleteItemConfirmationDialog } from "@/components/delete-item-confirmation-dialog";
-import { ManageCloudChannelDialog } from "@/components/manage-cloud-channel-dialog"; // New Dialog
-import type { CloudFolder, DialogFilter, InputPeer, CloudChannelType, CloudChannelConfigV1 } from "@/types";
+import { ManageCloudChannelDialog } from "@/components/manage-cloud-channel-dialog";
+import type { CloudFolder, DialogFilter, CloudChannelType, CloudChannelConfigV1 } from "@/types";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, Loader2, LayoutPanelLeft, MessageSquare, Cloud } from "lucide-react";
+import { Loader2, LayoutPanelLeft, MessageSquare, Cloud } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import * as telegramService from '@/services/telegramService';
 
@@ -34,7 +33,7 @@ import { useMediaPreviewManager } from "@/hooks/features/useMediaPreviewManager"
 import { useDownloadManager } from "@/hooks/features/useDownloadManager";
 import { useUploadManager } from "@/hooks/features/useUploadManager";
 import { usePageDialogsVisibility } from "@/hooks/features/usePageDialogsVisibility";
-import { useChannelAdminManager } from "@/hooks/features/useChannelAdminManager"; // New Hook
+import { useChannelAdminManager } from "@/hooks/features/useChannelAdminManager";
 
 
 export default function Home() {
@@ -44,77 +43,47 @@ export default function Home() {
 
   // Centralized API error handler for the page
   const handleGlobalApiError = useCallback((error: any, title: string, defaultMessage: string, doPageReset: boolean = false) => {
-    let description = error.message || defaultMessage;
-    // authManager?.setAuthError(description); // Assuming authManager hook exposes setAuthError
+    let description = defaultMessage;
+    if (error && typeof error.message === 'string' && error.message.length > 0) {
+        description = error.message;
+    } else if (error && typeof error.toString === 'function') {
+        const errStr = error.toString();
+        if (errStr !== '[object Object]') description = errStr;
+    }
+    
+    // authManager?.setAuthError(description); // This might cause issues if authManager is not yet defined
     toast({ title, description, variant: "destructive", duration: doPageReset ? 10000 : 5000 });
-    if (doPageReset && connectionManager) { // connectionManager might not be initialized yet
+    if (doPageReset && connectionManager) {
       connectionManager.handleReset(error.message !== 'AUTH_RESTART');
     }
-  }, [toast /*, authManager dependency if setAuthError is called */ /*, connectionManager dependency */]);
+  }, [toast /* connectionManager should be added if used, but handleReset is part of it */]);
 
 
   // --- Initialize Hooks ---
   const pageDialogs = usePageDialogsVisibility();
 
-  const {
-    authStep, setAuthStep, authInputPhoneNumber, setAuthInputPhoneNumber, authPhoneCode, setAuthPhoneCode,
-    authPassword, setAuthPassword, authError, setAuthError: setAuthErrorAuthHook,
-    handleSendCode, handleSignIn, handleCheckPassword, resetAuthVisuals,
-  } = useAuthManager({
-    onAuthSuccess: (user) => connectionManager.onAuthSuccessMain(user), // Assuming onAuthSuccessMain exists
-    setGlobalIsConnecting: (isConn) => connectionManager?.setIsConnecting(isConn), // Forward to connectionManager
-    setGlobalPhoneNumberForDisplay: (phone) => connectionManager?.setAppPhoneNumber(phone), // Forward
+  const authManager = useAuthManager({
+    onAuthSuccess: (user) => connectionManager.onAuthSuccessMain(user),
+    setGlobalIsConnecting: (isConn) => connectionManager?.setIsConnecting(isConn),
+    setGlobalPhoneNumberForDisplay: (phone) => connectionManager?.setAppPhoneNumber(phone),
     toast,
     handleGlobalApiError,
   });
 
-  const connectionManager = useConnectionManager({
-    toast,
-    onInitialConnect: async () => {
-      // This now becomes the central point for fetching initial data after connection
-      await dialogFiltersManager.fetchDialogFilters(true);
-      await appCloudChannelsManager.fetchAppManagedCloudChannelsList(true);
-    },
-    onResetApp: () => {
-      // Call reset functions of all other major hooks
-      resetAuthVisuals();
-      dialogFiltersManager.resetDialogFiltersState();
-      chatListManager.resetAllChatListData();
-      appCloudChannelsManager.resetAppManagedCloudFolders();
-      selectedMediaManager.resetSelectedMedia();
-      fileOperationsManager.resetFileOperations();
-      mediaPreviewManager.resetMediaPreview();
-      downloadManager.resetDownloadManager();
-      uploadManager.resetUploadManager();
-      channelAdminManager.resetAdminManagerState(); // Reset new hook
-      pageDialogs.resetAllDialogsVisibility();
-      // No need to reset global phone number here as handleReset in connectionManager does it
-    },
-    setAuthStep: setAuthStep, // Pass AuthManager's setter
-    handleGlobalApiError,
-    handleNewCloudChannelDiscoveredAppLevel: (folder, source) => appCloudChannelsManager?.handleNewCloudChannelVerifiedAndUpdateList(folder, source),
-    setGlobalPhoneNumberForDisplay: (phone) => { /* This is primarily managed by authManager now or directly in connectionManager */ }
-  });
-  
   const dialogFiltersManager = useDialogFiltersManager({
-    isConnected: connectionManager.isConnected,
+    isConnected: false, // Will be updated by connectionManager
     toast,
     handleGlobalApiError,
-    // Pass necessary callbacks to chatListManager's cache functions
     fetchAndCacheDialogsForListManager: (key, more, id, limit) => chatListManager?.fetchAndCacheDialogsForList(key, more, id, limit) || Promise.resolve(),
     setLastFetchedFilterIdForChatListManager: (id) => chatListManager?.setLastFetchedFilterIdForChatList(id),
-    // The following are not directly used by dialogFiltersManager itself but are part of the interface
-    // for chatListManager's direct cache manipulation if ever needed.
-    // These might be simplified if chatListManager exposes direct methods instead.
     setChatsDataCacheForFilter: (filterId, data) => chatListManager?.setChatsDataCacheForFilter(filterId, data),
     resetMasterChatListForFilteringInCache: () => chatListManager?.resetMasterChatListForFilteringInCache(),
     updateMasterChatListInCache: (folders, pagination) => chatListManager?.updateMasterChatListInCache(folders, pagination),
     getChatDataCacheEntry: (key) => chatListManager?.getChatDataCacheEntry(key),
-
   });
-
+  
   const chatListManager = useChatListManager({
-    isConnected: connectionManager.isConnected,
+    isConnected: false, // Will be updated
     activeFilterDetails: dialogFiltersManager.activeFilterDetails,
     toast,
     handleGlobalApiError,
@@ -122,12 +91,12 @@ export default function Home() {
     resetSelectedMedia: () => selectedMediaManager?.resetSelectedMedia(),
     setClipboardItem: (item) => fileOperationsManager?.setClipboardItem(item),
   });
-  
+
   const appCloudChannelsManager = useAppCloudChannelsManager({
-    isConnected: connectionManager.isConnected,
+    isConnected: false, // Will be updated
     toast,
     handleGlobalApiError,
-    onCloudChannelListChange: () => dialogFiltersManager.fetchDialogFilters(true), // Refresh dialog filters when cloud channels change
+    onCloudChannelListChange: () => dialogFiltersManager.fetchDialogFilters(true),
   });
 
   const selectedMediaManager = useSelectedMediaManager({
@@ -170,59 +139,107 @@ export default function Home() {
     handleGlobalApiError,
     selectedManagingChannel: pageDialogs.managingCloudChannelContext,
     onChannelDetailsUpdated: (updatedChannel) => {
-        // Update the main list of cloud channels
         appCloudChannelsManager.setAppManagedCloudFolders(prev => 
             prev.map(cf => cf.id === updatedChannel.id ? { ...cf, ...updatedChannel } : cf)
         );
-        // If this is the currently selected folder, update it too
         if (selectedMediaManager.selectedFolder?.id === updatedChannel.id) {
             selectedMediaManager.setSelectedFolder(prev => prev ? { ...prev, ...updatedChannel } : null);
         }
     }
   });
 
+  // ConnectionManager must be defined after other managers it might call back to during its init or reset
+  const connectionManager = useConnectionManager({
+    toast,
+    onInitialConnect: async () => {
+      await dialogFiltersManager.fetchDialogFilters(true);
+      await appCloudChannelsManager.fetchAppManagedCloudChannelsList(true);
+    },
+    onResetApp: () => {
+      authManager.resetAuthVisuals();
+      dialogFiltersManager.resetDialogFiltersState();
+      chatListManager.resetAllChatListData();
+      appCloudChannelsManager.resetAppManagedCloudFolders();
+      selectedMediaManager.resetSelectedMedia();
+      fileOperationsManager.resetFileOperations();
+      mediaPreviewManager.resetMediaPreview();
+      downloadManager.resetDownloadManager();
+      uploadManager.resetUploadManager();
+      channelAdminManager.resetAdminManagerState();
+      pageDialogs.resetAllDialogsVisibility();
+    },
+    setAuthStep: authManager.setAuthStep,
+    handleGlobalApiError,
+    handleNewCloudChannelDiscoveredAppLevel: (folder, source) => appCloudChannelsManager?.handleNewCloudChannelVerifiedAndUpdateList(folder, source),
+    setGlobalPhoneNumberForDisplay: authManager.setAuthInputPhoneNumber, // Use authManager's state for this
+    appPhoneNumber: authManager.authInputPhoneNumber, // Pass phone number from auth manager
+  });
+
+  // Update dependent hooks with connection status
+  useEffect(() => {
+    dialogFiltersManager.setIsConnected(connectionManager.isConnected);
+    chatListManager.setIsConnected(connectionManager.isConnected);
+    appCloudChannelsManager.setIsConnected(connectionManager.isConnected);
+  }, [connectionManager.isConnected, dialogFiltersManager, chatListManager, appCloudChannelsManager]);
+
 
   // Initial connection check
   useEffect(() => {
     connectionManager.checkExistingConnection();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Runs once on mount
+  }, []);
 
   // Effect to update activeFilterDetails when activeDialogFilterId or dialogFilters change
   useEffect(() => {
     if (dialogFiltersManager.isLoadingDialogFilters) return;
-    let newFilter: DialogFilter | null = dialogFiltersManager.dialogFilters.find(f => f.id === dialogFiltersManager.activeDialogFilterId) || null;
-    if (!newFilter && dialogFiltersManager.dialogFilters.length > 0) {
-        newFilter = dialogFiltersManager.dialogFilters.find(f => f.id === telegramService.ALL_CHATS_FILTER_ID) || dialogFiltersManager.dialogFilters[0];
-        if (newFilter && newFilter.id !== dialogFiltersManager.activeDialogFilterId) {
-          dialogFiltersManager.setActiveDialogFilterId(newFilter.id); // This will trigger another run
-          return;
-        }
-    } else if (!newFilter && dialogFiltersManager.dialogFilters.length === 0) {
-        newFilter = dialogFiltersManager.defaultAllChatsFilter;
-        if (dialogFiltersManager.activeDialogFilterId !== telegramService.ALL_CHATS_FILTER_ID) {
-            dialogFiltersManager.setActiveDialogFilterId(telegramService.ALL_CHATS_FILTER_ID); // This will trigger another run
-            return;
-        }
-    }
-    if (dialogFiltersManager.activeFilterDetails?.id !== newFilter?.id ||
-        dialogFiltersManager.activeFilterDetails?._ !== newFilter?._ ||
-        dialogFiltersManager.activeFilterDetails?.title !== newFilter?.title
-      ) {
-        dialogFiltersManager.setActiveFilterDetails(newFilter);
-    }
-  }, [dialogFiltersManager.activeDialogFilterId, dialogFiltersManager.dialogFilters, dialogFiltersManager.isLoadingDialogFilters, dialogFiltersManager.activeFilterDetails, dialogFiltersManager.setActiveDialogFilterId, dialogFiltersManager.setActiveFilterDetails, dialogFiltersManager.defaultAllChatsFilter]);
 
-  // Combined Reset for full disconnect or manual reset, ensuring cleanup from all hooks
-   const performFullReset = useCallback(async (performServerLogout = true) => {
-        // Abort video stream if active
+    let determinedNewFilter: DialogFilter | null = null;
+    const currentActiveId = dialogFiltersManager.activeDialogFilterId;
+    const currentFilters = dialogFiltersManager.dialogFilters;
+    const currentActiveFilterDetails = dialogFiltersManager.activeFilterDetails; // Get current state before update
+
+    if (currentFilters.length > 0) {
+        determinedNewFilter = currentFilters.find(f => f.id === currentActiveId) || null;
+        if (!determinedNewFilter) { 
+            determinedNewFilter = currentFilters.find(f => f.id === telegramService.ALL_CHATS_FILTER_ID) || currentFilters[0];
+            if (determinedNewFilter && determinedNewFilter.id !== currentActiveId) {
+                dialogFiltersManager.setActiveDialogFilterId(determinedNewFilter.id);
+                return; 
+            }
+        }
+    } else { 
+        determinedNewFilter = dialogFiltersManager.defaultAllChatsFilter;
+        if (currentActiveId !== telegramService.ALL_CHATS_FILTER_ID) {
+            dialogFiltersManager.setActiveDialogFilterId(telegramService.ALL_CHATS_FILTER_ID);
+            return; 
+        }
+    }
+
+    // Only update if the new determined filter is actually different
+    if (currentActiveFilterDetails?.id !== determinedNewFilter?.id || 
+        (!currentActiveFilterDetails && determinedNewFilter) || // Handles initial null state
+        (currentActiveFilterDetails && determinedNewFilter && currentActiveFilterDetails.title !== determinedNewFilter.title) // If title of same ID filter changed
+      ) {
+      dialogFiltersManager.setActiveFilterDetails(determinedNewFilter);
+    }
+  }, [
+    dialogFiltersManager.activeDialogFilterId,
+    dialogFiltersManager.dialogFilters,
+    dialogFiltersManager.isLoadingDialogFilters,
+    // dialogFiltersManager.activeFilterDetails, // REMOVED from dependencies to prevent loop
+    dialogFiltersManager.setActiveDialogFilterId,
+    dialogFiltersManager.setActiveFilterDetails,
+    dialogFiltersManager.defaultAllChatsFilter,
+  ]);
+
+
+  const performFullReset = useCallback(async (performServerLogout = true) => {
         if (mediaPreviewManager.videoStreamAbortControllerRef.current && !mediaPreviewManager.videoStreamAbortControllerRef.current.signal.aborted) {
             mediaPreviewManager.videoStreamAbortControllerRef.current.abort("User reset application state");
         }
         if (mediaPreviewManager.videoStreamUrlInternal) {
             URL.revokeObjectURL(mediaPreviewManager.videoStreamUrlInternal);
         }
-        // Abort downloads
         downloadManager.downloadQueueRefForReset.current.forEach(item => {
             if (item.abortController && !item.abortController.signal.aborted) {
                 item.abortController.abort("User reset application state");
@@ -231,19 +248,16 @@ export default function Home() {
         downloadManager.activeDownloadsRefForReset.current.clear();
         downloadManager.browserDownloadTriggeredRefForReset.current.clear();
 
-        // Abort uploads
         uploadManager.uploadAbortControllersRefForReset.current.forEach((controller) => {
           if (!controller.signal.aborted) controller.abort("User reset application state");
         });
         uploadManager.uploadAbortControllersRefForReset.current.clear();
 
-        await connectionManager.handleReset(performServerLogout); // This calls onResetApp, which resets other hooks' states
-
+        await connectionManager.handleReset(performServerLogout);
     }, [connectionManager, mediaPreviewManager, downloadManager, uploadManager]);
 
 
-  // Loading state for initial app load
-  if (connectionManager.isConnecting && !connectionManager.isConnected && !authError && authStep === 'initial' && !dialogFiltersManager.hasFetchedDialogFiltersOnce) {
+  if (connectionManager.isConnecting && !connectionManager.isConnected && !authManager.authError && authManager.authStep === 'initial' && !dialogFiltersManager.hasFetchedDialogFiltersOnce) {
     return (
       <div className="min-h-screen flex flex-col">
         <Header ref={headerRef} isConnected={false} />
@@ -260,26 +274,25 @@ export default function Home() {
     );
   }
 
-  // Telegram Connect View
   if (!connectionManager.isConnected && !connectionManager.isConnecting) {
     return (
       <>
         <Header ref={headerRef} isConnected={false} />
         <main className="flex-grow container mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col items-center justify-center">
           <TelegramConnect
-            authStep={authStep}
-            onSendCode={handleSendCode}
-            onSignIn={(code) => { setAuthPhoneCode(code); handleSignIn(code); }}
-            onCheckPassword={(pw) => { setAuthPassword(pw); handleCheckPassword(pw); }}
-            isLoading={connectionManager.isConnecting} // Use global connecting state
-            error={authError}
-            phoneNumber={connectionManager.appPhoneNumber || authInputPhoneNumber} // Display global if available, else local input
-            setPhoneNumber={setAuthInputPhoneNumber} // For the input field itself
-            phoneCode={authPhoneCode}
-            setPhoneCode={setAuthPhoneCode}
-            password={authPassword}
-            setPassword={setAuthPassword}
-            onReset={() => performFullReset(authStep !== 'initial')}
+            authStep={authManager.authStep}
+            onSendCode={authManager.handleSendCode}
+            onSignIn={(code) => { authManager.setAuthPhoneCode(code); authManager.handleSignIn(code); }}
+            onCheckPassword={(pw) => { authManager.setAuthPassword(pw); authManager.handleCheckPassword(pw); }}
+            isLoading={connectionManager.isConnecting}
+            error={authManager.authError}
+            phoneNumber={connectionManager.appPhoneNumber || authManager.authInputPhoneNumber}
+            setPhoneNumber={authManager.setAuthInputPhoneNumber}
+            phoneCode={authManager.authPhoneCode}
+            setPhoneCode={authManager.setAuthPhoneCode}
+            password={authManager.authPassword}
+            setPassword={authManager.setAuthPassword}
+            onReset={() => performFullReset(authManager.authStep !== 'initial')}
           />
         </main>
         <footer ref={footerRef} className="py-4 px-4 sm:px-6 lg:px-8 text-center border-t"><p className="text-sm text-muted-foreground">Telegram Cloudifier &copy; {new Date().getFullYear()}</p></footer>
@@ -287,7 +300,6 @@ export default function Home() {
     );
   }
 
-  // Main App View
   return (
     <div className="min-h-screen flex flex-col">
       <Header
@@ -385,8 +397,8 @@ export default function Home() {
         viewMode="cloudStorage"
         folders={appCloudChannelsManager.appManagedCloudFolders}
         isLoading={appCloudChannelsManager.isLoadingAppManagedCloudFolders && appCloudChannelsManager.appManagedCloudFolders.length === 0}
-        isLoadingMore={false} /* Cloud channels don't have load more for now */
-        hasMore={false}      /* Cloud channels don't have load more for now */
+        isLoadingMore={false} 
+        hasMore={false}      
         selectedFolderId={selectedMediaManager.selectedFolder?.isAppManagedCloud ? selectedMediaManager.selectedFolder.id : null}
         onSelectFolder={(id) => {selectedMediaManager.handleSelectFolderOrChannel(id, 'cloud'); pageDialogs.setIsCloudStorageSelectorOpen(false);}}
         onLoadMore={() => {}}
@@ -406,7 +418,7 @@ export default function Home() {
                 appCloudChannelsManager.addCreatedCloudChannelToList(newCF);
             } else { throw new Error("Channel creation did not return expected info."); }
         }}
-        isLoading={fileOperationsManager.isProcessingVirtualFolder} // Re-use for now
+        isLoading={fileOperationsManager.isProcessingVirtualFolder}
       />
 
       <CreateVirtualFolderDialog
@@ -483,11 +495,9 @@ export default function Home() {
           channel={pageDialogs.managingCloudChannelContext}
           handleGlobalApiError={handleGlobalApiError}
           onChannelDetailsUpdatedAppLevel={(updatedChannel) => {
-            // Update the main list of cloud channels in AppCloudChannelsManager
             appCloudChannelsManager.setAppManagedCloudFolders(prev => 
                 prev.map(cf => cf.id === updatedChannel.id ? { ...cf, ...updatedChannel } : cf)
             );
-            // If this is the currently selected folder, update it in SelectedMediaManager
             if (selectedMediaManager.selectedFolder?.id === updatedChannel.id) {
                 selectedMediaManager.setSelectedFolder(prev => prev ? { ...prev, ...updatedChannel } : null);
             }
@@ -498,3 +508,4 @@ export default function Home() {
   );
 }
 
+    

@@ -1,34 +1,48 @@
 
 "use client";
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import type { CloudFolder } from '@/types';
 import * as telegramService from '@/services/telegramService';
 import type { useToast } from "@/hooks/use-toast";
 
 interface UseAppCloudChannelsManagerProps {
   isConnected: boolean;
+  setIsConnected?: (isConnected: boolean) => void; // Optional prop
   toast: ReturnType<typeof useToast>['toast'];
   handleGlobalApiError: (error: any, title: string, defaultMessage: string, doPageReset?: boolean) => void;
-  onCloudChannelListChange?: () => void; // e.g., to trigger dialog filter refresh
+  onCloudChannelListChange?: () => void; 
 }
 
 export function useAppCloudChannelsManager({
-  isConnected,
+  isConnected: initialIsConnected,
+  setIsConnected: setExternalIsConnected,
   toast,
   handleGlobalApiError,
   onCloudChannelListChange,
 }: UseAppCloudChannelsManagerProps) {
   const [appManagedCloudFolders, setAppManagedCloudFolders] = useState<CloudFolder[]>([]);
   const [isLoadingAppManagedCloudFolders, setIsLoadingAppManagedCloudFolders] = useState(true);
+  const [isConnectedInternal, setIsConnectedInternal] = useState(initialIsConnected);
+
+  useEffect(() => {
+    setIsConnectedInternal(initialIsConnected);
+  }, [initialIsConnected]);
+
+  const setIsConnected = useCallback((connected: boolean) => {
+    setIsConnectedInternal(connected);
+    if (setExternalIsConnected) {
+      setExternalIsConnected(connected);
+    }
+  }, [setExternalIsConnected]);
 
   const fetchAppManagedCloudChannelsList = useCallback(async (forceRefresh = false) => {
-    if (!isConnected && !forceRefresh) {
+    if (!isConnectedInternal && !forceRefresh) {
       setIsLoadingAppManagedCloudFolders(false);
       return;
     }
     if (!forceRefresh && appManagedCloudFolders.length > 0 && !isLoadingAppManagedCloudFolders) {
-      return; // Already loaded and not forcing refresh
+      return; 
     }
     setIsLoadingAppManagedCloudFolders(true);
     try {
@@ -39,11 +53,11 @@ export function useAppCloudChannelsManager({
       }
     } catch (error: any) {
       handleGlobalApiError(error, "Error Fetching Cloud Channels", "Could not load app-managed cloud channels.");
-      setAppManagedCloudFolders([]); // Clear on error
+      setAppManagedCloudFolders([]); 
     } finally {
       setIsLoadingAppManagedCloudFolders(false);
     }
-  }, [isConnected, appManagedCloudFolders.length, isLoadingAppManagedCloudFolders, handleGlobalApiError, onCloudChannelListChange]);
+  }, [isConnectedInternal, appManagedCloudFolders.length, isLoadingAppManagedCloudFolders, handleGlobalApiError, onCloudChannelListChange]);
 
   const handleNewCloudChannelVerifiedAndUpdateList = useCallback((newlyVerifiedFolder: CloudFolder, source: 'update' | 'initialScan') => {
     setAppManagedCloudFolders(prevFolders => {
@@ -57,13 +71,12 @@ export function useAppCloudChannelsManager({
         }
         return [...prevFolders, newlyVerifiedFolder].sort((a, b) => a.name.localeCompare(b.name));
       } else {
-        // Update existing if needed (e.g., config changed)
         return prevFolders.map(f => f.id === newlyVerifiedFolder.id ? newlyVerifiedFolder : f)
           .sort((a, b) => a.name.localeCompare(b.name));
       }
     });
     if (source === 'update' && onCloudChannelListChange) {
-      onCloudChannelListChange(); // This will trigger fetchDialogFilters in page.tsx
+      onCloudChannelListChange(); 
     }
   }, [toast, onCloudChannelListChange]);
 
@@ -82,17 +95,20 @@ export function useAppCloudChannelsManager({
 
   const resetAppManagedCloudFolders = useCallback(() => {
     setAppManagedCloudFolders([]);
-    setIsLoadingAppManagedCloudFolders(true); // Or false if we don't want to show loading immediately
+    setIsLoadingAppManagedCloudFolders(true); 
   }, []);
 
 
   return {
     appManagedCloudFolders,
-    setAppManagedCloudFolders, // Expose for direct updates if needed (e.g., VFS ops)
+    setAppManagedCloudFolders, 
     isLoadingAppManagedCloudFolders,
     fetchAppManagedCloudChannelsList,
     handleNewCloudChannelVerifiedAndUpdateList,
     addCreatedCloudChannelToList,
     resetAppManagedCloudFolders,
+    setIsConnected, // Expose setter
   };
 }
+
+    
