@@ -19,15 +19,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge"; // Added import
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, X, Info, Link2, Users, Image as ImageIcon, CheckCircle, Edit3, Copy, Settings2 } from "lucide-react";
-import { useChannelAdminManager } from '@/hooks/features/useChannelAdminManager'; // Assuming this hook will be created
+import { useChannelAdminManager } from '@/hooks/features/useChannelAdminManager';
 
 interface ManageCloudChannelDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  channel: CloudFolder | null; // The channel to manage
-  // Pass down any global error handler or specific service functions if not handled by the hook
+  channel: CloudFolder | null;
   handleGlobalApiError: (error: any, title: string, defaultMessage: string, doPageReset?: boolean) => void;
   onChannelDetailsUpdatedAppLevel: (updatedFolder: CloudFolder) => void;
 }
@@ -53,7 +53,6 @@ export function ManageCloudChannelDialog({
     participants,
     isLoadingParticipants,
     hasMoreParticipants,
-    // fetchChannelDetails, // Already called via useEffect in hook
     updateChannelDescription,
     checkUsernameAvailability,
     setChannelUsername,
@@ -77,24 +76,20 @@ export function ManageCloudChannelDialog({
 
   useEffect(() => {
     if (isOpen && channel && channel.inputPeer) {
-      // Initial fetch is handled by the hook based on selectedManagingChannel
-      // If channelDetails are already populated by the hook, use them
       setEditableDescription(channelDetails?.about || channel.fullChannelInfo?.about || "");
       setEditableUsername(channelDetails?.username || channel.fullChannelInfo?.username || "");
       setCurrentPhotoPreview(channelDetails?.chat_photo?.photo_big?.local?.path || channel.fullChannelInfo?.chat_photo?.photo_big?.local?.path || null);
 
-      // Initial participant fetch if not already loading or loaded
       if(channelDetails && participants.length === 0 && !isLoadingParticipants && hasMoreParticipants) {
         fetchParticipants(channel.inputPeer, 0);
       }
 
     } else if (!isOpen) {
-      // Reset local form states when dialog closes
       setEditableDescription("");
       setEditableUsername("");
       setCurrentPhotoPreview(null);
       setSelectedPhotoFile(null);
-      resetAdminManagerState(); // Reset hook state
+      resetAdminManagerState();
     }
   }, [isOpen, channel, channelDetails, participants.length, isLoadingParticipants, hasMoreParticipants, fetchParticipants, resetAdminManagerState]);
 
@@ -134,7 +129,6 @@ export function ManageCloudChannelDialog({
   const handlePhotoUpload = async () => {
     if (!channel?.inputPeer || !selectedPhotoFile) return;
     await updateChannelPhoto(channel.inputPeer, selectedPhotoFile);
-    // Optionally reset file input after upload attempt
     setSelectedPhotoFile(null); 
     if(fileInputRef.current) fileInputRef.current.value = "";
   };
@@ -190,13 +184,11 @@ export function ManageCloudChannelDialog({
 
             <ScrollArea className="flex-grow overflow-y-auto">
               <TabsContent value="general" className="p-6 space-y-6">
-                {/* Channel Title (Read-only example) */}
                 <div>
                   <Label htmlFor="channelTitle">Channel Title</Label>
                   <Input id="channelTitle" value={channel.name} readOnly disabled className="mt-1" />
                 </div>
 
-                {/* Channel Description */}
                 <div>
                   <Label htmlFor="channelDescription">Description (About)</Label>
                   <Textarea
@@ -213,7 +205,6 @@ export function ManageCloudChannelDialog({
                   </Button>
                 </div>
 
-                {/* Public Username / Link */}
                 {channelDetails?.can_set_username && (
                   <div className="space-y-2 p-4 border rounded-md">
                     <Label className="text-base font-semibold">Public Link (Username)</Label>
@@ -241,7 +232,6 @@ export function ManageCloudChannelDialog({
                   </div>
                 )}
 
-                {/* Private Invite Link */}
                  <div className="space-y-2 p-4 border rounded-md">
                     <Label className="text-base font-semibold">Private Invite Link</Label>
                     {currentLink ? (
@@ -261,7 +251,6 @@ export function ManageCloudChannelDialog({
                 </div>
 
 
-                {/* Channel Photo */}
                  <div className="space-y-2 p-4 border rounded-md">
                     <Label className="text-base font-semibold">Channel Photo</Label>
                     <div className="flex items-center gap-4">
@@ -294,7 +283,7 @@ export function ManageCloudChannelDialog({
                       <li key={participant.user_id} className="flex items-center justify-between p-2 border rounded-md bg-muted/20 hover:bg-muted/40">
                         <div className="flex items-center gap-3">
                           <Avatar className="h-8 w-8">
-                            <AvatarImage src={participant.user?.photo?.photo_small?.local?.path /* Placeholder */} alt={participant.user?.first_name} data-ai-hint="participant avatar"/>
+                            <AvatarImage src={participant.user?.photo?.photo_small?.local?.path} alt={participant.user?.first_name} data-ai-hint="participant avatar"/>
                             <AvatarFallback>{participant.user?.first_name?.substring(0,1)}{participant.user?.last_name?.substring(0,1)}</AvatarFallback>
                           </Avatar>
                           <div>
@@ -332,3 +321,5 @@ export function ManageCloudChannelDialog({
     </Dialog>
   );
 }
+
+    
