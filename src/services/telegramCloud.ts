@@ -4,7 +4,7 @@
 import { telegramApiInstance, sleep } from './telegramAPI';
 import { isUserConnected } from './telegramAuth';
 import { getDialogFilters, transformDialogToCloudFolder, ALL_CHATS_FILTER_ID } from './telegramDialogs';
-import type { InputPeer, CloudChannelConfigV1, CloudChannelType, CloudChannelConfigEntry, CloudFolder } from '@/types';
+import type { InputPeer, CloudChannelConfigV1, CloudChannelType, CloudChannelConfigEntry, CloudFolder, FullChat, UpdatedChannelPhoto } from '@/types';
 
 export const CLOUDIFIER_APP_SIGNATURE_V1 = "TELEGRAM_CLOUDIFIER_V1.0";
 export const IDENTIFICATION_MESSAGE_ID = 2;
@@ -451,4 +451,129 @@ export async function removeVirtualFolderFromCloudChannel(
   // console.log("Remove virtual folder success:", success, "Updated config:", currentConfig);
 
   return success ? currentConfig : null;
+}
+
+
+// Channel Administration specific functions
+export async function getChannelFullInfo(channelInputPeer: InputPeer): Promise<FullChat | null> {
+  if (!channelInputPeer || channelInputPeer._ !== 'inputPeerChannel') {
+    throw new Error("Invalid input peer for fetching channel details.");
+  }
+  try {
+    const result = await telegramApiInstance.call('channels.getFullChannel', {
+      channel: channelInputPeer,
+    });
+    // result contains { full_chat, chats, users }
+    // The main details are in full_chat, chats/users provide context for entities within full_chat
+    if (result && result.full_chat) {
+        // Combine full_chat with associated chats and users if needed by consuming components
+        // For now, returning the main full_chat object, which might already contain some resolved entities
+        return {
+            ...result.full_chat,
+            // Optionally enrich with user/chat objects from result.users and result.chats
+            // e.g. by mapping IDs to objects
+        };
+    }
+    return null;
+  } catch (error: any) {
+    // console.error(`Error fetching full info for channel ${channelInputPeer.channel_id}:`, error);
+    throw error;
+  }
+}
+
+export async function updateChannelAbout(channelInputPeer: InputPeer, about: string): Promise<boolean> {
+   if (!channelInputPeer || channelInputPeer._ !== 'inputPeerChannel') {
+    throw new Error("Invalid input peer for updating channel about.");
+  }
+  try {
+    const result = await telegramApiInstance.call('channels.editAbout', {
+      channel: channelInputPeer,
+      about: about,
+    });
+    return result === true || (typeof result === 'object' && result._ === 'boolTrue');
+  } catch (error: any) {
+    // console.error(`Error updating about for channel ${channelInputPeer.channel_id}:`, error);
+    throw error;
+  }
+}
+
+export async function checkChatUsername(channelInputPeer: InputPeer, username: string): Promise<boolean> {
+   if (!channelInputPeer || channelInputPeer._ !== 'inputPeerChannel') {
+    throw new Error("Invalid input peer for checking username.");
+  }
+  try {
+    const result = await telegramApiInstance.call('channels.checkUsername', {
+      channel: channelInputPeer,
+      username: username,
+    });
+    return result === true || (typeof result === 'object' && result._ === 'boolTrue'); // True if username is available/valid
+  } catch (error: any) {
+    // Specific errors like USERNAME_INVALID, USERNAME_OCCUPIED will be thrown
+    // console.error(`Error checking username for channel ${channelInputPeer.channel_id}:`, error);
+    throw error;
+  }
+}
+
+export async function updateChatUsername(channelInputPeer: InputPeer, username: string): Promise<boolean> {
+   if (!channelInputPeer || channelInputPeer._ !== 'inputPeerChannel') {
+    throw new Error("Invalid input peer for updating username.");
+  }
+  try {
+    const result = await telegramApiInstance.call('channels.updateUsername', {
+      channel: channelInputPeer,
+      username: username,
+    });
+    return result === true || (typeof result === 'object' && result._ === 'boolTrue');
+  } catch (error: any) {
+    // console.error(`Error updating username for channel ${channelInputPeer.channel_id}:`, error);
+    throw error;
+  }
+}
+
+export async function exportChannelInviteLink(channelInputPeer: InputPeer): Promise<string | null> {
+   if (!channelInputPeer || channelInputPeer._ !== 'inputPeerChannel') {
+    throw new Error("Invalid input peer for exporting invite link.");
+  }
+  try {
+    // For a primary invite link, usually messages.exportChatInvite is used for basic chats/supergroups
+    // For channels, channels.exportInvite might be more direct if we want to manage the main link.
+    // For simplicity and general use, let's use messages.exportChatInvite
+    const result = await telegramApiInstance.call('messages.exportChatInvite', {
+      peer: channelInputPeer,
+      // additional params like expire_date, usage_limit can be added for more control
+    });
+    if (result && result._ === 'chatInviteExported' && result.link) {
+      return result.link;
+    }
+    return null;
+  } catch (error: any) {
+    // console.error(`Error exporting invite link for channel ${channelInputPeer.channel_id}:`, error);
+    throw error;
+  }
+}
+
+export async function updateChannelPhotoService(channelInputPeer: InputPeer, photoFileId: any, photoInputFile: any): Promise<UpdatedChannelPhoto | null> {
+    if (!channelInputPeer || channelInputPeer._ !== 'inputPeerChannel') {
+        throw new Error("Invalid input peer for updating channel photo.");
+    }
+    if (!photoInputFile) { // photoFileId is from upload.saveFilePart, photoInputFile is inputPhotoUploaded
+        throw new Error("InputPhoto (uploaded) is required to update channel photo.");
+    }
+    try {
+        const result = await telegramApiInstance.call('channels.editPhoto', {
+            channel: channelInputPeer,
+            photo: photoInputFile, // This should be of type InputChatUploadedPhoto or InputChatPhoto
+        });
+        // The result is an 'updates' object containing the new photo details
+        if (result && result.updates) {
+            const photoUpdate = result.updates.find((u: any) => u._ === 'updateChatParticipants' || u._ === 'updateChannel'); // or updateChannelPhoto
+            if (photoUpdate && (photoUpdate.participants?.chat?.photo || photoUpdate.photo) ) {
+                 return { photo: photoUpdate.participants?.chat?.photo || photoUpdate.photo, date: Date.now()/1000 };
+            }
+        }
+        return null;
+    } catch (error: any) {
+        // console.error(`Error updating photo for channel ${channelInputPeer.channel_id}:`, error);
+        throw error;
+    }
 }

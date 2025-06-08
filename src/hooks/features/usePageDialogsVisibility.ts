@@ -2,6 +2,7 @@
 "use client";
 
 import { useState, useCallback } from 'react';
+import type { CloudFolder } from '@/types'; // Added CloudFolder for context
 
 export function usePageDialogsVisibility() {
   const [isChatSelectionDialogOpen, setIsChatSelectionDialogOpen] = useState(false);
@@ -9,6 +10,9 @@ export function usePageDialogsVisibility() {
   const [isCreateCloudChannelDialogOpen, setIsCreateCloudChannelDialogOpen] = useState(false);
   const [isCreateVirtualFolderDialogOpen, setIsCreateVirtualFolderDialogOpen] = useState(false);
   const [virtualFolderParentPath, setVirtualFolderParentPath] = useState<string>("/"); // State for VFS dialog
+  const [isManageCloudChannelDialogOpen, setIsManageCloudChannelDialogOpen] = useState(false);
+  const [managingCloudChannelContext, setManagingCloudChannelContext] = useState<CloudFolder | null>(null);
+
 
   const handleOpenChatSelectionDialog = useCallback(() => setIsChatSelectionDialogOpen(true), []);
   const handleOpenCloudStorageSelector = useCallback(() => setIsCloudStorageSelectorOpen(true), []);
@@ -19,6 +23,11 @@ export function usePageDialogsVisibility() {
     setVirtualFolderParentPath(path || "/");
     setIsCreateVirtualFolderDialogOpen(true);
   }, []);
+
+  const handleOpenManageCloudChannelDialog = useCallback((channel: CloudFolder) => {
+    setManagingCloudChannelContext(channel);
+    setIsManageCloudChannelDialogOpen(true);
+  }, []);
   
   const resetAllDialogsVisibility = useCallback(() => {
     setIsChatSelectionDialogOpen(false);
@@ -26,6 +35,8 @@ export function usePageDialogsVisibility() {
     setIsCreateCloudChannelDialogOpen(false);
     setIsCreateVirtualFolderDialogOpen(false);
     setVirtualFolderParentPath("/");
+    setIsManageCloudChannelDialogOpen(false);
+    setManagingCloudChannelContext(null);
   }, []);
 
   return {
@@ -39,11 +50,18 @@ export function usePageDialogsVisibility() {
     setIsCreateVirtualFolderDialogOpen,
     virtualFolderParentPath, // Expose for CreateVirtualFolderDialog
     setVirtualFolderParentPath, // Expose setter
+    isManageCloudChannelDialogOpen,
+    setIsManageCloudChannelDialogOpen,
+    managingCloudChannelContext,
+    setManagingCloudChannelContext,
+
 
     handleOpenChatSelectionDialog,
     handleOpenCloudStorageSelector,
     handleOpenCreateCloudChannelDialog,
     handleOpenCreateVirtualFolderDialog,
+    handleOpenManageCloudChannelDialog,
     resetAllDialogsVisibility,
   };
 }
+

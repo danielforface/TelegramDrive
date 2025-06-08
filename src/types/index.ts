@@ -1,4 +1,5 @@
 
+
 export interface CloudFile {
   id: string;
   name: string;
@@ -25,6 +26,7 @@ export interface CloudFolder {
   isAppManagedCloud?: boolean; // True if this is a Cloudifier-managed channel
   cloudConfig?: CloudChannelConfigV1 | null; // VFS configuration if it's an app-managed cloud
   vfsPath?: string; // Virtual path for this folder in UI representation (primarily for virtual folders from config)
+  fullChannelInfo?: FullChat; // Full chat object from Telegram, populated when managing
 }
 
 export interface GetChatsPaginatedResponse {
@@ -230,3 +232,84 @@ export interface UserSessionType {
     srp_B: Uint8Array; // From account.getPassword
   };
 }
+
+// For Channel Management
+// Represents a chatFull object from Telegram API, simplified
+export interface FullChat {
+  _: string; // e.g., 'chatFull', 'channelFull'
+  id: number | string;
+  about?: string;
+  participants_count?: number;
+  admins_count?: number;
+  kicked_count?: number;
+  banned_count?: number;
+  online_count?: number;
+  read_inbox_max_id?: number;
+  read_outbox_max_id?: number;
+  unread_count?: number;
+  chat_photo?: any; // Photo type
+  notify_settings?: any; // PeerNotifySettings type
+  exported_invite?: any; // ExportedChatInvite type
+  bot_info?: any[]; // BotInfo type array
+  migrated_from_chat_id?: number | string;
+  migrated_from_max_id?: number;
+  pinned_msg_id?: number;
+  stickerset?: any; // StickerSet type
+  available_min_id?: number;
+  folder_id?: number;
+  call?: any; // InputGroupCall type
+  ttl_period?: number;
+  grouped_messages?: any; // messages.ChatFull type specific field
+  theme_emoticon?: string;
+  requests_pending?: number;
+  recent_requesters?: (number | string)[];
+  // Channel specific fields
+  linked_chat_id?: number | string;
+  location?: any; // ChannelLocation type
+  slowmode_seconds?: number;
+  slowmode_next_send_date?: number;
+  stats_dc?: number;
+  pts?: number;
+  can_view_participants?: boolean;
+  can_set_username?: boolean;
+  can_set_stickers?: boolean;
+  hidden_prehistory?: boolean;
+  can_set_location?: boolean;
+  has_scheduled?: boolean;
+  can_view_stats?: boolean;
+  blocked?: boolean;
+  participants?: any; // ChatParticipants type
+  [key: string]: any; // For other potential fields
+}
+
+export interface ChannelParticipant {
+  _: string; // e.g. 'channelParticipant', 'channelParticipantAdmin', 'channelParticipantCreator'
+  user_id: number | string;
+  date: number; // Timestamp when user joined/was last updated
+  inviter_id?: number | string; // If invited
+  kicked_by?: number | string;
+  banned_by?: number | string;
+  rank?: string; // For admins/owner
+  // Admin specific
+  is_owner?: boolean;
+  can_edit?: boolean;
+  self?: boolean; // If this participant is the current user
+  admin_rights?: any; // Type ChatAdminRights
+  banned_rights?: any; // Type ChatBannedRights
+  // User object might be embedded or fetched separately
+  user?: any; // Telegram User object
+}
+
+export interface ChannelParticipantsResponse {
+  count: number;
+  participants: ChannelParticipant[];
+  users: any[]; // Array of User objects related to participants
+  chats?: any[]; // Array of Chat objects if relevant (e.g. bot participants)
+  next_offset?: string; // For pagination with getParticipants using filter
+}
+
+export interface UpdatedChannelPhoto {
+  photo: any; // Photo type from MTProto
+  date: number;
+}
+

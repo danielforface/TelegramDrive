@@ -1,4 +1,5 @@
 
+
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
@@ -14,6 +15,7 @@ import { UploadDialog } from "@/components/upload-dialog";
 import { CreateCloudChannelDialog } from "@/components/create-cloud-channel-dialog";
 import { CreateVirtualFolderDialog } from "@/components/create-virtual-folder-dialog";
 import { DeleteItemConfirmationDialog } from "@/components/delete-item-confirmation-dialog";
+import { ManageCloudChannelDialog } from "@/components/manage-cloud-channel-dialog"; // New Dialog
 import type { CloudFolder, DialogFilter, InputPeer, CloudChannelType, CloudChannelConfigV1 } from "@/types";
 import { Button } from "@/components/ui/button";
 import { RefreshCw, Loader2, LayoutPanelLeft, MessageSquare, Cloud } from "lucide-react";
@@ -32,6 +34,7 @@ import { useMediaPreviewManager } from "@/hooks/features/useMediaPreviewManager"
 import { useDownloadManager } from "@/hooks/features/useDownloadManager";
 import { useUploadManager } from "@/hooks/features/useUploadManager";
 import { usePageDialogsVisibility } from "@/hooks/features/usePageDialogsVisibility";
+import { useChannelAdminManager } from "@/hooks/features/useChannelAdminManager"; // New Hook
 
 
 export default function Home() {
@@ -83,6 +86,7 @@ export default function Home() {
       mediaPreviewManager.resetMediaPreview();
       downloadManager.resetDownloadManager();
       uploadManager.resetUploadManager();
+      channelAdminManager.resetAdminManagerState(); // Reset new hook
       pageDialogs.resetAllDialogsVisibility();
       // No need to reset global phone number here as handleReset in connectionManager does it
     },
@@ -160,6 +164,23 @@ export default function Home() {
         }
     },
   });
+
+  const channelAdminManager = useChannelAdminManager({
+    toast,
+    handleGlobalApiError,
+    selectedManagingChannel: pageDialogs.managingCloudChannelContext,
+    onChannelDetailsUpdated: (updatedChannel) => {
+        // Update the main list of cloud channels
+        appCloudChannelsManager.setAppManagedCloudFolders(prev => 
+            prev.map(cf => cf.id === updatedChannel.id ? { ...cf, ...updatedChannel } : cf)
+        );
+        // If this is the currently selected folder, update it too
+        if (selectedMediaManager.selectedFolder?.id === updatedChannel.id) {
+            selectedMediaManager.setSelectedFolder(prev => prev ? { ...prev, ...updatedChannel } : null);
+        }
+    }
+  });
+
 
   // Initial connection check
   useEffect(() => {
@@ -307,6 +328,8 @@ export default function Home() {
                 onCopyFolderStructure={fileOperationsManager.handleCopyFolderStructureOp}
                 onPasteItem={(targetPath) => fileOperationsManager.handlePasteItemOp(targetPath, pageDialogs.handleOpenCreateVirtualFolderDialog)}
                 clipboardItem={fileOperationsManager.clipboardItem}
+                selectedFolderForView={selectedMediaManager.selectedFolder}
+                onOpenManageCloudChannelDialog={pageDialogs.handleOpenManageCloudChannelDialog}
               />
             ) : (
               <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground p-4">
@@ -453,6 +476,24 @@ export default function Home() {
         selectedFiles={uploadManager.filesToUpload}
         isLoading={uploadManager.isUploadingFiles}
       />
+      {pageDialogs.managingCloudChannelContext && (
+        <ManageCloudChannelDialog
+          isOpen={pageDialogs.isManageCloudChannelDialogOpen}
+          onClose={() => pageDialogs.setIsManageCloudChannelDialogOpen(false)}
+          channel={pageDialogs.managingCloudChannelContext}
+          handleGlobalApiError={handleGlobalApiError}
+          onChannelDetailsUpdatedAppLevel={(updatedChannel) => {
+            // Update the main list of cloud channels in AppCloudChannelsManager
+            appCloudChannelsManager.setAppManagedCloudFolders(prev => 
+                prev.map(cf => cf.id === updatedChannel.id ? { ...cf, ...updatedChannel } : cf)
+            );
+            // If this is the currently selected folder, update it in SelectedMediaManager
+            if (selectedMediaManager.selectedFolder?.id === updatedChannel.id) {
+                selectedMediaManager.setSelectedFolder(prev => prev ? { ...prev, ...updatedChannel } : null);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

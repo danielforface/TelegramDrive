@@ -6,7 +6,7 @@ import type { CloudFile, CloudFolder, CloudChannelConfigV1, CloudChannelConfigEn
 import { ContentFileItem } from "./content-file-item";
 import { ContentFolderItem } from "./content-folder-item";
 import { Button } from "@/components/ui/button";
-import { Search, FolderOpen, Loader2, CalendarDays, XCircle as ClearIcon, UploadCloud, Cloud, FolderPlus, ArrowUpCircle, ChevronRight, FolderUp, ArrowLeftCircle, ClipboardPaste } from "lucide-react";
+import { Search, FolderOpen, Loader2, CalendarDays, XCircle as ClearIcon, UploadCloud, Cloud, FolderPlus, ArrowUpCircle, ChevronRight, FolderUp, ArrowLeftCircle, ClipboardPaste, Settings2 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
@@ -41,6 +41,8 @@ interface MainContentViewProps {
   onCopyFolderStructure: (folderName: string, folderConfig: CloudChannelConfigEntry) => void;
   onPasteItem: (targetPath: string) => void;
   clipboardItem: ClipboardItemType;
+  selectedFolderForView: CloudFolder | null; // Pass the full selected folder object
+  onOpenManageCloudChannelDialog: (channel: CloudFolder) => void;
 }
 
 const TABS_CONFIG = [
@@ -82,6 +84,8 @@ export function MainContentView({
   onCopyFolderStructure,
   onPasteItem,
   clipboardItem,
+  selectedFolderForView,
+  onOpenManageCloudChannelDialog,
 }: MainContentViewProps) {
   const [activeTab, setActiveTab] = useState("all");
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
@@ -432,7 +436,7 @@ export function MainContentView({
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3 mb-3 items-center flex-wrap flex-shrink-0">
-         {isCloudChannel ? (
+         {isCloudChannel && selectedFolderForView ? (
            <>
              {currentVirtualPath !== '/' && (
                <Button variant="outline" onClick={() => onNavigateVirtualPath(getParentPath(currentVirtualPath))} className="w-full sm:w-auto">
@@ -444,6 +448,9 @@ export function MainContentView({
             </Button>
              <Button variant="outline" onClick={() => onOpenCreateVirtualFolderDialog(currentVirtualPath)} className="w-full sm:w-auto">
               <FolderPlus className="mr-2 h-4 w-4" /> Create Folder
+            </Button>
+            <Button variant="outline" onClick={() => onOpenManageCloudChannelDialog(selectedFolderForView)} className="w-full sm:w-auto">
+              <Settings2 className="mr-2 h-4 w-4" /> Manage Channel
             </Button>
            </>
          ) : (
@@ -521,3 +528,4 @@ export function MainContentView({
     </div>
   );
 }
+

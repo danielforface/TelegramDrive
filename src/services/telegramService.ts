@@ -44,7 +44,7 @@ export {
   UPLOAD_PART_SIZE,
 } from './telegramFiles';
 
-// Cloud Channel & VFS Management
+// Cloud Channel & VFS Management & Channel Admin
 export {
   CLOUDIFIER_APP_SIGNATURE_V1,
   IDENTIFICATION_MESSAGE_ID,
@@ -58,10 +58,19 @@ export {
   addVirtualFolderToCloudChannel,
   removeVirtualFolderFromCloudChannel,
   ensureChannelInCloudFolder, // Export if direct manipulation is needed, e.g. after creation
-} from './telegramCloud';
+  getChannelFullInfo,
+  updateChannelAbout,
+  checkChatUsername,
+  updateChatUsername,
+  exportChannelInviteLink,
+  updateChannelPhotoService,
+  // getChannelParticipantsList, // Placeholder for future
+  // editChannelAdminRights, // Placeholder for future
+} from './telegramCloud'; // Assuming admin functions are co-located or imported into telegramCloud
 
 // Real-time Updates
 export { initializeTelegramUpdateListener } from './telegramUpdates';
 
 // Re-export formatFileSize from lib/utils if it was previously exported from here
 export { formatFileSize };
+
