@@ -1,5 +1,4 @@
 
-
 export interface CloudFile {
   id: string;
   name: string;
@@ -9,22 +8,22 @@ export interface CloudFile {
   url?: string;
   dataAiHint?: string;
   messageId: number;
-  telegramMessage?: any;
+  telegramMessage?: any; // Store the original Telegram message object for details or re-fetching
   totalSizeInBytes?: number;
-  inputPeer?: any;
+  inputPeer?: InputPeer; // Peer of the chat where this file/message exists
   caption?: string; // Caption from Telegram message, may contain VFS path or regular text
   vfsPath?: string; // Derived VFS path for easier filtering (populated by UI if needed)
 }
 
 export interface CloudFolder {
-  id: string;
+  id: string; // e.g., "chat-12345", "channel-67890", or virtual folder name if part of VFS
   name: string;
-  folders: CloudFolder[]; // For UI representation if needed, primary truth is cloudConfig
+  folders: CloudFolder[]; // For UI representation if needed, primary truth is cloudConfig for VFS
   files: CloudFile[];   // For UI representation if needed, primary truth is file messages
-  isChatFolder?: boolean;
-  inputPeer?: any;
-  isAppManagedCloud?: boolean;
-  cloudConfig?: CloudChannelConfigV1 | null; // Allow null for loading/error states
+  isChatFolder?: boolean; // True if this represents a direct Telegram chat/channel dialog
+  inputPeer?: InputPeer;  // MTProto InputPeer object for API calls
+  isAppManagedCloud?: boolean; // True if this is a Cloudifier-managed channel
+  cloudConfig?: CloudChannelConfigV1 | null; // VFS configuration if it's an app-managed cloud
   vfsPath?: string; // Virtual path for this folder in UI representation (primarily for virtual folders from config)
 }
 
@@ -32,13 +31,13 @@ export interface GetChatsPaginatedResponse {
   folders: CloudFolder[];
   nextOffsetDate: number;
   nextOffsetId: number;
-  nextOffsetPeer: any;
+  nextOffsetPeer: any; // MTProto InputPeer type or similar for pagination offset
   hasMore: boolean;
 }
 
 export interface MediaHistoryResponse {
   files: CloudFile[];
-  nextOffsetId?: number;
+  nextOffsetId?: number; // The ID of the last message fetched, for pagination
   hasMore: boolean;
   isCloudChannelFetch?: boolean; // Hint for processing in page.tsx
 }
@@ -50,10 +49,10 @@ export type DownloadStatus =
   | 'completed'
   | 'failed'
   | 'cancelled'
-  | 'cdn_redirect'
-  | 'refreshing_reference';
+  | 'cdn_redirect' // Intermediate status if download shifts to CDN
+  | 'refreshing_reference'; // Intermediate status if file reference needs update
 
-export interface FileHash {
+export interface AppFileHash { // Renamed from FileHash to avoid conflict with native File
   offset: number;
   limit: number;
   hash: Uint8Array;
@@ -61,46 +60,50 @@ export interface FileHash {
 
 export interface DownloadQueueItemType extends CloudFile {
   status: DownloadStatus;
-  progress: number;
+  progress: number; // Percentage 0-100
   downloadedBytes: number;
-  location?: any;
-  chunks?: Uint8Array[];
-  currentOffset: number;
-  abortController?: AbortController;
+  location?: any; // MTProto InputFileLocation
+  chunks?: Uint8Array[]; // Store downloaded chunks before assembling
+  currentOffset: number; // For resumable downloads, tracks current byte offset
+  abortController?: AbortController; // To cancel the download
+  // CDN specific fields
   cdnDcId?: number;
   cdnFileToken?: Uint8Array;
   cdnEncryptionKey?: Uint8Array;
   cdnEncryptionIv?: Uint8Array;
-  cdnFileHashes?: FileHash[];
+  cdnFileHashes?: AppFileHash[];
   cdnCurrentFileHashIndex?: number;
-  error_message?: string;
+  error_message?: string; // Store error message if download fails
 }
 
 export interface FileDownloadInfo {
-    location: any;
-    totalSize: number;
+    location: any; // MTProto InputFileLocation
+    totalSize: number; // Total size in bytes
     mimeType: string;
 }
 
+// Based on MTProto InputPeer types
 export interface InputPeer {
-    _: string;
+    _: string; // e.g., 'inputPeerUser', 'inputPeerChat', 'inputPeerChannel', 'inputPeerEmpty'
     user_id?: string | number;
     chat_id?: string | number;
     channel_id?: string | number;
-    access_hash?: string;
+    access_hash?: string; // Often required for users and channels
 }
 
+// Based on MTProto DialogFilter type
 export interface DialogFilter {
     _: 'dialogFilter' | 'dialogFilterChatlist' | 'dialogFilterDefault';
     flags: number;
     id: number;
     title: string;
     emoticon?: string;
-    color?: number;
+    color?: number; // TDLib color index or similar
     pinned_peers?: InputPeer[];
-    include_peers: InputPeer[];
-    exclude_peers?: InputPeer[];
+    include_peers: InputPeer[]; // Peers explicitly included
+    exclude_peers?: InputPeer[]; // Peers explicitly excluded
 
+    // Flags represented as booleans for easier use
     contacts?: boolean;
     non_contacts?: boolean;
     groups?: boolean;
@@ -110,36 +113,40 @@ export interface DialogFilter {
     exclude_read?: boolean;
     exclude_archived?: boolean;
 
-    has_my_invites?: boolean;
+    has_my_invites?: boolean; // If the folder has pending invites created by the user
 
-    isReordering?: boolean;
-    isLoading?: boolean;
-    inviteLink?: string;
+    // UI-specific state, not from Telegram API directly
+    isReordering?: boolean; // If this filter is currently being reordered in UI
+    isLoading?: boolean;    // If details/invitelink for this filter are loading
+    inviteLink?: string;  // Invite link if generated
 }
 
+// Based on MTProto messages.DialogFilters
 export interface MessagesDialogFilters {
     _: 'messages.dialogFilters';
     flags: number;
-    tags_enabled?: boolean;
+    tags_enabled?: boolean; // If folder tags are enabled
     filters: DialogFilter[];
 }
 
 
+// For file uploads
 export interface ExtendedFile {
-  id: string;
-  originalFile: File;
+  id: string; // Unique ID for UI tracking (e.g., generated from name+timestamp)
+  originalFile: File; // The native File object
   name: string;
   size: number;
   type: string;
   lastModified: number;
-  uploadProgress: number;
+  uploadProgress: number; // 0-100
   uploadStatus: 'pending' | 'uploading' | 'processing' | 'completed' | 'failed' | 'cancelled';
 }
 
 
+// For downloadFileChunk response
 type SuccessfulFileChunk_Bytes = {
   bytes: Uint8Array;
-  type: string;
+  type: string; // e.g., 'storage.fileJpeg', 'storage.fileMp4', etc.
   isCdnRedirect?: never;
   cdnRedirectData?: never;
   errorType?: never;
@@ -166,19 +173,18 @@ type ErrorFileChunk = {
   type?: never;
   isCdnRedirect?: never;
   cdnRedirectData?: never;
-  errorType: 'FILE_REFERENCE_EXPIRED' | 'OTHER';
+  errorType: 'FILE_REFERENCE_EXPIRED' | 'OTHER'; // Specific error types
 };
 
 export type FileChunkResponse = SuccessfulFileChunk_Bytes | SuccessfulFileChunk_CdnRedirect | ErrorFileChunk;
-export type { FileHash as AppFileHash };
 
-// Configuration for app-managed cloud channels
+// Configuration for app-managed cloud channels (VFS)
 export interface CloudChannelConfigEntry {
-  type: 'file' | 'folder'; // 'file' entries are not directly stored in config, but helps model structure
+  type: 'file' | 'folder'; // 'file' entries are not directly stored in config but helps model structure
   name: string; // Original name, path is derived from structure
   created_at: string; // ISO timestamp for the entry
   modified_at: string; // ISO timestamp for the entry
-  entries?: { [name: string]: CloudChannelConfigEntry }; // For folders
+  entries?: { [name: string]: CloudChannelConfigEntry }; // For folders, maps entry name to entry object
 }
 
 export interface CloudChannelConfigV1 {
@@ -193,6 +199,8 @@ export interface CloudChannelConfigV1 {
 
 export type CloudChannelType = 'channel' | 'supergroup';
 
+
+// For Custom Context Menu
 export interface MenuItemType {
   label: string;
   onClick: () => void;
@@ -202,8 +210,23 @@ export interface MenuItemType {
   className?: string; // For specific styling like destructive actions
 }
 
+// For Clipboard operations
 export type ClipboardItemType =
   | { type: 'file'; file: CloudFile; originalPath: string | null; parentInputPeer?: InputPeer | null }
   | { type: 'folder'; folderName: string; folderConfig: CloudChannelConfigEntry; originalPath: string; parentInputPeer?: InputPeer | null }
   | null;
 
+// For User Session in telegramAuth.ts
+export interface UserSessionType {
+  phone?: string;
+  phone_code_hash?: string;
+  user?: any; // Telegram User object
+  srp_id?: string; // String representation of BigInteger
+  srp_params?: {
+    g: number;
+    p: Uint8Array;
+    salt1: Uint8Array;
+    salt2: Uint8Array;
+    srp_B: Uint8Array; // From account.getPassword
+  };
+}
