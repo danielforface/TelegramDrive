@@ -92,7 +92,7 @@ export default function Home() {
     isConnected: false,
     toast,
     handleGlobalApiError,
-    onCloudChannelListChange: () => dialogFiltersManager.fetchDialogFilters(true),
+    // onCloudChannelListChange prop removed here. Refreshing dialog filters will be handled more specifically.
   });
 
   const selectedMediaManager = useSelectedMediaManager({
@@ -139,11 +139,9 @@ export default function Home() {
         selectedMediaManager.setSelectedFolder(prev => prev ? { ...prev, ...updatedChannel } : null);
     }
   }, [
-      appCloudChannelsManager.setAppManagedCloudFolders, // Stable setter
-      selectedMediaManager.setSelectedFolder, // Stable setter
-      selectedMediaManager.selectedFolder?.id // This part changes, so selectedFolder should be a dep if whole object is needed
-                                              // But since only id is used for comparison, it's fine.
-                                              // More robust might be to just depend on selectedMediaManager.selectedFolder and let useCallback handle it
+      appCloudChannelsManager.setAppManagedCloudFolders, 
+      selectedMediaManager.setSelectedFolder, 
+      selectedMediaManager.selectedFolder?.id 
     ]);
 
 
@@ -151,7 +149,7 @@ export default function Home() {
     toast,
     onInitialConnect: async () => {
       await dialogFiltersManager.fetchDialogFilters(true);
-      await appCloudChannelsManager.fetchAppManagedCloudChannelsList(true);
+      await appCloudChannelsManager.fetchAppManagedCloudChannelsList(true); // Initial fetch for cloud channels
     },
     onResetApp: () => {
       authManager.resetAuthVisuals();
@@ -163,12 +161,17 @@ export default function Home() {
       mediaPreviewManager.resetMediaPreview();
       downloadManager.resetDownloadManager();
       uploadManager.resetUploadManager();
-      // channelAdminManager.resetAdminManagerState(); // This is managed within ManageCloudChannelDialog
       pageDialogs.resetAllDialogsVisibility();
     },
     setAuthStep: authManager.setAuthStep,
     handleGlobalApiError,
-    handleNewCloudChannelDiscoveredAppLevel: (folder, source) => appCloudChannelsManager?.handleNewCloudChannelVerifiedAndUpdateList(folder, source),
+    handleNewCloudChannelDiscoveredAppLevel: (folder, source) => {
+      const listChanged = appCloudChannelsManager?.handleNewCloudChannelVerifiedAndUpdateList(folder, source);
+      // If a new channel was actually added via an 'update' (not initial scan), refresh dialog filters
+      if (listChanged && source === 'update') {
+        dialogFiltersManager.fetchDialogFilters(true);
+      }
+    },
     setGlobalPhoneNumberForDisplay: authManager.setAuthInputPhoneNumber,
     appPhoneNumber: authManager.authInputPhoneNumber,
   });
@@ -214,9 +217,9 @@ export default function Home() {
     dialogFiltersManager.activeDialogFilterId,
     dialogFiltersManager.dialogFilters,
     dialogFiltersManager.isLoadingDialogFilters,
-    dialogFiltersManager.setActiveFilterDetails, // Stable setter
+    dialogFiltersManager.setActiveFilterDetails, 
     dialogFiltersManager.defaultAllChatsFilter,
-    dialogFiltersManager.activeFilterDetails, // Read current state for comparison
+    dialogFiltersManager.activeFilterDetails, 
   ]);
 
 
@@ -401,6 +404,7 @@ export default function Home() {
                 pageDialogs.setIsCreateCloudChannelDialogOpen(false);
                 const newCF: CloudFolder = {id: `channel-${result.channelInfo.id}`, name: result.channelInfo.title, isChatFolder:false, inputPeer: { _: 'inputPeerChannel', channel_id: result.channelInfo.id, access_hash: result.channelInfo.access_hash }, files:[], folders:[], isAppManagedCloud: true, cloudConfig: result.initialConfig };
                 appCloudChannelsManager.addCreatedCloudChannelToList(newCF);
+                dialogFiltersManager.fetchDialogFilters(true); // Refresh dialog filters after new channel creation
             } else { throw new Error("Channel creation did not return expected info."); }
         }}
         isLoading={fileOperationsManager.isProcessingVirtualFolder}

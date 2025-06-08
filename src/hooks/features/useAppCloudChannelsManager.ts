@@ -11,7 +11,7 @@ interface UseAppCloudChannelsManagerProps {
   setIsConnected?: (isConnected: boolean) => void; // Optional prop
   toast: ReturnType<typeof useToast>['toast'];
   handleGlobalApiError: (error: any, title: string, defaultMessage: string, doPageReset?: boolean) => void;
-  onCloudChannelListChange?: () => void; 
+  // onCloudChannelListChange?: () => void; // Removed: Parent will decide when to refresh dialog filters
 }
 
 export function useAppCloudChannelsManager({
@@ -19,7 +19,6 @@ export function useAppCloudChannelsManager({
   setIsConnected: setExternalIsConnected,
   toast,
   handleGlobalApiError,
-  onCloudChannelListChange,
 }: UseAppCloudChannelsManagerProps) {
   const [appManagedCloudFolders, setAppManagedCloudFolders] = useState<CloudFolder[]>([]);
   const [isLoadingAppManagedCloudFolders, setIsLoadingAppManagedCloudFolders] = useState(true);
@@ -48,18 +47,17 @@ export function useAppCloudChannelsManager({
     try {
       const channels = await telegramService.fetchAndVerifyManagedCloudChannels();
       setAppManagedCloudFolders(channels.sort((a, b) => a.name.localeCompare(b.name)));
-      if (onCloudChannelListChange && (forceRefresh || appManagedCloudFolders.length !== channels.length)) {
-        onCloudChannelListChange();
-      }
+      // Removed onCloudChannelListChange call here; parent handles dialog filter refresh separately
     } catch (error: any) {
       handleGlobalApiError(error, "Error Fetching Cloud Channels", "Could not load app-managed cloud channels.");
       setAppManagedCloudFolders([]); 
     } finally {
       setIsLoadingAppManagedCloudFolders(false);
     }
-  }, [isConnectedInternal, appManagedCloudFolders.length, isLoadingAppManagedCloudFolders, handleGlobalApiError, onCloudChannelListChange]);
+  }, [isConnectedInternal, appManagedCloudFolders.length, isLoadingAppManagedCloudFolders, handleGlobalApiError]);
 
-  const handleNewCloudChannelVerifiedAndUpdateList = useCallback((newlyVerifiedFolder: CloudFolder, source: 'update' | 'initialScan') => {
+  const handleNewCloudChannelVerifiedAndUpdateList = useCallback((newlyVerifiedFolder: CloudFolder, source: 'update' | 'initialScan'): boolean => {
+    let listActuallyChanged = false;
     setAppManagedCloudFolders(prevFolders => {
       const exists = prevFolders.some(f => f.id === newlyVerifiedFolder.id);
       if (!exists) {
@@ -69,16 +67,21 @@ export function useAppCloudChannelsManager({
             description: `"${newlyVerifiedFolder.name}" is now available and has been organized.`,
           });
         }
+        listActuallyChanged = true;
         return [...prevFolders, newlyVerifiedFolder].sort((a, b) => a.name.localeCompare(b.name));
       } else {
-        return prevFolders.map(f => f.id === newlyVerifiedFolder.id ? newlyVerifiedFolder : f)
-          .sort((a, b) => a.name.localeCompare(b.name));
+        const oldFolder = prevFolders.find(f => f.id === newlyVerifiedFolder.id);
+        // Check if the content actually changed to avoid unnecessary state updates / downstream effects
+        if (JSON.stringify(oldFolder) !== JSON.stringify(newlyVerifiedFolder)) {
+            listActuallyChanged = true;
+            return prevFolders.map(f => f.id === newlyVerifiedFolder.id ? newlyVerifiedFolder : f)
+                              .sort((a, b) => a.name.localeCompare(b.name));
+        }
+        return prevFolders; // No change
       }
     });
-    if (source === 'update' && onCloudChannelListChange) {
-      onCloudChannelListChange(); 
-    }
-  }, [toast, onCloudChannelListChange]);
+    return listActuallyChanged;
+  }, [toast]);
 
 
   const addCreatedCloudChannelToList = useCallback((newCloudFolder: CloudFolder) => {
@@ -87,10 +90,8 @@ export function useAppCloudChannelsManager({
         if (exists) return prevFolders.map(f => f.id === newCloudFolder.id ? newCloudFolder : f).sort((a,b) => a.name.localeCompare(b.name));
         return [...prevFolders, newCloudFolder].sort((a,b) => a.name.localeCompare(b.name));
     });
-     if (onCloudChannelListChange) {
-      onCloudChannelListChange();
-    }
-  }, [onCloudChannelListChange]);
+    // Removed onCloudChannelListChange call
+  }, []);
 
 
   const resetAppManagedCloudFolders = useCallback(() => {
