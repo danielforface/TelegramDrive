@@ -1,4 +1,3 @@
-
 'use client';
 
 import { telegramApiInstance, sleep } from './telegramAPI';
@@ -498,32 +497,111 @@ export async function exportChannelInviteLink(channelInputPeer: InputPeer): Prom
   }
 }
 
-export async function updateChannelPhotoService(channelInputPeer: InputPeer, photoFileId: any, photoInputFile: any): Promise<UpdatedChannelPhoto | null> {
+export async function updateChannelPhotoService(channelInputPeer: InputPeer, photoInputChatPhoto: any): Promise<UpdatedChannelPhoto | null> {
     if (!channelInputPeer || channelInputPeer._ !== 'inputPeerChannel') {
         throw new Error("Invalid input peer for updating channel photo.");
     }
-    if (!photoInputFile) {
-        throw new Error("InputPhoto (uploaded) is required to update channel photo.");
+    if (!photoInputChatPhoto) { // This should be of type InputChatPhoto
+        throw new Error("InputChatPhoto is required to update channel photo.");
     }
     try {
+        // The 'result' here is an 'Updates' object as per the schema provided.
         const result = await telegramApiInstance.call('channels.editPhoto', {
-            channel: channelInputPeer,
-            photo: photoInputFile,
+            channel: channelInputPeer, // This is an InputChannel, derived from InputPeer
+            photo: photoInputChatPhoto,    // This MUST be InputChatPhoto
         });
-        if (result && result.updates) {
-            const photoUpdate = result.updates.find((u: any) => u._ === 'updateChatParticipants' || u._ === 'updateChannelPhoto' || (u._ === 'updateChannel' && u.photo));
-            if (photoUpdate) {
-                const newPhotoObject = photoUpdate.photo || (photoUpdate.participants ? photoUpdate.participants.chat?.photo : null);
-                 if(newPhotoObject) {
-                    return { photo: newPhotoObject, date: Date.now()/1000 };
-                 }
+
+        // Process the Updates object to find the new photo
+        if (result && (result._ === 'updates' || result._ === 'updatesCombined')) {
+            // Check the 'chats' array within the Updates object for the updated channel
+            if (result.chats && Array.isArray(result.chats)) {
+                const updatedChannelEntity = result.chats.find(
+                    (c: any) => c._ === 'channel' && String(c.id) === String(channelInputPeer.channel_id)
+                );
+                if (updatedChannelEntity && updatedChannelEntity.photo) {
+                    return { photo: updatedChannelEntity.photo, date: result.date || Math.floor(Date.now() / 1000) };
+                }
+            }
+            // Also, check the 'updates' vector (array of individual Update objects) for a specific updateChannelPhoto
+            if (result.updates && Array.isArray(result.updates)) {
+                for (const singleUpdate of result.updates) {
+                    if (singleUpdate._ === 'updateChannelPhoto' && String(singleUpdate.channel_id) === String(channelInputPeer.channel_id)) {
+                        return { photo: singleUpdate.photo, date: singleUpdate.date };
+                    }
+                }
+            }
+        } else if (result && result._ === 'updateShort' && result.update) {
+            // Handle cases where 'result' might be a single Update object like 'updateShort'
+            const singleUpdate = result.update;
+             if (singleUpdate._ === 'updateChannelPhoto' && String(singleUpdate.channel_id) === String(channelInputPeer.channel_id)) {
+                return { photo: singleUpdate.photo, date: result.date }; // Use date from parent updateShort
             }
         }
+        
+        // If the call succeeded but we couldn't specifically find the new photo in this response,
+        // it's likely updated. The calling hook should refetch channel details.
+        // For this service function, returning null means we didn't extract the photo object directly from *this* response.
         return null;
+
     } catch (error: any) {
         throw error;
     }
 }
+
+export async function uploadFileToServerForPhoto(
+  fileToUpload: File,
+  onProgress: (percent: number) => void,
+  signal?: AbortSignal
+): Promise<any> { // Should return an InputFile or InputFileBig
+  const client_file_id_str = String(Date.now()) + String(Math.floor(Math.random() * 1000000)); // Unique enough for client-side
+  const isBigFile = fileToUpload.size > (10 * 1024 * 1024); // 10MB threshold for big file
+  const partSize = 512 * 1024; // 512KB
+  const totalParts = Math.ceil(fileToUpload.size / partSize);
+
+  onProgress(0);
+
+  for (let i = 0; i < totalParts; i++) {
+    if (signal?.aborted) {
+      throw new Error('Upload aborted by user.');
+    }
+    const offset = i * partSize;
+    const chunkBlob = fileToUpload.slice(offset, offset + partSize);
+    const chunkBuffer = await chunkBlob.arrayBuffer();
+    const chunkBytes = new Uint8Array(chunkBuffer);
+
+    try {
+      let partUploadResult;
+      if (isBigFile) {
+        partUploadResult = await telegramApiInstance.call('upload.saveBigFilePart', {
+          file_id: client_file_id_str,
+          file_part: i,
+          file_total_parts: totalParts,
+          bytes: chunkBytes,
+        }, { signal });
+      } else {
+        partUploadResult = await telegramApiInstance.call('upload.saveFilePart', {
+          file_id: client_file_id_str,
+          file_part: i,
+          bytes: chunkBytes,
+        }, { signal });
+      }
+      if (partUploadResult?._ !== 'boolTrue' && partUploadResult !== true) {
+        throw new Error(`Failed to save file part ${i}. Server response: ${JSON.stringify(partUploadResult)}`);
+      }
+      const progressPercent = Math.round(((i + 1) / totalParts) * 100);
+      onProgress(progressPercent);
+    } catch (error: any) {
+      throw error;
+    }
+  }
+  // After all parts are uploaded, return the InputFile object
+  if (isBigFile) {
+    return { _: 'inputFileBig', id: client_file_id_str, parts: totalParts, name: fileToUpload.name };
+  } else {
+    return { _: 'inputFile', id: client_file_id_str, parts: totalParts, name: fileToUpload.name, md5_checksum: '' /* Optional */ };
+  }
+}
+
 
 export async function editChannelTitle(channelInputPeer: InputPeer, newTitle: string): Promise<boolean> {
   if (!channelInputPeer || channelInputPeer._ !== 'inputPeerChannel') {
@@ -537,6 +615,14 @@ export async function editChannelTitle(channelInputPeer: InputPeer, newTitle: st
       channel: channelInputPeer,
       title: newTitle.trim(),
     });
+    // After successfully editing title, update config message
+    const config = await getCloudChannelConfig(channelInputPeer);
+    if (config && config.app_signature === CLOUDIFIER_APP_SIGNATURE_V1) {
+        config.channel_title_at_creation = newTitle.trim(); // Or a new field like 'current_channel_title'
+        config.last_updated_timestamp_utc = new Date().toISOString();
+        await updateCloudChannelConfig(channelInputPeer, config);
+    }
+
     return result === true || (typeof result === 'object' && result._ === 'boolTrue');
   } catch (error: any) {
     throw error;
@@ -579,23 +665,24 @@ export async function inviteUserToChannel(channelInputPeer: InputPeer, userToInv
 export async function getContacts(): Promise<any[]> {
   console.log("[TelegramCloud_GetContacts] Attempting to fetch contacts...");
   try {
-    const result = await telegramApiInstance.call('contacts.getContacts', { hash: 0 });
+    const result = await telegramApiInstance.call('contacts.getContacts', { hash: 0 }); // hash: 0 for full list
     console.log("[TelegramCloud_GetContacts] Raw API Result:", JSON.stringify(result, null, 2));
 
-    if (result && result.contacts && result.users) {
+    if (result && result._ === 'contacts.contacts' && Array.isArray(result.contacts) && Array.isArray(result.users)) {
       console.log(`[TelegramCloud_GetContacts] Received ${result.contacts.length} contact entries and ${result.users.length} user objects.`);
+      
       const contactUsers = result.contacts.map((contact: any) => {
         const foundUser = result.users.find((user: any) => String(user.id) === String(contact.user_id));
         if (!foundUser) {
           console.warn(`[TelegramCloud_GetContacts] User ID ${contact.user_id} from contacts not found in users array.`);
         }
         return foundUser;
-      }).filter((user: any) => user !== undefined);
+      }).filter((user: any) => user !== undefined); // Filter out any undefined entries if user not found
       
       console.log(`[TelegramCloud_GetContacts] Processed ${contactUsers.length} contacts successfully.`);
       return contactUsers;
     }
-    console.warn("[TelegramCloud_GetContacts] Unexpected structure in contacts.getContacts response. 'contacts' or 'users' array missing. Result:", result);
+    console.warn("[TelegramCloud_GetContacts] Unexpected structure in contacts.getContacts response. Expected 'contacts.contacts' with 'contacts' and 'users' arrays. Result:", result);
     return [];
   } catch (error) {
     console.error("[TelegramCloud_GetContacts] Error fetching contacts:", error);
