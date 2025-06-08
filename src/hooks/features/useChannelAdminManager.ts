@@ -125,36 +125,29 @@ export function useChannelAdminManager({
   const updateChannelPhoto = useCallback(async (inputPeer: InputPeer, photoFile: File) => {
     setIsUpdatingPhoto(true);
     try {
-        // Step 1: Upload the file (similar to general file upload but for photo type)
-        // This returns an InputFile type object.
-        // For simplicity, assuming telegramService.uploadFile can be adapted or a new one created
-        // for 'InputPhoto' or 'InputChatUploadedPhoto'.
-        // This is a complex part involving file parts if large.
-        // Let's assume a simplified upload that gives us an InputFile object.
         const uploadedFileResult = await telegramService.uploadFile(
-            inputPeer, // Peer context, though for upload.saveFilePart it's not directly used
+            inputPeer, 
             photoFile,
             (progress) => { /* console.log(`Photo upload progress: ${progress}%`) */ },
-            undefined, // Abort signal
-            undefined, // Caption not needed for photo
-            true // Indicate it's for a photo to get correct InputFile type
+            undefined, 
+            undefined, 
+            true 
         );
 
         let inputFileForPhoto;
-        if(uploadedFileResult && uploadedFileResult.media && uploadedFileResult.media.photo){ // if uploadFile returns structure with media.photo
+        if(uploadedFileResult && uploadedFileResult.media && uploadedFileResult.media.photo){ 
             inputFileForPhoto = {
-                 _: 'inputPhoto', // Or inputPhotoUploaded if that's what upload service gives
+                 _: 'inputPhoto', 
                  id: uploadedFileResult.media.photo.id,
                  access_hash: uploadedFileResult.media.photo.access_hash,
                  file_reference: uploadedFileResult.media.photo.file_reference,
             };
-        } else if (uploadedFileResult && uploadedFileResult._?.startsWith('inputFile')) { // If it's a direct InputFile
-             inputFileForPhoto = uploadedFileResult; // This is an approximation
+        } else if (uploadedFileResult && uploadedFileResult._?.startsWith('inputFile')) { 
+             inputFileForPhoto = uploadedFileResult; 
         } else {
             throw new Error("Photo upload did not return a valid InputFile structure.");
         }
         
-        // Step 2: Call channels.editPhoto with the InputFile
         const updatedPhotoInfo: UpdatedChannelPhoto | null = await telegramService.updateChannelPhotoService(inputPeer, uploadedFileResult.id, inputFileForPhoto);
 
         if (updatedPhotoInfo && updatedPhotoInfo.photo) {
@@ -177,11 +170,9 @@ export function useChannelAdminManager({
   const fetchParticipants = useCallback(async (inputPeer: InputPeer, offset: number = 0, limit: number = 50) => {
     setIsLoadingParticipants(true);
     try {
-      // Simplified: Real participant fetching is complex (filters, ranks, etc.)
-      // This is a placeholder call structure.
       const response: ChannelParticipantsResponse = await telegramService.telegramApiInstance.call('channels.getParticipants', {
         channel: inputPeer,
-        filter: { _: 'channelParticipantsRecent' }, // Or other filters like 'channelParticipantsAdmins'
+        filter: { _: 'channelParticipantsRecent' }, 
         offset: offset,
         limit: limit,
         hash: 0,
@@ -194,34 +185,43 @@ export function useChannelAdminManager({
         });
 
         setParticipants(prev => offset === 0 ? enrichedParticipants : [...prev, ...enrichedParticipants]);
-        // setParticipantsOffset(response.next_offset); // If API returns a string offset for this method
-        setHasMoreParticipants(enrichedParticipants.length === limit); // Basic pagination check
+        setHasMoreParticipants(enrichedParticipants.length === limit); 
       } else {
-        setParticipants(offset === 0 ? [] : participants);
+        setParticipants(offset === 0 ? [] : participants); // Use current 'participants' state for else case
         setHasMoreParticipants(false);
       }
     } catch (error: any) {
       handleGlobalApiError(error, "Error Fetching Participants", "Could not load channel participants.");
-      setParticipants(offset === 0 ? [] : participants);
+      setParticipants(offset === 0 ? [] : participants); // Use current 'participants' state for else case
       setHasMoreParticipants(false);
     } finally {
       setIsLoadingParticipants(false);
     }
-  }, [handleGlobalApiError, participants]);
+  }, [handleGlobalApiError]); // REMOVED `participants` from dependency array
 
 
   useEffect(() => {
-    if (selectedManagingChannel && selectedManagingChannel.inputPeer) {
-      fetchChannelDetails(selectedManagingChannel.inputPeer);
-      setParticipants([]); // Reset participants when channel changes
+    const currentInputPeer = selectedManagingChannel?.inputPeer;
+    const currentChannelId = selectedManagingChannel?.id;
+
+    if (currentInputPeer && currentChannelId) {
+      fetchChannelDetails(currentInputPeer);
+      // Reset participants for the new channel
+      setParticipants([]);
       setHasMoreParticipants(true);
-      // setParticipantsOffset(undefined);
-      // fetchParticipants(selectedManagingChannel.inputPeer); // Initial participant fetch
+      // Initial participants fetch can be triggered here or by tab activation.
+      // Example: fetchParticipants(currentInputPeer, 0); 
     } else {
+      // No channel selected or peer missing, reset details
       setChannelDetails(null);
       setParticipants([]);
+      setHasMoreParticipants(true);
     }
-  }, [selectedManagingChannel, fetchChannelDetails, fetchParticipants]);
+  // Dependencies should primarily rely on the identity of the selected channel
+  // and stable callbacks.
+  // `fetchChannelDetails` should be stable if its own dependencies are stable.
+  // `setParticipants` and `setHasMoreParticipants` are stable setState functions.
+  }, [selectedManagingChannel?.id, fetchChannelDetails, setParticipants, setHasMoreParticipants, setChannelDetails]);
 
 
   const resetAdminManagerState = useCallback(() => {
@@ -235,7 +235,6 @@ export function useChannelAdminManager({
     setParticipants([]);
     setIsLoadingParticipants(false);
     setHasMoreParticipants(true);
-    // setParticipantsOffset(undefined);
   }, []);
 
 
@@ -250,7 +249,7 @@ export function useChannelAdminManager({
     participants,
     isLoadingParticipants,
     hasMoreParticipants,
-    fetchChannelDetails, // If explicit refresh needed
+    fetchChannelDetails, 
     updateChannelDescription,
     checkUsernameAvailability,
     setChannelUsername,
@@ -260,3 +259,5 @@ export function useChannelAdminManager({
     resetAdminManagerState,
   };
 }
+
+    
