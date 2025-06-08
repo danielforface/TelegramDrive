@@ -1,7 +1,7 @@
 
 "use client";
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import type { CloudFolder, FullChat, ChannelParticipant, InputPeer } from '@/types';
 import {
   Dialog,
@@ -20,13 +20,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, X, Info, Link2, Users, Image as ImageIcon, CheckCircle, Edit3, Copy, Settings2, UserPlus, Search, Save, Users2, AlertTriangle, Check, Ban } from "lucide-react";
+import { Loader2, X, Link2, Edit3, Copy, Settings2, UserPlus, Search, Save, Users2, AlertTriangle, Check, Ban, Image as ImageIcon } from "lucide-react";
 import { useChannelAdminManager, type UsernameAvailabilityStatus } from '@/hooks/features/useChannelAdminManager';
 
 interface ManageCloudChannelDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  channel: CloudFolder | null;
+  channel: CloudFolder | null; // This is selectedManagingChannel from page.tsx context
   handleGlobalApiError: (error: any, title: string, defaultMessage: string, doPageReset?: boolean) => void;
   onChannelDetailsUpdatedAppLevel: (updatedFolder: CloudFolder) => void;
 }
@@ -34,7 +34,7 @@ interface ManageCloudChannelDialogProps {
 export function ManageCloudChannelDialog({
   isOpen,
   onClose,
-  channel,
+  channel: selectedManagingChannel, // Renamed for clarity within this component
   handleGlobalApiError,
   onChannelDetailsUpdatedAppLevel,
 }: ManageCloudChannelDialogProps) {
@@ -45,118 +45,105 @@ export function ManageCloudChannelDialog({
   const adminManager = useChannelAdminManager({
     toast,
     handleGlobalApiError,
-    selectedManagingChannel: channel,
+    selectedManagingChannel,
     onChannelDetailsUpdatedAppLevel,
-    isOpen, 
+    isOpen,
     activeTab,
   });
-  
+
+  // Local state for editable fields, synced with adminManager.channelDetails
   const [localEditableTitle, setLocalEditableTitle] = useState("");
   const [localEditableDescription, setLocalEditableDescription] = useState("");
   const [localEditableUsername, setLocalEditableUsername] = useState("");
-  
   const [currentPhotoPreview, setCurrentPhotoPreview] = useState<string | null>(null);
   const [selectedPhotoFile, setSelectedPhotoFile] = useState<File | null>(null);
-  const [debounceTimeout, setDebounceTimeout] = useState<NodeJS.Timeout | null>(null);
 
-
-  useEffect(() => {
-    if (adminManager.channelDetails) {
-      setLocalEditableTitle(adminManager.channelDetails.title || channel?.name || "");
-      setLocalEditableDescription(adminManager.channelDetails.about || "");
-      setLocalEditableUsername(adminManager.channelDetails.username || "");
-      setCurrentPhotoPreview(adminManager.channelDetails.chat_photo?.photo_big?.local?.path || null);
-    } else if (channel && isOpen) { // Fallback if channelDetails is null but channel prop exists and dialog is open
-      setLocalEditableTitle(channel.name || "");
-      // Assuming fullChannelInfo might be on the initial channel prop from page.tsx
-      const initialFullInfo = channel.fullChannelInfo;
-      setLocalEditableDescription(initialFullInfo?.about || "");
-      setLocalEditableUsername(initialFullInfo?.username || "");
-      setCurrentPhotoPreview(initialFullInfo?.chat_photo?.photo_big?.local?.path || null);
-    }
-  }, [adminManager.channelDetails, channel, isOpen]);
-
+  const usernameCheckTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    if (isOpen && channel) {
-      setSelectedPhotoFile(null);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-      // Tab-specific data fetching is now handled within useChannelAdminManager based on activeTab and isOpen
-    } else if (!isOpen) {
-      adminManager.resetAdminManagerState(); 
-      setLocalEditableTitle("");
-      setLocalEditableDescription("");
-      setLocalEditableUsername("");
-      setCurrentPhotoPreview(null);
-      setSelectedPhotoFile(null);
-      setActiveTab("edit"); 
-      adminManager.setUsernameAvailability(null);
-      if (debounceTimeout) clearTimeout(debounceTimeout);
+    // This effect syncs local input fields when the authoritative channelDetails from the hook changes,
+    // or when the dialog opens.
+    if (isOpen) {
+      if (adminManager.channelDetails) {
+        setLocalEditableTitle(adminManager.channelDetails.title || "");
+        setLocalEditableDescription(adminManager.channelDetails.about || "");
+        setLocalEditableUsername(adminManager.channelDetails.username || "");
+        setCurrentPhotoPreview(adminManager.channelDetails.chat_photo?.photo_big?.local?.path || null);
+      } else if (selectedManagingChannel) {
+        // Fallback to selectedManagingChannel for initial render if adminManager.channelDetails isn't ready
+        setLocalEditableTitle(selectedManagingChannel.name || "");
+        setLocalEditableDescription(selectedManagingChannel.fullChannelInfo?.about || "");
+        setLocalEditableUsername(selectedManagingChannel.fullChannelInfo?.username || "");
+        setCurrentPhotoPreview(selectedManagingChannel.fullChannelInfo?.chat_photo?.photo_big?.local?.path || null);
+      } else {
+        // If nothing is available (e.g., error state or channel is null)
+        setLocalEditableTitle("");
+        setLocalEditableDescription("");
+        setLocalEditableUsername("");
+        setCurrentPhotoPreview(null);
+      }
+      setSelectedPhotoFile(null); // Reset selected file on open/channel change
+      if(fileInputRef.current) fileInputRef.current.value = "";
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, channel]); // adminManager.resetAdminManagerState is stable, debounceTimeout added for cleanup
-  
+  }, [isOpen, adminManager.channelDetails, selectedManagingChannel]);
+
+
   useEffect(() => {
     // Cleanup debounce timer on component unmount or when dialog closes
     return () => {
-      if (debounceTimeout) {
-        clearTimeout(debounceTimeout);
+      if (usernameCheckTimeoutRef.current) {
+        clearTimeout(usernameCheckTimeoutRef.current);
       }
     };
-  }, [debounceTimeout]);
-
+  }, []);
 
   const handleTitleSave = async () => {
-    if (!channel?.inputPeer || !localEditableTitle.trim() || localEditableTitle.trim() === (adminManager.channelDetails?.title || "")) return;
-    await adminManager.updateChannelTitle(channel.inputPeer, localEditableTitle.trim());
+    if (!selectedManagingChannel?.inputPeer || !localEditableTitle.trim() || localEditableTitle.trim() === (adminManager.channelDetails?.title || selectedManagingChannel?.name)) return;
+    await adminManager.updateChannelTitle(selectedManagingChannel.inputPeer, localEditableTitle.trim());
   };
 
   const handleDescriptionSave = async () => {
-    if (!channel?.inputPeer || localEditableDescription === (adminManager.channelDetails?.about || "")) return;
-    await adminManager.updateChannelDescription(channel.inputPeer, localEditableDescription);
+    if (!selectedManagingChannel?.inputPeer || localEditableDescription === (adminManager.channelDetails?.about || "")) return;
+    await adminManager.updateChannelDescription(selectedManagingChannel.inputPeer, localEditableDescription);
   };
 
-  const handlePublicUsernameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePublicUsernameInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newUsername = e.target.value.replace(/[^a-zA-Z0-9_]/g, '').toLowerCase();
     setLocalEditableUsername(newUsername);
     adminManager.setUsernameAvailability(null); // Reset status immediately
 
-    if (debounceTimeout) {
-      clearTimeout(debounceTimeout);
+    if (usernameCheckTimeoutRef.current) {
+      clearTimeout(usernameCheckTimeoutRef.current);
     }
 
     const currentActualUsername = adminManager.channelDetails?.username || "";
     if (newUsername.trim() === '' || newUsername.trim() === currentActualUsername) {
-      adminManager.setUsernameAvailability(newUsername.trim() === currentActualUsername ? 'idle' : null); // 'idle' if same as current
+      adminManager.setUsernameAvailability(newUsername.trim() === currentActualUsername ? 'idle' : null);
       return;
     }
-    
+
     if (newUsername.length < 5) {
-        adminManager.setUsernameAvailability('unavailable'); // Or a new state like 'too_short'
-        toast({title:"Username too short", description:"Public username must be at least 5 characters.", variant:"default"});
-        return;
+      adminManager.setUsernameAvailability('unavailable'); // Or a new state like 'too_short'
+      return;
     }
 
-
-    const timeoutId = setTimeout(() => {
-      if (channel?.inputPeer && newUsername.trim() !== '' && newUsername.trim() !== currentActualUsername) {
-        adminManager.checkUsernameAvailability(channel.inputPeer, newUsername.trim());
+    usernameCheckTimeoutRef.current = setTimeout(() => {
+      if (selectedManagingChannel?.inputPeer && newUsername.trim() !== '' && newUsername.trim() !== currentActualUsername) {
+        adminManager.checkUsernameAvailability(selectedManagingChannel.inputPeer, newUsername.trim());
       }
-    }, 750); // 750ms debounce
-    setDebounceTimeout(timeoutId);
+    }, 750);
   };
 
-
   const handleUsernameSave = async () => {
-    if (!channel?.inputPeer || !localEditableUsername || localEditableUsername === (adminManager.channelDetails?.username || "") || adminManager.usernameAvailability !== 'available') return;
-    await adminManager.setChannelUsername(channel.inputPeer, localEditableUsername);
+    if (!selectedManagingChannel?.inputPeer || !localEditableUsername || localEditableUsername === (adminManager.channelDetails?.username || "") || adminManager.usernameAvailability !== 'available') return;
+    await adminManager.setChannelUsername(selectedManagingChannel.inputPeer, localEditableUsername);
   };
 
   const handleGenerateInvite = async () => {
-    if (!channel?.inputPeer) return;
-    await adminManager.generateInviteLink(channel.inputPeer);
+    if (!selectedManagingChannel?.inputPeer) return;
+    await adminManager.generateInviteLink(selectedManagingChannel.inputPeer);
   };
-  
+
   const handlePhotoSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files[0]) {
       const file = event.target.files[0];
@@ -170,9 +157,9 @@ export function ManageCloudChannelDialog({
   };
 
   const handlePhotoUpload = async () => {
-    if (!channel?.inputPeer || !selectedPhotoFile) return;
-    await adminManager.updateChannelPhoto(channel.inputPeer, selectedPhotoFile);
-    setSelectedPhotoFile(null); 
+    if (!selectedManagingChannel?.inputPeer || !selectedPhotoFile) return;
+    await adminManager.updateChannelPhoto(selectedManagingChannel.inputPeer, selectedPhotoFile);
+    setSelectedPhotoFile(null);
     if(fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -184,30 +171,41 @@ export function ManageCloudChannelDialog({
     });
   };
 
-  if (!isOpen || !channel) {
+  if (!isOpen || !selectedManagingChannel) {
     return null;
   }
-  
+
   const currentInviteLink = adminManager.channelDetails?.exported_invite?.link;
-  const currentUsernameVal = adminManager.channelDetails?.username || "";
+  const currentActualUsernameDisplay = adminManager.channelDetails?.username || "";
 
   const renderUsernameAvailability = () => {
     if (adminManager.isCheckingUsername || adminManager.usernameAvailability === 'checking') {
       return <span className="text-xs text-muted-foreground ml-2 flex items-center"><Loader2 className="h-3 w-3 animate-spin mr-1" />Checking...</span>;
     }
-    if (adminManager.usernameAvailability === 'available' && localEditableUsername.trim() !== "" && localEditableUsername.trim() !== currentUsernameVal) {
-      return <span className="text-xs text-green-600 ml-2 flex items-center"><Check className="h-3 w-3 mr-1" />Available</span>;
+    if (localEditableUsername.trim() === '' && currentActualUsernameDisplay) {
+        return <span className="text-xs text-muted-foreground ml-2">Enter a new username or keep current.</span>;
     }
-    if (adminManager.usernameAvailability === 'unavailable' && localEditableUsername.trim() !== "" && localEditableUsername.trim() !== currentUsernameVal) {
-      return <span className="text-xs text-red-600 ml-2 flex items-center"><Ban className="h-3 w-3 mr-1" />Unavailable/Invalid</span>;
+    if (localEditableUsername.trim() === '' && !currentActualUsernameDisplay) {
+        return <span className="text-xs text-muted-foreground ml-2">Enter a username.</span>;
     }
-    if (localEditableUsername.trim() !== "" && localEditableUsername.length < 5 && localEditableUsername.trim() !== currentUsernameVal) {
-        return <span className="text-xs text-red-600 ml-2 flex items-center"><Ban className="h-3 w-3 mr-1" />Too short</span>;
+    if (localEditableUsername.length > 0 && localEditableUsername.length < 5 && localEditableUsername.trim() !== currentActualUsernameDisplay) {
+        return <span className="text-xs text-red-600 ml-2 flex items-center"><Ban className="h-3 w-3 mr-1" />Too short (min 5 chars)</span>;
     }
-    if (adminManager.usernameAvailability === 'error' && localEditableUsername.trim() !== "" && localEditableUsername.trim() !== currentUsernameVal) {
-      return <span className="text-xs text-red-600 ml-2">Error checking</span>;
+    if (localEditableUsername.trim() === currentActualUsernameDisplay && currentActualUsernameDisplay !== "") {
+        return <span className="text-xs text-muted-foreground ml-2">This is the current username.</span>;
     }
-    return <span className="text-xs text-muted-foreground ml-2">&nbsp;</span>; // Placeholder for alignment
+    switch (adminManager.usernameAvailability) {
+      case 'available':
+        return <span className="text-xs text-green-600 ml-2 flex items-center"><Check className="h-3 w-3 mr-1" />Available!</span>;
+      case 'unavailable':
+        return <span className="text-xs text-red-600 ml-2 flex items-center"><Ban className="h-3 w-3 mr-1" />Not available or invalid.</span>;
+      case 'error':
+        return <span className="text-xs text-red-600 ml-2 flex items-center"><AlertTriangle className="h-3 w-3 mr-1" />Error checking.</span>;
+      case 'idle':
+         return <span className="text-xs text-muted-foreground ml-2">&nbsp;</span>;
+      default: // null or other
+        return <span className="text-xs text-muted-foreground ml-2">Type to check availability.</span>;
+    }
   };
 
   const renderUserListItem = (user: any, context: 'search' | 'contact') => (
@@ -222,10 +220,10 @@ export function ManageCloudChannelDialog({
             <span className="text-xs text-muted-foreground block truncate">@{user.username || `ID: ${user.id}`}</span>
           </div>
         </div>
-        <Button 
-          size="sm" 
-          variant="outline" 
-          onClick={() => channel.inputPeer && adminManager.handleAddMemberToChannel(channel.inputPeer, user)} 
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => selectedManagingChannel.inputPeer && adminManager.handleAddMemberToChannel(selectedManagingChannel.inputPeer, user)}
           disabled={adminManager.isAddingMember === String(user.id) || (!!adminManager.isAddingMember && adminManager.isAddingMember !== String(user.id))}
           className="ml-2 flex-shrink-0"
         >
@@ -234,14 +232,13 @@ export function ManageCloudChannelDialog({
       </li>
   );
 
-
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="sm:max-w-2xl p-0 flex flex-col max-h-[90vh]">
         <DialogHeader className="p-6 border-b sticky top-0 bg-background z-10">
           <div className="flex items-center gap-2">
             <Settings2 className="h-6 w-6 text-primary" />
-            <DialogTitle>Manage Cloud Channel: {channel.name}</DialogTitle>
+            <DialogTitle>Manage Cloud Channel: {adminManager.channelDetails?.title || selectedManagingChannel.name}</DialogTitle>
           </div>
           <DialogDescription>
             Modify settings, manage invites, and participants for this cloud channel.
@@ -257,9 +254,9 @@ export function ManageCloudChannelDialog({
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
             <span className="ml-2">Loading channel details...</span>
           </div>
-        ) : !adminManager.channelDetails && !channel.fullChannelInfo && !adminManager.isLoadingChannelDetails ? (
+        ) : !adminManager.channelDetails && !adminManager.isLoadingChannelDetails ? (
           <div className="flex-grow flex items-center justify-center p-6 text-muted-foreground">
-            Could not load channel details. Ensure you have admin rights.
+            Could not load channel details. Ensure you have admin rights or try again.
           </div>
         ) : (
           <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-grow flex flex-col min-h-0">
@@ -283,14 +280,14 @@ export function ManageCloudChannelDialog({
                 <div>
                   <Label htmlFor="channelTitle">Channel Title</Label>
                   <div className="flex items-center gap-2">
-                    <Input 
-                      id="channelTitle" 
-                      value={localEditableTitle} 
+                    <Input
+                      id="channelTitle"
+                      value={localEditableTitle}
                       onChange={(e) => setLocalEditableTitle(e.target.value)}
-                      className="mt-1 flex-grow" 
+                      className="mt-1 flex-grow"
                       disabled={adminManager.isUpdatingTitle || adminManager.isLoadingChannelDetails}
                     />
-                    <Button onClick={handleTitleSave} disabled={adminManager.isUpdatingTitle || adminManager.isLoadingChannelDetails || !localEditableTitle.trim() || localEditableTitle.trim() === (adminManager.channelDetails?.title || channel?.name)} size="sm" className="mt-1">
+                    <Button onClick={handleTitleSave} disabled={adminManager.isUpdatingTitle || adminManager.isLoadingChannelDetails || !localEditableTitle.trim() || localEditableTitle.trim() === (adminManager.channelDetails?.title || selectedManagingChannel?.name)} size="sm" className="mt-1">
                       {adminManager.isUpdatingTitle ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4"/>}
                       Save Title
                     </Button>
@@ -312,13 +309,13 @@ export function ManageCloudChannelDialog({
                     Save Description
                   </Button>
                 </div>
-                
+
                  <div className="space-y-2 p-4 border rounded-md">
                     <Label className="text-base font-semibold">Channel Photo</Label>
                     <div className="flex items-center gap-4">
                         <Avatar className="h-20 w-20">
-                        <AvatarImage src={currentPhotoPreview || adminManager.channelDetails?.chat_photo?.photo_big?.local?.path} alt={channel.name} data-ai-hint="channel profile image"/>
-                        <AvatarFallback>{channel.name?.substring(0, 2).toUpperCase()}</AvatarFallback>
+                          <AvatarImage src={currentPhotoPreview || adminManager.channelDetails?.chat_photo?.photo_big?.local?.path} alt={selectedManagingChannel.name} data-ai-hint="channel profile image"/>
+                          <AvatarFallback>{(adminManager.channelDetails?.title || selectedManagingChannel.name)?.substring(0, 2).toUpperCase()}</AvatarFallback>
                         </Avatar>
                         <div className="space-y-1">
                             <Input type="file" accept="image/jpeg, image/png" onChange={handlePhotoSelect} ref={fileInputRef} className="text-xs" disabled={adminManager.isUpdatingPhoto || adminManager.isLoadingChannelDetails}/>
@@ -334,13 +331,13 @@ export function ManageCloudChannelDialog({
                 {adminManager.channelDetails?.can_set_username && (
                   <div className="space-y-2 p-4 border rounded-md">
                     <Label htmlFor="channelUsername" className="text-base font-semibold">Public Link (Username)</Label>
-                    {currentUsernameVal && <p className="text-sm text-muted-foreground mb-1">Current: t.me/{currentUsernameVal}</p>}
+                    {currentActualUsernameDisplay && <p className="text-sm text-muted-foreground mb-1">Current: t.me/{currentActualUsernameDisplay}</p>}
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-muted-foreground self-center pt-1">t.me/</span>
                       <Input
                         id="channelUsername"
                         value={localEditableUsername}
-                        onChange={handlePublicUsernameChange}
+                        onChange={handlePublicUsernameInputChange}
                         placeholder="your_channel_username (min 5 chars)"
                         className="flex-grow"
                         disabled={adminManager.isUpdatingUsername || adminManager.isCheckingUsername || adminManager.isLoadingChannelDetails}
@@ -348,18 +345,17 @@ export function ManageCloudChannelDialog({
                     </div>
                      <div className="h-4 mt-1">{renderUsernameAvailability()}</div>
                     <div className="flex gap-2 flex-wrap mt-2">
-                       {/* "Check Availability" button removed */}
-                      <Button 
-                        onClick={handleUsernameSave} 
+                      <Button
+                        onClick={handleUsernameSave}
                         disabled={
-                            adminManager.isUpdatingUsername || 
-                            adminManager.isCheckingUsername || 
-                            !localEditableUsername || 
-                            localEditableUsername === currentUsernameVal || 
+                            adminManager.isUpdatingUsername ||
+                            adminManager.isCheckingUsername ||
+                            !localEditableUsername ||
+                            localEditableUsername === currentActualUsernameDisplay ||
                             adminManager.isLoadingChannelDetails ||
                             adminManager.usernameAvailability !== 'available' ||
                             localEditableUsername.length < 5
-                        } 
+                        }
                         size="sm"
                       >
                         {adminManager.isUpdatingUsername ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
@@ -387,14 +383,14 @@ export function ManageCloudChannelDialog({
                     <p className="text-xs text-muted-foreground">This is the main private invite link for the channel. Regenerating invalidates the old one.</p>
                 </div>
               </TabsContent>
-              
+
               <TabsContent value="add-members" className="p-6 space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="memberSearch" className="text-base font-semibold">Search or Select from Contacts</Label>
                   <div className="flex gap-2">
-                    <Input 
-                      id="memberSearch" 
-                      placeholder="Enter username or part of name to search..." 
+                    <Input
+                      id="memberSearch"
+                      placeholder="Enter username or part of name to search..."
                       value={adminManager.memberSearchTerm}
                       onChange={(e) => adminManager.setMemberSearchTerm(e.target.value)}
                       disabled={adminManager.isSearchingMembers || !!adminManager.isAddingMember || adminManager.isLoadingChannelDetails || adminManager.isLoadingContacts}
@@ -406,27 +402,27 @@ export function ManageCloudChannelDialog({
                   </div>
                 </div>
 
-                {adminManager.isLoadingContacts && !adminManager.memberSearchTerm.trim() && (
+                { (adminManager.isLoadingContacts && !adminManager.memberSearchTerm.trim()) && (
                    <div className="text-sm text-muted-foreground flex items-center justify-center py-4"><Loader2 className="mr-2 h-4 w-4 animate-spin"/>Loading contacts...</div>
                 )}
-                {adminManager.isSearchingMembers && adminManager.memberSearchTerm.trim() && (
+                { (adminManager.isSearchingMembers && adminManager.memberSearchTerm.trim()) && (
                   <div className="text-sm text-muted-foreground flex items-center justify-center py-4"><Loader2 className="mr-2 h-4 w-4 animate-spin"/>Searching...</div>
                 )}
 
                 <ScrollArea className="max-h-60 border rounded-md">
                   <ul className="p-2 space-y-1">
+                    {!adminManager.memberSearchTerm.trim() && !adminManager.isLoadingContacts && adminManager.contactList.length === 0 && (
+                      <p className="text-sm text-muted-foreground text-center py-4">No contacts found or unable to load. Try searching.</p>
+                    )}
                     {!adminManager.memberSearchTerm.trim() && !adminManager.isLoadingContacts && adminManager.contactList.length > 0 && (
                       adminManager.contactList.map((user) => renderUserListItem(user, 'contact'))
                     )}
-                    {!adminManager.memberSearchTerm.trim() && !adminManager.isLoadingContacts && adminManager.contactList.length === 0 && (
-                      <p className="text-sm text-muted-foreground text-center py-4">No contacts found or unable to load.</p>
-                    )}
-                    
-                    {adminManager.memberSearchTerm.trim() && !adminManager.isSearchingMembers && adminManager.memberSearchResults.length > 0 && (
-                      adminManager.memberSearchResults.map((user) => renderUserListItem(user, 'search'))
-                    )}
+
                     {adminManager.memberSearchTerm.trim() && !adminManager.isSearchingMembers && adminManager.memberSearchResults.length === 0 && (
                       <p className="text-sm text-muted-foreground text-center py-4">No users found matching your search.</p>
+                    )}
+                     {adminManager.memberSearchTerm.trim() && !adminManager.isSearchingMembers && adminManager.memberSearchResults.length > 0 && (
+                      adminManager.memberSearchResults.map((user) => renderUserListItem(user, 'search'))
                     )}
                   </ul>
                 </ScrollArea>
@@ -465,7 +461,7 @@ export function ManageCloudChannelDialog({
                 )}
                 {adminManager.hasMoreParticipants && !adminManager.isLoadingParticipants && adminManager.participants.length > 0 && (
                   <div className="mt-4 text-center">
-                    <Button onClick={() => channel?.inputPeer && adminManager.fetchParticipants(channel.inputPeer, adminManager.participants.length)} variant="outline" disabled={adminManager.isLoadingParticipants}>
+                    <Button onClick={() => selectedManagingChannel?.inputPeer && adminManager.fetchParticipants(selectedManagingChannel.inputPeer, adminManager.participants.length)} variant="outline" disabled={adminManager.isLoadingParticipants}>
                       {adminManager.isLoadingParticipants ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                       Load More Participants
                     </Button>
@@ -479,4 +475,3 @@ export function ManageCloudChannelDialog({
     </Dialog>
   );
 }
-    
