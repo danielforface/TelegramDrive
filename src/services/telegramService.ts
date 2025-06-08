@@ -64,6 +64,7 @@ export {
   updateChatUsername,
   exportChannelInviteLink,
   updateChannelPhotoService,
+  uploadFileToServerForPhoto, // Ensured this specific export is present
   editChannelTitle,
   searchUsers,
   inviteUserToChannel,
@@ -75,3 +76,4 @@ export { initializeTelegramUpdateListener } from './telegramUpdates';
 
 // Re-export formatFileSize from lib/utils if it was previously exported from here
 export { formatFileSize };
+
