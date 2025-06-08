@@ -1,5 +1,4 @@
 
-
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
@@ -15,2066 +14,233 @@ import { UploadDialog } from "@/components/upload-dialog";
 import { CreateCloudChannelDialog } from "@/components/create-cloud-channel-dialog";
 import { CreateVirtualFolderDialog } from "@/components/create-virtual-folder-dialog";
 import { DeleteItemConfirmationDialog } from "@/components/delete-item-confirmation-dialog";
-import type { CloudFolder, CloudFile, DownloadQueueItemType, ExtendedFile, DialogFilter, CloudChannelType, CloudChannelConfigV1, InputPeer, ClipboardItemType, CloudChannelConfigEntry } from "@/types";
+import type { CloudFolder, DialogFilter, InputPeer, CloudChannelType, CloudChannelConfigV1 } from "@/types";
 import { Button } from "@/components/ui/button";
 import { RefreshCw, Loader2, LayoutPanelLeft, MessageSquare, Cloud } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import * as telegramService from "@/services/telegramService";
-import { ALL_CHATS_FILTER_ID } from "@/services/telegramService";
-import { normalizePath, getParentPath, parseVfsPathFromCaption } from "@/lib/vfsUtils";
+import * as telegramService from '@/services/telegramService';
 
-
-const INITIAL_MASTER_CHATS_LOAD_LIMIT = 100;
-const SUBSEQUENT_MASTER_CHATS_LOAD_LIMIT = 50;
-const INITIAL_SPECIFIC_FOLDER_CHATS_LOAD_LIMIT = 20;
-const SUBSEQUENT_SPECIFIC_FOLDER_CHATS_LOAD_LIMIT = 20;
-
-const INITIAL_MEDIA_LOAD_LIMIT = 20;
-const CLOUD_CHANNEL_INITIAL_MESSAGES_LOAD_LIMIT = 100;
-const SUBSEQUENT_MEDIA_LOAD_LIMIT = 20;
-const DOWNLOAD_CHUNK_SIZE = 512 * 1024;
-const KB_1 = 1024;
-const ONE_MB = 1024 * 1024;
-
-
-type AuthStep = 'initial' | 'awaiting_code' | 'awaiting_password';
-
-interface PaginationState {
-  offsetDate: number;
-  offsetId: number;
-  offsetPeer: any;
-  hasMore: boolean;
-}
-
-const initialPaginationState: PaginationState = {
-  offsetDate: 0,
-  offsetId: 0,
-  offsetPeer: { _: 'inputPeerEmpty' },
-  hasMore: true,
-};
-
-interface CachedFolderData {
-  folders: CloudFolder[];
-  pagination: PaginationState;
-  isLoading: boolean;
-  error?: string | null;
-}
-
-const defaultAllChatsFilter: DialogFilter = {
-  _: 'dialogFilterDefault',
-  id: ALL_CHATS_FILTER_ID,
-  title: "All Chats",
-  flags: 0,
-  pinned_peers: [],
-  include_peers: [],
-  exclude_peers: []
-};
-
-export type ItemToDeleteType =
-  | { type: 'file'; file: CloudFile; parentInputPeer?: InputPeer | null }
-  | { type: 'virtualFolder'; path: string; name: string; parentInputPeer?: InputPeer | null };
+// Import Custom Hooks
+import { useAuthManager } from "@/hooks/features/useAuthManager";
+import { useConnectionManager } from "@/hooks/features/useConnectionManager";
+import { useDialogFiltersManager } from "@/hooks/features/useDialogFiltersManager";
+import { useChatListManager } from "@/hooks/features/useChatListManager";
+import { useAppCloudChannelsManager } from "@/hooks/features/useAppCloudChannelsManager";
+import { useSelectedMediaManager } from "@/hooks/features/useSelectedMediaManager";
+import { useFileOperationsManager } from "@/hooks/features/useFileOperationsManager";
+import { useMediaPreviewManager } from "@/hooks/features/useMediaPreviewManager";
+import { useDownloadManager } from "@/hooks/features/useDownloadManager";
+import { useUploadManager } from "@/hooks/features/useUploadManager";
+import { usePageDialogsVisibility } from "@/hooks/features/usePageDialogsVisibility";
 
 
 export default function Home() {
-  const [isConnecting, setIsConnecting] = useState(false);
-  const [isConnected, setIsConnected] = useState(false);
-
-  const [dialogFilters, setDialogFilters] = useState<DialogFilter[]>([defaultAllChatsFilter]);
-  const [activeDialogFilterId, setActiveDialogFilterId] = useState<number>(ALL_CHATS_FILTER_ID);
-  const [activeFilterDetails, setActiveFilterDetails] = useState<DialogFilter | null>(defaultAllChatsFilter);
-  const [isLoadingDialogFilters, setIsLoadingDialogFilters] = useState(true);
-  const [hasFetchedDialogFiltersOnce, setHasFetchedDialogFiltersOnce] = useState(false);
-  const [isReorderingFolders, setIsReorderingFolders] = useState(false);
-
-  const [chatDataCache, setChatDataCache] = useState<Map<number, CachedFolderData>>(new Map());
-
-  const [masterChatListForFiltering, setMasterChatListForFiltering] = useState<CloudFolder[]>([]);
-  const [masterChatListPaginationForFiltering, setMasterChatListPaginationForFiltering] = useState<PaginationState>(initialPaginationState);
-
-  const [displayedChats, setDisplayedChats] = useState<CloudFolder[]>([]);
-  const [isLoadingDisplayedChats, setIsLoadingDisplayedChats] = useState(false);
-  const [hasMoreDisplayedChats, setHasMoreDisplayedChats] = useState(true);
-  const [currentErrorMessage, setCurrentErrorMessage] = useState<string | null>(null);
-
-  const [selectedFolder, setSelectedFolder] = useState<CloudFolder | null>(null);
-  const [currentChatMedia, setCurrentChatMedia] = useState<CloudFile[]>([]);
-  const [isLoadingChatMedia, setIsLoadingChatMedia] = useState(false);
-  const [hasMoreChatMedia, setHasMoreChatMedia] = useState(true);
-  const [currentMediaOffsetId, setCurrentMediaOffsetId] = useState<number>(0);
-
-  const [selectedFileForDetails, setSelectedFileForDetails] = useState<CloudFile | null>(null);
-  const [isDetailsPanelOpen, setIsDetailsPanelOpen] = useState(false);
-
-  const [isImageViewerOpen, setIsImageViewerOpen] = useState(false);
-  const [viewingImageUrl, setViewingImageUrl] = useState<string | null>(null);
-  const [viewingImageName, setViewingImageName] = useState<string | undefined>(undefined);
-
-  const [isVideoPlayerOpen, setIsVideoPlayerOpen] = useState(false);
-  const [playingVideoUrl, setPlayingVideoUrl] = useState<string | null>(null);
-  const [playingVideoName, setPlayingVideoName] = useState<string | undefined>(undefined);
-  const [isPreparingVideoStream, setIsPreparingVideoStream] = useState(false);
-  const [videoStreamUrl, setVideoStreamUrl] = useState<string | null>(null);
-  const [preparingVideoStreamForFileId, setPreparingVideoStreamForFileId] = useState<string | null>(null);
-
-  const [isDownloadManagerOpen, setIsDownloadManagerOpen] = useState(false);
-  const [downloadQueue, setDownloadQueue] = useState<DownloadQueueItemType[]>([]);
-
-  const [isChatSelectionDialogOpen, setIsChatSelectionDialogOpen] = useState(false);
-  const [isCloudStorageSelectorOpen, setIsCloudStorageSelectorOpen] = useState(false);
-
-  const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
-  const [filesToUpload, setFilesToUpload] = useState<ExtendedFile[]>([]);
-  const [isUploadingFiles, setIsUploadingFiles] = useState(false);
-
-  const [authStep, setAuthStep] = useState<AuthStep>('initial');
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [phoneCode, setPhoneCode] = useState('');
-  const [password, setPassword] = useState('');
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [lastFetchedFilterId, setLastFetchedFilterId] = useState<number | null>(null);
-
-  const [isCreateCloudChannelDialogOpen, setIsCreateCloudChannelDialogOpen] = useState(false);
-  const [isCreatingCloudChannel, setIsCreatingCloudChannel] = useState(false);
-
-  const [appManagedCloudFolders, setAppManagedCloudFolders] = useState<CloudFolder[]>([]);
-  const [isLoadingAppManagedCloudFolders, setIsLoadingAppManagedCloudFolders] = useState(true);
-
-  const [currentVirtualPath, setCurrentVirtualPath] = useState<string>("/");
-  const [isCreateVirtualFolderDialogOpen, setIsCreateVirtualFolderDialogOpen] = useState(false);
-  const [virtualFolderParentPath, setVirtualFolderParentPath] = useState<string>("/");
-  const [isProcessingVirtualFolder, setIsProcessingVirtualFolder] = useState(false);
-
-  const [itemToDelete, setItemToDelete] = useState<ItemToDeleteType | null>(null);
-  const [isDeleteItemDialogOpen, setIsDeleteItemDialogOpen] = useState(false);
-  const [isProcessingDeletion, setIsProcessingDeletion] = useState(false);
-
-  const [clipboardItem, setClipboardItem] = useState<ClipboardItemType>(null);
-
-
-  const activeDownloadsRef = useRef<Set<string>>(new Set());
-  const downloadQueueRef = useRef<DownloadQueueItemType[]>([]);
-  const browserDownloadTriggeredRef = useRef(new Set<string>());
-  const videoStreamAbortControllerRef = useRef<AbortController | null>(null);
-  const uploadAbortControllersRef = useRef<Map<string, AbortController>>(new Map());
+  const { toast } = useToast();
   const headerRef = useRef<HTMLDivElement>(null);
   const footerRef = useRef<HTMLDivElement>(null);
-  const telegramUpdateListenerInitializedRef = useRef(false);
 
-  const { toast } = useToast();
-
-  const handleReset = useCallback(async (performServerLogout = true) => {
-    const currentIsConnected = isConnected;
-
-    if (performServerLogout && currentIsConnected) {
-        toast({ title: "Disconnecting...", description: "Logging out from Telegram." });
-        try {
-            await telegramService.signOut();
-            toast({ title: "Disconnected", description: "Successfully signed out." });
-        } catch (error: any) {
-            if(!(error.message && error.message.includes('AUTH_KEY_UNREGISTERED'))){
-                 toast({ title: "Disconnection Error", description: error.message || "Could not sign out properly from server.", variant: "destructive" });
-            }
-        }
-    }
-
-    setIsConnected(false);
-    setDisplayedChats([]);
-    setSelectedFolder(null);
-    setCurrentChatMedia([]);
-    setIsConnecting(false);
-    setAuthStep('initial');
-    setPhoneNumber('');
-    setPhoneCode('');
-    setPassword('');
-    setAuthError(null);
-
-    setChatDataCache(new Map());
-    setMasterChatListForFiltering([]);
-    setMasterChatListPaginationForFiltering(initialPaginationState);
-    setIsLoadingDisplayedChats(false);
-    setHasMoreDisplayedChats(true);
-    setCurrentErrorMessage(null);
-
-    setIsLoadingChatMedia(false);
-    setHasMoreChatMedia(true);
-    setCurrentMediaOffsetId(0);
-
-    setDialogFilters([defaultAllChatsFilter]);
-    setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
-    setActiveFilterDetails(defaultAllChatsFilter);
-    setIsLoadingDialogFilters(true);
-    setHasFetchedDialogFiltersOnce(false);
-    setLastFetchedFilterId(null);
-
-    setAppManagedCloudFolders([]);
-    setIsLoadingAppManagedCloudFolders(true);
-
-    downloadQueueRef.current.forEach(item => {
-      if (item.abortController && !item.abortController.signal.aborted) {
-        item.abortController.abort("User reset application state");
-      }
-    });
-    setDownloadQueue([]);
-    activeDownloadsRef.current.clear();
-    browserDownloadTriggeredRef.current.clear();
-
-    if (videoStreamAbortControllerRef.current && !videoStreamAbortControllerRef.current.signal.aborted) {
-        videoStreamAbortControllerRef.current.abort("User reset application state");
-    }
-    if (videoStreamUrl) {
-        URL.revokeObjectURL(videoStreamUrl);
-        setVideoStreamUrl(null);
-    }
-    setPlayingVideoUrl(null);
-    setIsPreparingVideoStream(false);
-    setPreparingVideoStreamForFileId(null);
-
-    setIsChatSelectionDialogOpen(false);
-    setIsCloudStorageSelectorOpen(false);
-    setIsUploadDialogOpen(false);
-    setFilesToUpload([]);
-    uploadAbortControllersRef.current.forEach((controller) => {
-      if (!controller.signal.aborted) controller.abort("User reset application state");
-    });
-    uploadAbortControllersRef.current.clear();
-    setIsUploadingFiles(false);
-    setIsCreateCloudChannelDialogOpen(false);
-    setIsCreatingCloudChannel(false);
-    setCurrentVirtualPath("/");
-    setIsCreateVirtualFolderDialogOpen(false);
-    telegramUpdateListenerInitializedRef.current = false;
-    setItemToDelete(null);
-    setIsDeleteItemDialogOpen(false);
-    setIsProcessingDeletion(false);
-    setClipboardItem(null);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected, toast, videoStreamUrl]); 
-
-  const handleApiError = useCallback((error: any, title: string, defaultMessage: string) => {
+  // Centralized API error handler for the page
+  const handleGlobalApiError = useCallback((error: any, title: string, defaultMessage: string, doPageReset: boolean = false) => {
     let description = error.message || defaultMessage;
-
-    if (error.message && error.message.includes("Invalid hash in mt_dh_gen_ok")) {
-      description = "Connection handshake failed. Please check your API ID/Hash in .env.local, ensure it's correct, restart the server, and try clearing your browser's localStorage for this site.";
-      setAuthError(description);
-      toast({ title: "Connection Handshake Failed", description, variant: "destructive", duration: 10000 });
-    } else if (error.message === 'AUTH_RESTART') {
-        description = "Authentication process needs to be restarted. Please try entering your phone number again.";
-        setAuthError(description);
-        toast({ title: "Authentication Restart Needed", description, variant: "destructive" });
-        handleReset(false);
-    } else {
-        setAuthError(description);
-        toast({ title, description, variant: "destructive", duration: 5000 });
+    // authManager?.setAuthError(description); // Assuming authManager hook exposes setAuthError
+    toast({ title, description, variant: "destructive", duration: doPageReset ? 10000 : 5000 });
+    if (doPageReset && connectionManager) { // connectionManager might not be initialized yet
+      connectionManager.handleReset(error.message !== 'AUTH_RESTART');
     }
-  }, [toast, handleReset]);
+  }, [toast /*, authManager dependency if setAuthError is called */ /*, connectionManager dependency */]);
 
-  const fetchAndCacheDialogs = useCallback(async (
-    cacheKeyToFetch: number,
-    isLoadingMore: boolean,
-    folderIdForApiCall?: number,
-    customLimit?: number
-  ) => {
-    const existingCacheEntry = chatDataCache.get(cacheKeyToFetch);
-    if (existingCacheEntry?.isLoading) {
-      return;
-    }
 
-    const currentPagination = isLoadingMore
-      ? (existingCacheEntry?.pagination || initialPaginationState)
-      : initialPaginationState;
+  // --- Initialize Hooks ---
+  const pageDialogs = usePageDialogsVisibility();
 
-    setChatDataCache(prev => new Map(prev).set(cacheKeyToFetch, {
-      folders: isLoadingMore ? (existingCacheEntry?.folders || []) : [],
-      pagination: currentPagination,
-      isLoading: true,
-      error: null,
-    }));
+  const {
+    authStep, setAuthStep, authInputPhoneNumber, setAuthInputPhoneNumber, authPhoneCode, setAuthPhoneCode,
+    authPassword, setAuthPassword, authError, setAuthError: setAuthErrorAuthHook,
+    handleSendCode, handleSignIn, handleCheckPassword, resetAuthVisuals,
+  } = useAuthManager({
+    onAuthSuccess: (user) => connectionManager.onAuthSuccessMain(user), // Assuming onAuthSuccessMain exists
+    setGlobalIsConnecting: (isConn) => connectionManager?.setIsConnecting(isConn), // Forward to connectionManager
+    setGlobalPhoneNumberForDisplay: (phone) => connectionManager?.setAppPhoneNumber(phone), // Forward
+    toast,
+    handleGlobalApiError,
+  });
 
-    const limitToUse = customLimit !== undefined ? customLimit :
-                     (isLoadingMore
-                        ? (folderIdForApiCall === undefined ? SUBSEQUENT_MASTER_CHATS_LOAD_LIMIT : SUBSEQUENT_SPECIFIC_FOLDER_CHATS_LOAD_LIMIT)
-                        : (folderIdForApiCall === undefined ? INITIAL_MASTER_CHATS_LOAD_LIMIT : INITIAL_SPECIFIC_FOLDER_CHATS_LOAD_LIMIT));
-    try {
-      const response = await telegramService.getTelegramChats(
-        limitToUse,
-        currentPagination.offsetDate,
-        currentPagination.offsetId,
-        currentPagination.offsetPeer,
-        folderIdForApiCall
-      );
-
-      const newFoldersFromServer = response.folders;
-      let combinedFolders;
-      const currentCachedDataBeforeUpdate = chatDataCache.get(cacheKeyToFetch);
-
-      if (isLoadingMore) {
-          const existingFoldersInCache = currentCachedDataBeforeUpdate?.folders || [];
-          const existingIds = new Set(existingFoldersInCache.map(f => f.id));
-          const trulyNewFolders = newFoldersFromServer.filter(f => !existingIds.has(f.id));
-          combinedFolders = [...existingFoldersInCache, ...trulyNewFolders];
-      } else {
-          combinedFolders = newFoldersFromServer;
-      }
-
-      setChatDataCache(prev => {
-        const updatedCache = new Map(prev);
-        updatedCache.set(cacheKeyToFetch, {
-          folders: combinedFolders,
-          pagination: {
-            offsetDate: response.nextOffsetDate,
-            offsetId: response.nextOffsetId,
-            offsetPeer: response.nextOffsetPeer,
-            hasMore: response.hasMore,
-          },
-          isLoading: false,
-          error: null,
-        });
-        return updatedCache;
-      });
-
-      if (cacheKeyToFetch === ALL_CHATS_FILTER_ID) {
-        setMasterChatListForFiltering(combinedFolders);
-        setMasterChatListPaginationForFiltering({
-            offsetDate: response.nextOffsetDate,
-            offsetId: response.nextOffsetId,
-            offsetPeer: response.nextOffsetPeer,
-            hasMore: response.hasMore,
-        });
-      }
-
-    } catch (error: any) {
-      let errorMsg = error.message || "Failed to load chats.";
-      let errorTypeForCache = 'GENERAL_ERROR';
-      const currentFilterTitle = dialogFilters.find(f => f.id === folderIdForApiCall)?.title || (folderIdForApiCall === undefined ? 'All Chats' : `Folder ID ${folderIdForApiCall}`);
-
-      if (error.message?.includes('FOLDER_ID_INVALID') && folderIdForApiCall !== undefined) {
-        errorMsg = `Folder "${currentFilterTitle}" (ID: ${folderIdForApiCall}) is invalid. Will attempt to show matching chats from 'All Chats' if applicable.`;
-        errorTypeForCache = 'FOLDER_ID_INVALID_FALLBACK';
-        toast({ title: `Folder Load Issue for "${currentFilterTitle}"`, description: errorMsg, variant: "default", duration: 7000 });
-      } else {
-        handleApiError(error, `Error loading chats for "${currentFilterTitle}"`, errorMsg);
-      }
-
-      setChatDataCache(prev => {
-        const latestCacheData = prev.get(cacheKeyToFetch);
-        return new Map(prev).set(cacheKeyToFetch, {
-          folders: isLoadingMore ? (latestCacheData?.folders || []) : [],
-          pagination: { ...(isLoadingMore ? (latestCacheData?.pagination || initialPaginationState) : initialPaginationState), hasMore: false },
-          isLoading: false,
-          error: errorTypeForCache,
-        });
-      });
-
-      if (cacheKeyToFetch === ALL_CHATS_FILTER_ID) {
-        setMasterChatListForFiltering(isLoadingMore ? masterChatListForFiltering : []);
-        setMasterChatListPaginationForFiltering(prev => ({ ...prev, hasMore: false }));
-      }
-    }
-  }, [chatDataCache, handleApiError, toast, masterChatListForFiltering, dialogFilters]);
-
-  const fetchDialogFilters = useCallback(async (forceRefresh = false) => {
-    if (!isConnected) {
-        setIsLoadingDialogFilters(false);
-        return;
-    }
-    if (!forceRefresh && hasFetchedDialogFiltersOnce && dialogFilters.length > 1 && !isReorderingFolders) {
-      setIsLoadingDialogFilters(false);
-      return;
-    }
-    setIsLoadingDialogFilters(true);
-    try {
-      const filtersFromServer = await telegramService.getDialogFilters();
-      const processedFilters: DialogFilter[] = [];
-      let allChatsFilterExists = false;
-
-      if (filtersFromServer && filtersFromServer.length > 0) {
-          filtersFromServer.forEach(filter => {
-            if (filter._ === 'dialogFilterDefault') {
-              processedFilters.push({
-                ...filter,
-                id: ALL_CHATS_FILTER_ID,
-                title: "All Chats",
-                pinned_peers: [], include_peers: [], exclude_peers: []
-              });
-              allChatsFilterExists = true;
-            } else if (filter._ === 'dialogFilter' || filter._ === 'dialogFilterChatlist') {
-              processedFilters.push({
-                ...filter,
-                pinned_peers: filter.pinned_peers || [],
-                include_peers: filter.include_peers || [],
-                exclude_peers: filter.exclude_peers || [],
-              });
-            }
-          });
-      }
-
-      if (!allChatsFilterExists && !processedFilters.some(f => f.id === ALL_CHATS_FILTER_ID)) {
-        processedFilters.unshift({ ...defaultAllChatsFilter });
-      }
-
-      processedFilters.sort((a, b) => {
-        if (a.id === ALL_CHATS_FILTER_ID) return -1;
-        if (b.id === ALL_CHATS_FILTER_ID) return 1;
-        const originalFilters = filtersFromServer || [];
-        return (originalFilters.findIndex(df => df.id === a.id)) - (originalFilters.findIndex(df => df.id === b.id));
-      });
-
-      setDialogFilters(processedFilters.length > 0 ? processedFilters : [defaultAllChatsFilter]);
-      setHasFetchedDialogFiltersOnce(true);
-
-      const currentActiveStillExists = (processedFilters.length > 0 ? processedFilters : [defaultAllChatsFilter]).some(f => f.id === activeDialogFilterId);
-      if (!currentActiveStillExists && processedFilters.length > 0) {
-        setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
-      } else if (processedFilters.length === 0) {
-        setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
-      }
-
-      if ((forceRefresh || processedFilters.length > 0 || (processedFilters.length === 0 && dialogFilters.some(df => df.id === ALL_CHATS_FILTER_ID)))) {
-        await fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, false, undefined, INITIAL_MASTER_CHATS_LOAD_LIMIT);
-        const filtersToIterate = processedFilters.length > 0 ? processedFilters : dialogFilters;
-        for (const filter of filtersToIterate) {
-          if (filter._ === 'dialogFilter' && filter.id !== ALL_CHATS_FILTER_ID) {
-            await fetchAndCacheDialogs(filter.id, false, filter.id, INITIAL_SPECIFIC_FOLDER_CHATS_LOAD_LIMIT);
-          }
-        }
-      }
-    } catch (error: any) {
-      handleApiError(error, "Error Fetching Folders", "Could not load your chat folders.");
-      setDialogFilters([defaultAllChatsFilter]);
-      setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
-      setHasFetchedDialogFiltersOnce(false);
-    } finally {
-      setIsLoadingDialogFilters(false);
-    }
-  }, [isConnected, handleApiError, activeDialogFilterId, hasFetchedDialogFiltersOnce, dialogFilters, fetchAndCacheDialogs, isReorderingFolders]);
+  const connectionManager = useConnectionManager({
+    toast,
+    onInitialConnect: async () => {
+      // This now becomes the central point for fetching initial data after connection
+      await dialogFiltersManager.fetchDialogFilters(true);
+      await appCloudChannelsManager.fetchAppManagedCloudChannelsList(true);
+    },
+    onResetApp: () => {
+      // Call reset functions of all other major hooks
+      resetAuthVisuals();
+      dialogFiltersManager.resetDialogFiltersState();
+      chatListManager.resetAllChatListData();
+      appCloudChannelsManager.resetAppManagedCloudFolders();
+      selectedMediaManager.resetSelectedMedia();
+      fileOperationsManager.resetFileOperations();
+      mediaPreviewManager.resetMediaPreview();
+      downloadManager.resetDownloadManager();
+      uploadManager.resetUploadManager();
+      pageDialogs.resetAllDialogsVisibility();
+      // No need to reset global phone number here as handleReset in connectionManager does it
+    },
+    setAuthStep: setAuthStep, // Pass AuthManager's setter
+    handleGlobalApiError,
+    handleNewCloudChannelDiscoveredAppLevel: (folder, source) => appCloudChannelsManager?.handleNewCloudChannelVerifiedAndUpdateList(folder, source),
+    setGlobalPhoneNumberForDisplay: (phone) => { /* This is primarily managed by authManager now or directly in connectionManager */ }
+  });
   
-  const handleNewCloudChannelDiscovered = useCallback((newlyVerifiedFolder: CloudFolder, source: 'update' | 'initialScan') => {
-    setAppManagedCloudFolders(prevFolders => {
-        const exists = prevFolders.some(f => f.id === newlyVerifiedFolder.id);
-        if (!exists) {
-            if (source === 'update') {
-                toast({
-                    title: "New Cloud Storage Detected",
-                    description: `"${newlyVerifiedFolder.name}" is now available and has been organized.`,
-                });
-            }
-            return [...prevFolders, newlyVerifiedFolder].sort((a,b) => a.name.localeCompare(b.name));
-        } else {
-            return prevFolders.map(f => f.id === newlyVerifiedFolder.id ? newlyVerifiedFolder : f)
-                              .sort((a,b) => a.name.localeCompare(b.name));
+  const dialogFiltersManager = useDialogFiltersManager({
+    isConnected: connectionManager.isConnected,
+    toast,
+    handleGlobalApiError,
+    // Pass necessary callbacks to chatListManager's cache functions
+    fetchAndCacheDialogsForListManager: (key, more, id, limit) => chatListManager?.fetchAndCacheDialogsForList(key, more, id, limit) || Promise.resolve(),
+    setLastFetchedFilterIdForChatListManager: (id) => chatListManager?.setLastFetchedFilterIdForChatList(id),
+    // The following are not directly used by dialogFiltersManager itself but are part of the interface
+    // for chatListManager's direct cache manipulation if ever needed.
+    // These might be simplified if chatListManager exposes direct methods instead.
+    setChatsDataCacheForFilter: (filterId, data) => chatListManager?.setChatsDataCacheForFilter(filterId, data),
+    resetMasterChatListForFilteringInCache: () => chatListManager?.resetMasterChatListForFilteringInCache(),
+    updateMasterChatListInCache: (folders, pagination) => chatListManager?.updateMasterChatListInCache(folders, pagination),
+    getChatDataCacheEntry: (key) => chatListManager?.getChatDataCacheEntry(key),
+
+  });
+
+  const chatListManager = useChatListManager({
+    isConnected: connectionManager.isConnected,
+    activeFilterDetails: dialogFiltersManager.activeFilterDetails,
+    toast,
+    handleGlobalApiError,
+    dialogFilters: dialogFiltersManager.dialogFilters,
+    resetSelectedMedia: () => selectedMediaManager?.resetSelectedMedia(),
+    setClipboardItem: (item) => fileOperationsManager?.setClipboardItem(item),
+  });
+  
+  const appCloudChannelsManager = useAppCloudChannelsManager({
+    isConnected: connectionManager.isConnected,
+    toast,
+    handleGlobalApiError,
+    onCloudChannelListChange: () => dialogFiltersManager.fetchDialogFilters(true), // Refresh dialog filters when cloud channels change
+  });
+
+  const selectedMediaManager = useSelectedMediaManager({
+    toast,
+    handleGlobalApiError,
+    displayedChatsFromChatList: chatListManager.displayedChats,
+    appManagedCloudFoldersFromManager: appCloudChannelsManager.appManagedCloudFolders,
+    setClipboardItem: (item) => fileOperationsManager?.setClipboardItem(item),
+  });
+
+  const fileOperationsManager = useFileOperationsManager({
+    toast,
+    handleGlobalApiError,
+    selectedFolder: selectedMediaManager.selectedFolder,
+    currentVirtualPath: selectedMediaManager.currentVirtualPath,
+    currentChatMedia: selectedMediaManager.currentChatMedia,
+    setCurrentChatMedia: selectedMediaManager.setCurrentChatMedia,
+    updateSelectedFolderConfig: selectedMediaManager.updateSelectedFolderConfig,
+    setAppManagedCloudFoldersState: appCloudChannelsManager.setAppManagedCloudFolders,
+    fetchInitialChatMediaForSelectedManager: selectedMediaManager.fetchInitialChatMediaForSelected,
+  });
+
+  const mediaPreviewManager = useMediaPreviewManager({ toast });
+  
+  const downloadManager = useDownloadManager({ toast });
+
+  const uploadManager = useUploadManager({
+    toast,
+    selectedFolder: selectedMediaManager.selectedFolder,
+    currentVirtualPath: selectedMediaManager.currentVirtualPath,
+    refreshMediaCallback: () => {
+        if (selectedMediaManager.selectedFolder) {
+            selectedMediaManager.fetchInitialChatMediaForSelected(selectedMediaManager.selectedFolder);
         }
-    });
-    if (source === 'update') {
-        fetchDialogFilters(true);
-    }
-  }, [toast, fetchDialogFilters]);
+    },
+  });
 
-  const fetchAppManagedCloudChannels = useCallback(async (forceRefresh = false) => {
-    if (!isConnected && !forceRefresh) {
-        setIsLoadingAppManagedCloudFolders(false);
-        return;
-    }
-     if (!forceRefresh && appManagedCloudFolders.length > 0 && !isLoadingAppManagedCloudFolders) {
-        return;
-    }
-    setIsLoadingAppManagedCloudFolders(true);
-    try {
-      const channels = await telegramService.fetchAndVerifyManagedCloudChannels();
-      setAppManagedCloudFolders(channels.sort((a,b) => a.name.localeCompare(b.name)));
-    } catch (error: any) {
-      handleApiError(error, "Error Fetching Cloud Channels", "Could not load app-managed cloud channels.");
-      setAppManagedCloudFolders([]);
-    } finally {
-      setIsLoadingAppManagedCloudFolders(false);
-    }
-  }, [isConnected, handleApiError, appManagedCloudFolders.length, isLoadingAppManagedCloudFolders]);
-
-  const checkExistingConnection = useCallback(async () => {
-    setIsLoadingDialogFilters(true);
-    setIsLoadingAppManagedCloudFolders(true);
-    try {
-      const previouslyConnected = await telegramService.isUserConnected();
-      if (previouslyConnected) {
-        const storedUser = telegramService.getUserSessionDetails();
-        if (storedUser && storedUser.phone) setPhoneNumber(storedUser.phone);
-
-        setIsConnected(true);
-        setAuthStep('initial');
-        setAuthError(null);
-
-        await Promise.all([
-            fetchAppManagedCloudChannels(true),
-            fetchDialogFilters(true)
-        ]);
-
-        if (!telegramUpdateListenerInitializedRef.current) {
-            telegramService.initializeTelegramUpdateListener(handleNewCloudChannelDiscovered);
-            telegramUpdateListenerInitializedRef.current = true;
-        }
-
-      } else {
-        setIsConnected(false);
-        setPhoneNumber('');
-        setAuthStep('initial');
-        setAuthError(null);
-        handleReset(false);
-        setHasFetchedDialogFiltersOnce(false);
-        setIsLoadingDialogFilters(false);
-        setIsLoadingAppManagedCloudFolders(false);
-      }
-    } catch (error: any) {
-      const errorMessage = error.message || (error.originalErrorObject?.error_message);
-      if (errorMessage?.includes("Invalid hash in mt_dh_gen_ok")) {
-        toast({
-          title: "Connection Handshake Failed",
-          description: "Could not establish a secure connection. Verify API ID/Hash. Try clearing localStorage & restarting server.",
-          variant: "destructive", duration: 10000,
-        });
-        setAuthError("Connection handshake failed. Check API credentials & localStorage.");
-      } else if (errorMessage === 'AUTH_RESTART') {
-          handleApiError(error, "Authentication Expired", "Your session needs to be re-initiated.");
-      } else {
-         handleApiError(error, "Connection Check Error", `Failed to verify existing connection. ${errorMessage}`);
-      }
-      setIsConnected(false);
-      setDialogFilters([defaultAllChatsFilter]);
-      setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
-      setActiveFilterDetails(defaultAllChatsFilter);
-      setHasFetchedDialogFiltersOnce(false);
-      setIsLoadingDialogFilters(false);
-      setIsLoadingAppManagedCloudFolders(false);
-    }
-  }, [toast, handleApiError, fetchDialogFilters, fetchAppManagedCloudChannels, handleReset, handleNewCloudChannelDiscovered]);
-
-  const fetchInitialChatMedia = useCallback(async (folder: CloudFolder) => {
-    if (!folder.inputPeer && !folder.isAppManagedCloud) {
-      toast({ title: "Error", description: "Cannot load media: InputPeer data is missing for this chat.", variant: "destructive" });
-      return;
-    }
-
-    setIsLoadingChatMedia(true);
-    setCurrentChatMedia([]);
-    setHasMoreChatMedia(true);
-    setCurrentMediaOffsetId(0);
-    setCurrentVirtualPath("/");
-
-    const isCloud = folder.isAppManagedCloud || false;
-    const mediaLimit = isCloud ? CLOUD_CHANNEL_INITIAL_MESSAGES_LOAD_LIMIT : INITIAL_MEDIA_LOAD_LIMIT;
-
-    toast({ title: `Loading ${isCloud ? 'Content' : 'Media'} for ${folder.name}`, description: "Fetching initial items..." });
-
-    try {
-      const response = await telegramService.getChatMediaHistory(
-          folder.inputPeer!,
-          mediaLimit,
-          0,
-          isCloud
-      );
-      setCurrentChatMedia(response.files);
-      setCurrentMediaOffsetId(response.nextOffsetId || 0);
-      setHasMoreChatMedia(response.hasMore);
-      if (response.files.length === 0 && !response.hasMore) {
-          toast({ title: `No ${isCloud ? 'Content' : 'Media'} Found`, description: `No items in ${folder.name}.`});
-      } else if (response.files.length > 0) {
-           toast({ title: `${isCloud ? 'Content' : 'Media'} Loaded`, description: `Loaded ${response.files.length} initial items for ${folder.name}.`});
-      }
-    } catch (error: any) {
-      handleApiError(error, `Error Fetching ${isCloud ? 'Content' : 'Media'} for ${folder.name}`, `Could not load items. ${error.message}`);
-      setHasMoreChatMedia(false);
-    } finally {
-      setIsLoadingChatMedia(false);
-    }
-  },[toast, handleApiError]);
-
-  const loadMoreChatMediaCallback = useCallback(async () => {
-    if (isLoadingChatMedia || !hasMoreChatMedia || !selectedFolder?.inputPeer) return;
-
-    setIsLoadingChatMedia(true);
-    const isCloud = selectedFolder.isAppManagedCloud || false;
-    toast({ title: `Loading More ${isCloud ? 'Content' : 'Media'} for ${selectedFolder.name}`, description: "Fetching next batch..." });
-    try {
-      const response = await telegramService.getChatMediaHistory(
-          selectedFolder.inputPeer,
-          SUBSEQUENT_MEDIA_LOAD_LIMIT,
-          currentMediaOffsetId,
-          isCloud
-      );
-      setCurrentChatMedia(prev => [...prev, ...response.files]);
-      setCurrentMediaOffsetId(response.nextOffsetId || 0);
-      setHasMoreChatMedia(response.hasMore);
-       if (response.files.length > 0) {
-           toast({ title: `More ${isCloud ? 'Content' : 'Media'} Loaded`, description: `Loaded ${response.files.length} additional items.`});
-      } else if (!response.hasMore) {
-           toast({ title: `All ${isCloud ? 'Content' : 'Media'} Loaded`, description: `No more items to load for ${selectedFolder.name}.`});
-      }
-    } catch (error: any) {
-      handleApiError(error, `Error Loading More ${isCloud ? 'Content' : 'Media'}`, `Could not load more items. ${error.message}`);
-      setHasMoreChatMedia(false);
-    } finally {
-      setIsLoadingChatMedia(false);
-    }
-  }, [isLoadingChatMedia, hasMoreChatMedia, selectedFolder, currentMediaOffsetId, toast, handleApiError]);
-
-  const handleSendCode = async (fullPhoneNumberFromConnect: string) => {
-    if (!fullPhoneNumberFromConnect || !fullPhoneNumberFromConnect.startsWith('+') || fullPhoneNumberFromConnect.length < 5) {
-      setAuthError("Phone number is required and must be valid (e.g. +1234567890).");
-      toast({ title: "Invalid Phone Number", description: "Please select a country and enter a valid number.", variant: "destructive" });
-      return;
-    }
-    setIsConnecting(true);
-    setAuthError(null);
-    setPhoneNumber(fullPhoneNumberFromConnect);
-    toast({ title: "Sending Code...", description: `Requesting verification code for ${fullPhoneNumberFromConnect}.` });
-
-    try {
-      await telegramService.sendCode(fullPhoneNumberFromConnect);
-      setAuthStep('awaiting_code');
-      toast({ title: "Code Sent!", description: "Please check Telegram for your verification code." });
-    } catch (error: any) {
-        if ((error as Error).message === 'AUTH_RESTART') {
-             handleApiError(error, "Authentication Restart Needed", "Please try entering your phone number again.");
-        } else if (error.message?.includes("Invalid hash in mt_dh_gen_ok")) {
-             handleApiError(error, "Connection Handshake Failed", "Could not establish a secure connection.");
-        } else {
-            handleApiError(error, "Error Sending Code", `Could not send verification code. ${error.message}`);
-        }
-    } finally {
-      setIsConnecting(false);
-    }
-  };
-
-  const handleSignIn = async (currentPhoneCode: string) => {
-    if (!currentPhoneCode) {
-      setAuthError("Verification code is required.");
-      toast({ title: "Verification Code Required", description: "Please enter the code sent to you.", variant: "destructive" });
-      return;
-    }
-    setIsConnecting(true);
-    setAuthError(null);
-    setPhoneCode(currentPhoneCode);
-    toast({ title: "Verifying Code...", description: "Checking your verification code with Telegram." });
-    try {
-      const result = await telegramService.signIn(phoneNumber, currentPhoneCode);
-      if (result.user) {
-        setIsConnected(true);
-        setAuthStep('initial');
-        setPhoneCode('');
-        setPassword('');
-        toast({ title: "Sign In Successful!", description: "Connected to Telegram." });
-
-        await Promise.all([
-            fetchAppManagedCloudChannels(true),
-            fetchDialogFilters(true)
-        ]);
-
-        if (!telegramUpdateListenerInitializedRef.current) {
-            telegramService.initializeTelegramUpdateListener(handleNewCloudChannelDiscovered);
-            telegramUpdateListenerInitializedRef.current = true;
-        }
-      } else {
-        setAuthError("Sign in failed. Unexpected response from server.");
-        toast({ title: "Sign In Failed", description: "Unexpected response from server.", variant: "destructive" });
-      }
-    } catch (error: any) {
-      if (error.message === '2FA_REQUIRED' && (error as any).srp_id) {
-        setAuthStep('awaiting_password');
-        setAuthError(null);
-        toast({ title: "2FA Required", description: "Please enter your two-factor authentication password." });
-      } else {
-        handleApiError(error, "Sign In Failed", `Could not sign in. ${error.message}`);
-      }
-    } finally {
-      setIsConnecting(false);
-    }
-  };
-
-  const handleCheckPassword = async (currentPassword: string) => {
-    if (!currentPassword) {
-      setAuthError("Password is required.");
-      toast({ title: "Password Required", description: "Please enter your 2FA password.", variant: "destructive" });
-      return;
-    }
-    setIsConnecting(true);
-    setAuthError(null);
-    setPassword(currentPassword);
-    toast({ title: "Verifying Password...", description: "Checking your 2FA password." });
-    try {
-      const user = await telegramService.checkPassword(currentPassword);
-      if (user) {
-        setIsConnected(true);
-        setAuthStep('initial');
-        setPhoneCode('');
-        setPassword('');
-        toast({ title: "2FA Successful!", description: "Connected to Telegram." });
-
-        await Promise.all([
-            fetchAppManagedCloudChannels(true),
-            fetchDialogFilters(true)
-        ]);
-
-        if (!telegramUpdateListenerInitializedRef.current) {
-            telegramService.initializeTelegramUpdateListener(handleNewCloudChannelDiscovered);
-            telegramUpdateListenerInitializedRef.current = true;
-        }
-      } else {
-        setAuthError("2FA failed. Unexpected response from server.");
-        toast({ title: "2FA Failed", description: "Unexpected response from server.", variant: "destructive" });
-      }
-    } catch (error: any) {
-      handleApiError(error, "2FA Failed", `Could not verify password. ${error.message}`);
-    } finally {
-      setIsConnecting(false);
-    }
-  };
-
-  const handleQueueDownload = useCallback(async (file: CloudFile) => {
-    const existingItem = downloadQueueRef.current.find(item => item.id === file.id);
-    if (existingItem && ['downloading', 'queued', 'paused', 'refreshing_reference'].includes(existingItem.status)) {
-      toast({ title: "Already in Queue", description: `${file.name} is already being processed or queued.` });
-      setIsDownloadManagerOpen(true);
-      return;
-    }
-    if (existingItem && existingItem.status === 'completed') {
-        toast({ title: "Already Downloaded", description: `${file.name} has already been downloaded. If you want to download again, clear it from the list or retry.`});
-        setIsDownloadManagerOpen(true);
-        return;
-    }
-
-    if (existingItem && ['failed', 'cancelled'].includes(existingItem.status)) {
-        browserDownloadTriggeredRef.current.delete(file.id);
-        setDownloadQueue(prevQ => prevQ.filter(q => q.id !== file.id));
-        await new Promise(resolve => setTimeout(resolve, 50));
-    }
-
-    toast({ title: "Preparing Download...", description: `Getting details for ${file.name}.` });
-    const downloadInfo = await telegramService.prepareFileDownloadInfo(file);
-
-    if (downloadInfo && downloadInfo.location && downloadInfo.totalSize > 0 && (file.totalSizeInBytes || downloadInfo.totalSize > 0) ) {
-      const controller = new AbortController();
-      const newItem: DownloadQueueItemType = {
-        ...file,
-        status: 'queued',
-        progress: 0,
-        downloadedBytes: 0,
-        currentOffset: 0,
-        chunks: [],
-        location: downloadInfo.location,
-        totalSizeInBytes: file.totalSizeInBytes || downloadInfo.totalSize,
-        abortController: controller,
-        error_message: undefined,
-      };
-      setDownloadQueue(prevQueue => {
-        const filteredQueue = prevQueue.filter(item => item.id !== file.id);
-        return [...filteredQueue, newItem];
-      });
-      setIsDownloadManagerOpen(true);
-      toast({ title: "Download Queued", description: `${file.name} added to queue.` });
-    } else {
-      toast({ title: "Download Failed", description: `Could not prepare ${file.name} for download. File info missing or invalid. Size: ${file.totalSizeInBytes}, downloadInfo: ${JSON.stringify(downloadInfo)}`, variant: "destructive" });
-    }
-  }, [toast]);
-
-  const handleCancelDownload = useCallback((itemId: string) => {
-    setDownloadQueue(prevQueue =>
-      prevQueue.map(item => {
-        if (item.id === itemId && item.abortController && !item.abortController.signal.aborted && (item.status === 'downloading' || item.status === 'queued' || item.status === 'paused' || item.status === 'refreshing_reference')) {
-          item.abortController.abort("User cancelled download");
-          return { ...item, status: 'cancelled', progress: 0, downloadedBytes: 0, error_message: "Cancelled by user." };
-        }
-        return item;
-      })
-    );
-    toast({ title: "Download Cancelled", description: `Download for item has been cancelled.`});
-  }, [toast]);
-
-  const handlePauseDownload = useCallback((itemId: string) => {
-    setDownloadQueue(prevQueue =>
-        prevQueue.map(item =>
-            item.id === itemId && item.status === 'downloading' ?
-            {...item, status: 'paused'} : item
-        )
-    );
-    toast({ title: "Download Paused", description: `Download for item has been paused.`});
-  }, [toast]);
-
-  const handleResumeDownload = useCallback((itemId: string) => {
-    const itemToResume = downloadQueueRef.current.find(item => item.id === itemId);
-
-    if (itemToResume && (itemToResume.status === 'failed' || itemToResume.status === 'cancelled')) {
-        browserDownloadTriggeredRef.current.delete(itemId);
-        const originalFileProps: CloudFile = {
-            id: itemToResume.id,
-            name: itemToResume.name,
-            type: itemToResume.type,
-            size: itemToResume.size,
-            timestamp: itemToResume.timestamp,
-            url: itemToResume.url,
-            dataAiHint: itemToResume.dataAiHint,
-            messageId: itemToResume.messageId,
-            telegramMessage: itemToResume.telegramMessage,
-            totalSizeInBytes: itemToResume.totalSizeInBytes,
-            inputPeer: itemToResume.inputPeer,
-            caption: itemToResume.caption,
-        };
-        setDownloadQueue(prevQ => prevQ.filter(q => q.id !== itemId));
-        setTimeout(() => {
-            handleQueueDownload(originalFileProps);
-        }, 50);
-        toast({ title: "Retrying Download", description: `Retrying download for ${itemToResume.name}.`});
-        return;
-    }
-
-    setDownloadQueue(prevQueue =>
-        prevQueue.map(item =>
-            item.id === itemId && item.status === 'paused' ?
-            {...item, status: 'downloading', error_message: undefined }
-            : item
-        )
-    );
-    toast({ title: "Download Resumed", description: `Download for item has been resumed.`});
-  }, [toast, handleQueueDownload]);
-
-  const fetchVideoAndCreateStreamUrl = useCallback(async (file: CloudFile, signal: AbortSignal) => {
-    toast({ title: "Preparing Video...", description: `Fetching ${file.name} for playback.` });
-    try {
-      const downloadInfo = await telegramService.prepareFileDownloadInfo(file);
-      if (!downloadInfo || !downloadInfo.location || !downloadInfo.totalSize || downloadInfo.totalSize <= 0) {
-        throw new Error("Could not get valid download information for video.");
-      }
-
-      let downloadedBytes = 0;
-      let currentOffset = 0;
-      const chunks: Uint8Array[] = [];
-      const totalSize = downloadInfo.totalSize;
-
-      while (downloadedBytes < totalSize) {
-        if (signal.aborted) throw new Error("Video preparation aborted by user.");
-        const bytesNeededForVideo = totalSize - downloadedBytes;
-        const offsetWithinCurrentMBBlockVideo = currentOffset % ONE_MB;
-        const bytesLeftInCurrentMBBlockVideo = ONE_MB - offsetWithinCurrentMBBlockVideo;
-        let idealBytesToRequestVideo = Math.min(bytesLeftInCurrentMBBlockVideo, DOWNLOAD_CHUNK_SIZE, bytesNeededForVideo);
-        let limitForApiCallVideo: number;
-
-        if (bytesNeededForVideo <= 0) {
-            limitForApiCallVideo = 0;
-        } else if (idealBytesToRequestVideo <= 0) {
-             limitForApiCallVideo = bytesNeededForVideo > 0 ? KB_1 : 0;
-        } else if (idealBytesToRequestVideo < KB_1) {
-            limitForApiCallVideo = KB_1;
-        } else {
-            limitForApiCallVideo = Math.floor(idealBytesToRequestVideo / KB_1) * KB_1;
-        }
-        if (limitForApiCallVideo === 0 && bytesNeededForVideo > 0 && idealBytesToRequestVideo > 0) {
-            limitForApiCallVideo = KB_1;
-        }
-
-        if (limitForApiCallVideo <= 0) break;
-
-        const chunkResponse = await telegramService.downloadFileChunk(downloadInfo.location, currentOffset, limitForApiCallVideo, signal);
-
-        if (signal.aborted) throw new Error("Video preparation aborted during chunk download.");
-
-        if (chunkResponse?.bytes && chunkResponse.bytes.length > 0) {
-          chunks.push(chunkResponse.bytes);
-          downloadedBytes += chunkResponse.bytes.length;
-          currentOffset += chunkResponse.bytes.length;
-        } else if (chunkResponse?.errorType) {
-          throw new Error(`Failed to download video chunk: ${chunkResponse.errorType}`);
-        } else if (chunkResponse?.isCdnRedirect){
-            throw new Error("CDN Redirect not fully handled during video stream preparation. Try regular download.");
-        } else {
-          break;
-        }
-      }
-
-      if (signal.aborted) throw new Error("Video preparation aborted after download loop.");
-      const mimeType = file.telegramMessage?.mime_type || file.telegramMessage?.document?.mime_type || 'video/mp4';
-      const videoBlob = new Blob(chunks, { type: mimeType });
-      const objectURL = URL.createObjectURL(videoBlob);
-
-      setVideoStreamUrl(objectURL);
-      setPlayingVideoUrl(objectURL);
-      toast({ title: "Video Ready", description: `${file.name} is ready for playback.` });
-
-    } catch (error: any) {
-      if (error.message?.includes("aborted")) {
-        toast({ title: "Video Preparation Cancelled", description: `Preparation for ${file.name} was cancelled.`, variant: "default" });
-      } else {
-        toast({ title: "Video Preparation Failed", description: `Could not prepare ${file.name}: ${error.message}`, variant: "destructive" });
-      }
-      setPlayingVideoUrl(null);
-      setIsVideoPlayerOpen(false);
-    }
-  }, [toast]);
-
-  const prepareAndPlayVideoStream = useCallback(async (file: CloudFile) => {
-    if (isPreparingVideoStream && preparingVideoStreamForFileId === file.id) {
-      toast({ title: "Already Preparing", description: `Still preparing ${file.name}. Please wait.`, variant: "default" });
-      setIsVideoPlayerOpen(true);
-      return;
-    }
-
-    if (videoStreamAbortControllerRef.current && !videoStreamAbortControllerRef.current.signal.aborted) {
-      videoStreamAbortControllerRef.current.abort("New video stream preparation requested");
-    }
-    if (videoStreamUrl) {
-      URL.revokeObjectURL(videoStreamUrl);
-      setVideoStreamUrl(null);
-    }
-
-    setPlayingVideoUrl(null);
-    setPlayingVideoName(file.name);
-    setIsPreparingVideoStream(true);
-    setPreparingVideoStreamForFileId(file.id);
-    setIsVideoPlayerOpen(true);
-
-    const newController = new AbortController();
-    videoStreamAbortControllerRef.current = newController;
-
-    try {
-        await fetchVideoAndCreateStreamUrl(file, newController.signal);
-    } catch (error) {
-    } finally {
-        if (videoStreamAbortControllerRef.current === newController) {
-            setIsPreparingVideoStream(false);
-            setPreparingVideoStreamForFileId(null);
-        }
-    }
-  }, [isPreparingVideoStream, preparingVideoStreamForFileId, videoStreamUrl, fetchVideoAndCreateStreamUrl, toast]);
-
-  const handlePlayVideo = useCallback((file: CloudFile) => {
-     if (file.type === 'video') {
-        if (file.url) {
-            setPlayingVideoUrl(file.url);
-            setPlayingVideoName(file.name);
-            setIsPreparingVideoStream(false);
-            setPreparingVideoStreamForFileId(null);
-            setIsVideoPlayerOpen(true);
-        } else if (file.totalSizeInBytes && file.totalSizeInBytes > 0) {
-            prepareAndPlayVideoStream(file);
-        } else {
-            toast({ title: "Playback Not Possible", description: "Video data or size is missing, cannot play.", variant: "default"});
-        }
-    } else {
-      toast({ title: "Not a Video", description: "This file is not a video and cannot be played here.", variant: "default"});
-    }
-  }, [prepareAndPlayVideoStream, toast]);
-
-  const handleStartUpload = async () => {
-    const filesToAttemptUpload = filesToUpload.filter(f => f.uploadStatus === 'pending' || f.uploadStatus === 'failed' || f.uploadStatus === 'cancelled');
-
-    if (filesToAttemptUpload.length === 0) {
-      toast({ title: "No New Files", description: "No new files or files marked for retry to upload.", variant: "default" });
-      return;
-    }
-    if (!selectedFolder || !selectedFolder.inputPeer) {
-      toast({ title: "Upload Target Missing", description: "No target chat selected or inputPeer is missing.", variant: "destructive" });
-      return;
-    }
-
-    setIsUploadingFiles(true);
-
-    for (const fileToUpload of filesToAttemptUpload) {
-      if (fileToUpload.uploadStatus === 'completed' || fileToUpload.uploadStatus === 'uploading' || fileToUpload.uploadStatus === 'processing') {
-          continue;
-      }
-
-      const controller = new AbortController();
-      uploadAbortControllersRef.current.set(fileToUpload.id, controller);
-
-      const updateUiForFile = (fileId: string, progress: number, status: ExtendedFile['uploadStatus']) => {
-        setFilesToUpload(prev =>
-          prev.map(f =>
-            f.id === fileId
-              ? { ...f, uploadProgress: progress, uploadStatus: status }
-              : f
-          )
-        );
-      };
-
-      updateUiForFile(fileToUpload.id, 0, 'uploading');
-
-      let captionForUpload: string | undefined = undefined;
-      if (selectedFolder.isAppManagedCloud) {
-        captionForUpload = JSON.stringify({ path: normalizePath(currentVirtualPath) });
-      }
-
-      try {
-        toast({ title: `Starting Upload: ${fileToUpload.name}`, description: `Size: ${telegramService.formatFileSize(fileToUpload.size)}` });
-        await telegramService.uploadFile(
-          selectedFolder.inputPeer,
-          fileToUpload.originalFile,
-          (percent) => {
-            const currentStatus = percent === 100 ? 'processing' : 'uploading';
-            updateUiForFile(fileToUpload.id, percent, currentStatus);
-          },
-          controller.signal,
-          captionForUpload
-        );
-        updateUiForFile(fileToUpload.id, 100, 'completed');
-        toast({ title: "Upload Successful!", description: `${fileToUpload.name} uploaded to ${selectedFolder.name}.` });
-
-        if (selectedFolder && selectedFolder.id === selectedFolder?.id) { 
-           fetchInitialChatMedia(selectedFolder); 
-        }
-      } catch (error: any) {
-        if (controller.signal.aborted || error.name === 'AbortError' || error.message?.includes('aborted')) {
-          updateUiForFile(fileToUpload.id, fileToUpload.uploadProgress || 0, 'cancelled');
-          toast({ title: "Upload Cancelled", description: `${fileToUpload.name} upload was cancelled.`, variant: "default" });
-        } else {
-          updateUiForFile(fileToUpload.id, fileToUpload.uploadProgress || 0, 'failed');
-          toast({ title: "Upload Failed", description: `Could not upload ${fileToUpload.name}: ${error.message}`, variant: "destructive" });
-        }
-      } finally {
-        uploadAbortControllersRef.current.delete(fileToUpload.id);
-      }
-    }
-    setIsUploadingFiles(false);
-  };
-
-  const handleCreateCloudChannel = async (name: string, type: CloudChannelType) => {
-    setIsCreatingCloudChannel(true);
-    try {
-        const result = await telegramService.createManagedCloudChannel(name, type);
-        if (result && result.channelInfo && result.initialConfig) {
-            toast({
-                title: "Cloud Storage Created!",
-                description: `Channel "${result.channelInfo.title}" (ID: ${result.channelInfo.id}) created and configured.`,
-            });
-            setIsCreateCloudChannelDialogOpen(false);
-
-            const newCloudFolder: CloudFolder = {
-                id: `channel-${result.channelInfo.id}`,
-                name: result.channelInfo.title,
-                isChatFolder: false,
-                inputPeer: {
-                    _: 'inputPeerChannel',
-                    channel_id: result.channelInfo.id,
-                    access_hash: result.channelInfo.access_hash,
-                },
-                files: [],
-                folders: [],
-                isAppManagedCloud: true,
-                cloudConfig: result.initialConfig,
-            };
-
-            setAppManagedCloudFolders(prevFolders => {
-                const exists = prevFolders.some(f => f.id === newCloudFolder.id);
-                if (exists) return prevFolders.map(f => f.id === newCloudFolder.id ? newCloudFolder : f).sort((a,b) => a.name.localeCompare(b.name));
-                return [...prevFolders, newCloudFolder].sort((a,b) => a.name.localeCompare(b.name));
-            });
-
-            await fetchAppManagedCloudChannels(true);
-            await fetchDialogFilters(true);
-
-        } else {
-            throw new Error("Channel creation did not return expected info including config.");
-        }
-    } catch (error: any) {
-        handleApiError(error, "Error Creating Cloud Storage", `Could not create new cloud storage: ${error.message}`);
-    } finally {
-        setIsCreatingCloudChannel(false);
-    }
-  };
-
-  const handleCreateVirtualFolder = async (newFolderName: string, structureToPaste?: { [name: string]: CloudChannelConfigEntry }) => {
-    if (!selectedFolder || !selectedFolder.isAppManagedCloud || !selectedFolder.inputPeer) {
-      toast({ title: "Error", description: "No cloud channel selected or inputPeer missing.", variant: "destructive" });
-      return;
-    }
-    setIsProcessingVirtualFolder(true);
-    try {
-      const updatedConfig = await telegramService.addVirtualFolderToCloudChannel(
-        selectedFolder.inputPeer,
-        virtualFolderParentPath,
-        newFolderName,
-        structureToPaste
-      );
-
-      if (updatedConfig) {
-        setSelectedFolder(prev => prev ? { ...prev, cloudConfig: updatedConfig } : null);
-        setAppManagedCloudFolders(prevList =>
-          prevList.map(cf =>
-            cf.id === selectedFolder.id ? { ...cf, cloudConfig: updatedConfig } : cf
-          )
-        );
-        toast({ title: "Virtual Folder Created", description: `Folder "${newFolderName}" created in ${selectedFolder.name} at ${virtualFolderParentPath}.` });
-      } else {
-        toast({ title: "Creation Failed", description: "Could not create virtual folder. Config message might not have updated. Check Telegram.", variant: "destructive" });
-      }
-    } catch (error: any) {
-      toast({ title: "Error Creating Folder", description: error.message || "An unknown error occurred.", variant: "destructive" });
-    } finally {
-      setIsProcessingVirtualFolder(false);
-      setIsCreateVirtualFolderDialogOpen(false);
-    }
-  };
-
-  const confirmDeleteItem = async () => {
-    if (!itemToDelete) return;
-    setIsProcessingDeletion(true);
-
-    try {
-      if (itemToDelete.type === 'file') {
-        const { file, parentInputPeer } = itemToDelete;
-        if (!parentInputPeer) throw new Error("InputPeer missing for file deletion.");
-        const success = await telegramService.deleteTelegramMessages(parentInputPeer, [file.messageId]);
-        if (success) {
-          toast({ title: "File Deleted", description: `File "${file.name}" has been deleted.` });
-          setCurrentChatMedia(prev => prev.filter(f => f.id !== file.id));
-        } else {
-          throw new Error("Telegram service failed to delete the message.");
-        }
-      } else if (itemToDelete.type === 'virtualFolder') {
-        const { path, name, parentInputPeer } = itemToDelete;
-        if (!parentInputPeer) throw new Error("InputPeer missing for virtual folder deletion.");
-
-        const updatedConfig = await telegramService.removeVirtualFolderFromCloudChannel(parentInputPeer, path);
-        if (updatedConfig) {
-          toast({ title: "Virtual Folder Deleted", description: `Folder "${name}" has been removed from the virtual structure.` });
-          setSelectedFolder(prev => prev ? { ...prev, cloudConfig: updatedConfig } : null);
-          setAppManagedCloudFolders(prevList =>
-            prevList.map(cf =>
-              cf.id === selectedFolder?.id ? { ...cf, cloudConfig: updatedConfig } : cf
-            )
-          );
-        } else {
-          throw new Error("Failed to update cloud configuration after deleting virtual folder.");
-        }
-      }
-    } catch (error: any) {
-      handleApiError(error, `Error Deleting ${itemToDelete.type === 'file' ? 'File' : 'Virtual Folder'}`, error.message || "Could not complete deletion.");
-    } finally {
-      setIsProcessingDeletion(false);
-      setIsDeleteItemDialogOpen(false);
-      setItemToDelete(null);
-    }
-  };
-
-  const handleCopyFile = (file: CloudFile) => {
-    if (!selectedFolder || !selectedFolder.inputPeer) {
-      toast({ title: "Error", description: "Cannot copy: Selected folder or its peer is invalid.", variant: "destructive"});
-      return;
-    }
-    const currentFileVfsPath = parseVfsPathFromCaption(file.caption);
-    setClipboardItem({
-      type: 'file',
-      file: { ...file },
-      originalPath: currentFileVfsPath || currentVirtualPath, // Prefer specific path, fallback to current
-      parentInputPeer: selectedFolder.inputPeer
-    });
-    toast({ title: "File Copied", description: `"${file.name}" copied to clipboard.` });
-  };
-
-  const handleCopyFolderStructure = (folderName: string, folderConfig: CloudChannelConfigEntry) => {
-     if (!selectedFolder || !selectedFolder.isAppManagedCloud || !selectedFolder.inputPeer) {
-      toast({ title: "Error", description: "Cannot copy: Not in a cloud channel or peer is invalid.", variant: "destructive"});
-      return;
-    }
-    setClipboardItem({
-      type: 'folder',
-      folderName,
-      folderConfig: JSON.parse(JSON.stringify(folderConfig)), // Deep copy
-      originalPath: normalizePath(currentVirtualPath + folderName),
-      parentInputPeer: selectedFolder.inputPeer
-    });
-    toast({ title: "Folder Structure Copied", description: `Structure for "${folderName}" copied to clipboard.` });
-  };
-
-  const handlePasteItem = async (targetPath: string) => {
-    if (!clipboardItem) {
-      toast({ title: "Clipboard Empty", description: "Nothing to paste.", variant: "default" });
-      return;
-    }
-    if (!selectedFolder || !selectedFolder.inputPeer || !selectedFolder.isAppManagedCloud) {
-      toast({ title: "Paste Error", description: "Pasting is only supported within cloud channels.", variant: "destructive" });
-      return;
-    }
-
-    setIsProcessingVirtualFolder(true); // Re-use this loading state for now
-    const targetInputPeer = selectedFolder.inputPeer;
-
-    try {
-      if (clipboardItem.type === 'file') {
-        const { file, originalPath } = clipboardItem;
-        if (normalizePath(originalPath || '') === normalizePath(targetPath)) {
-          toast({ title: "Paste Skipped", description: "File is already in this location.", variant: "default" });
-          return;
-        }
-        
-        const newCaption = JSON.stringify({ path: normalizePath(targetPath) });
-        const success = await telegramService.editMessageCaption(
-          targetInputPeer,
-          file.messageId,
-          newCaption
-        );
-
-        if (success) {
-          toast({ title: "File Moved", description: `"${file.name}" moved to ${targetPath}.` });
-          setClipboardItem(null); // Clear clipboard after successful paste
-          // Refresh current view and potentially original folder view if it was different
-          fetchInitialChatMedia(selectedFolder);
-          // Consider more targeted refresh if performance becomes an issue
-        } else {
-          toast({ title: "Move Failed", description: "Could not update file caption.", variant: "destructive" });
-        }
-      } else if (clipboardItem.type === 'folder') {
-        const { folderName, folderConfig } = clipboardItem;
-        // Use handleCreateVirtualFolder which now supports pasting structure
-        // Ensure virtualFolderParentPath is set correctly for handleCreateVirtualFolder
-        setVirtualFolderParentPath(normalizePath(targetPath));
-        // Let handleCreateVirtualFolder handle its own loading state and dialog closing
-        setIsProcessingVirtualFolder(false); // Release general loading state
-        await handleCreateVirtualFolder(folderName, folderConfig.entries); // Pass entries for pasting
-        setClipboardItem(null); // Clear clipboard after successful paste
-      }
-    } catch (error: any) {
-      toast({ title: "Paste Error", description: error.message || "An unknown error occurred.", variant: "destructive" });
-    } finally {
-      setIsProcessingVirtualFolder(false);
-    }
-  };
-
-
-  const peerToKey = useCallback((peer: any): string | null => {
-    if (!peer) return null;
-    if (peer._ === 'inputPeerUser') return `user:${String(peer.user_id)}`;
-    if (peer._ === 'inputPeerChat') return `chat:${String(peer.chat_id)}`;
-    if (peer._ === 'inputPeerChannel') return `channel:${String(peer.channel_id)}`;
-    return null;
-  }, []);
-
-  const handleSelectFolder = (folderId: string) => {
-    const folder = displayedChats.find(f => f.id === folderId);
-    if (folder) {
-      setSelectedFolder(folder);
-      setCurrentVirtualPath("/");
-      fetchInitialChatMedia(folder);
-      setIsChatSelectionDialogOpen(false);
-      setClipboardItem(null);
-    } else {
-      setSelectedFolder(null);
-      setCurrentChatMedia([]);
-    }
-  };
-
-  const handleSelectCloudChannel = (channelId: string) => {
-    const channel = appManagedCloudFolders.find(c => c.id === channelId);
-    if (channel) {
-      setSelectedFolder(channel);
-      setCurrentVirtualPath("/");
-      fetchInitialChatMedia(channel);
-      setIsCloudStorageSelectorOpen(false);
-      setClipboardItem(null);
-    } else {
-      setSelectedFolder(null);
-      setCurrentChatMedia([]);
-    }
-  };
-
-  const handleOpenFileDetails = useCallback((file: CloudFile) => {
-    setSelectedFileForDetails(file);
-    setIsDetailsPanelOpen(true);
-  }, []);
-
-  const handleCloseFileDetails = () => {
-    setIsDetailsPanelOpen(false);
-    setTimeout(() => setSelectedFileForDetails(null), 300);
-  };
-
-  const handleViewImage = useCallback((file: CloudFile) => {
-    if (file.type === 'image' && file.url) {
-      setViewingImageUrl(file.url);
-      setViewingImageName(file.name);
-      setIsImageViewerOpen(true);
-    } else if (file.type === 'image' && !file.url) {
-      toast({ title: "Preview Not Available", description: "Image URL not available for preview. Try downloading first.", variant: "default"});
-    } else if (file.type !== 'image') {
-      toast({ title: "Not an Image", description: "This file is not an image and cannot be viewed here.", variant: "default"});
-    }
-  }, [toast]);
-
-  const handleCloseVideoPlayer = useCallback(() => {
-    setIsVideoPlayerOpen(false);
-    if (isPreparingVideoStream && videoStreamAbortControllerRef.current && !videoStreamAbortControllerRef.current.signal.aborted) {
-        videoStreamAbortControllerRef.current.abort("Video player closed during preparation");
-    }
-    setIsPreparingVideoStream(false);
-    setPreparingVideoStreamForFileId(null);
-
-    if (videoStreamUrl) {
-        URL.revokeObjectURL(videoStreamUrl);
-        setVideoStreamUrl(null);
-    }
-    setPlayingVideoUrl(null);
-  }, [isPreparingVideoStream, videoStreamUrl]);
-
-  const handleOpenDownloadManager = () => setIsDownloadManagerOpen(true);
-  const handleCloseDownloadManager = () => setIsDownloadManagerOpen(false);
-
-  const handleOpenChatSelectionDialog = () => setIsChatSelectionDialogOpen(true);
-  const handleOpenCloudStorageSelector = () => {
-    setIsCloudStorageSelectorOpen(true);
-  };
-
-  const handleOpenUploadDialog = () => {
-    if (!selectedFolder) {
-      toast({ title: "No Chat Selected", description: "Please select a chat first to upload files to.", variant: "default" });
-      return;
-    }
-    setIsUploadDialogOpen(true);
-  };
-
-  const handleCloseUploadDialog = () => {
-     if (isUploadingFiles) {
-      toast({ title: "Upload in Progress", description: "Please wait for uploads to complete or cancel them before closing.", variant: "default" });
-      return;
-    }
-    setIsUploadDialogOpen(false);
-    setFilesToUpload([]);
-    uploadAbortControllersRef.current.forEach((controller, id) => {
-      if (!controller.signal.aborted) {
-        controller.abort("Upload dialog closed by user");
-      }
-    });
-    uploadAbortControllersRef.current.clear();
-  };
-
-  const handleFilesSelectedForUpload = (selectedNativeFiles: FileList | null) => {
-    if (selectedNativeFiles) {
-      const newExtendedFiles: ExtendedFile[] = Array.from(selectedNativeFiles).map((file, index) => ({
-        id: `${file.name}-${file.lastModified}-${Date.now()}-${index}`,
-        originalFile: file,
-        name: file.name,
-        size: file.size,
-        type: file.type,
-        lastModified: file.lastModified,
-        uploadProgress: 0,
-        uploadStatus: 'pending',
-      }));
-      setFilesToUpload(prevFiles => [...prevFiles, ...newExtendedFiles]);
-      if(newExtendedFiles.length > 0) {
-        toast({ title: "Files Ready", description: `${newExtendedFiles.length} file(s) added to upload list.`});
-      }
-    }
-  };
-
-  const handleSelectDialogFilter = (filterId: number) => {
-    if (activeDialogFilterId === filterId && !isReorderingFolders) return;
-    setActiveDialogFilterId(filterId);
-  };
-
-  const handleToggleReorderFolders = async () => {
-    if (isReorderingFolders) {
-      const newOrder = dialogFilters
-        .filter(f => f.id !== ALL_CHATS_FILTER_ID)
-        .map(f => f.id);
-
-      try {
-        await telegramService.updateDialogFiltersOrder(newOrder);
-        toast({ title: "Folder Order Saved", description: "The new folder order has been saved to Telegram." });
-      } catch (error: any) {
-        handleApiError(error, "Error Saving Order", "Could not save the folder order.");
-        setHasFetchedDialogFiltersOnce(false); 
-        await fetchDialogFilters();
-      }
-    }
-    setIsReorderingFolders(prev => !prev);
-  };
-
-  const handleMoveFilter = (dragIndex: number, hoverIndex: number) => {
-    const draggedFilter = dialogFilters[dragIndex];
-    if (draggedFilter.id === ALL_CHATS_FILTER_ID ||
-        (dialogFilters[hoverIndex] && dialogFilters[hoverIndex].id === ALL_CHATS_FILTER_ID)) {
-        return;
-    }
-
-    setDialogFilters(prevFilters => {
-      const updatedFilters = [...prevFilters];
-      const [movedItem] = updatedFilters.splice(dragIndex, 1);
-      updatedFilters.splice(hoverIndex, 0, movedItem);
-      return updatedFilters;
-    });
-  };
-
-  const handleShareFilter = async (filterId: number) => {
-    if (filterId === ALL_CHATS_FILTER_ID) {
-      toast({ title: "Cannot Share", description: "This view cannot be shared." });
-      return;
-    }
-    setDialogFilters(prev => prev.map(f => f.id === filterId ? { ...f, isLoading: true, inviteLink: undefined } : f));
-    try {
-      const result = await telegramService.exportChatlistInvite(filterId);
-      if (result && result.link) {
-        setDialogFilters(prev => prev.map(f => f.id === filterId ? { ...f, isLoading: false, inviteLink: result.link } : f));
-        toast({
-          title: "Folder Invite Link Created",
-          description: `Link: ${result.link} (Copied to console)`,
-        });
-      } else {
-        throw new Error("No link returned from server.");
-      }
-    } catch (error: any) {
-      handleApiError(error, "Error Sharing Folder", "Could not create an invite link for this folder.");
-      setDialogFilters(prev => prev.map(f => f.id === filterId ? { ...f, isLoading: false } : f));
-    }
-  };
-
-  const handleOpenCreateCloudChannelDialog = () => {
-    setIsCreateCloudChannelDialogOpen(true);
-  };
-
-  const handleRefreshCurrentFilter = () => {
-    if (activeFilterDetails) {
-        toast({ title: `Refreshing "${activeFilterDetails.title}"...`});
-
-        const cacheKeyToReset = activeFilterDetails.id;
-        const filterType = activeFilterDetails._;
-
-        if (filterType === 'dialogFilterDefault') {
-            setChatDataCache(prev => new Map(prev).set(ALL_CHATS_FILTER_ID, { folders: [], pagination: initialPaginationState, isLoading: false, error: null}));
-            setMasterChatListForFiltering([]);
-            setMasterChatListPaginationForFiltering(initialPaginationState);
-        } else if (filterType === 'dialogFilter' || filterType === 'dialogFilterChatlist') {
-            if (chatDataCache.has(cacheKeyToReset)) {
-                 setChatDataCache(prev => new Map(prev).set(cacheKeyToReset, { folders: [], pagination: initialPaginationState, isLoading: false, error: null}));
-            }
-            if (filterType === 'dialogFilterChatlist' || (filterType === 'dialogFilter' && chatDataCache.get(cacheKeyToReset)?.error === 'FOLDER_ID_INVALID_FALLBACK')) {
-                 setChatDataCache(prev => new Map(prev).set(ALL_CHATS_FILTER_ID, { folders: [], pagination: initialPaginationState, isLoading: false, error: null}));
-                 setMasterChatListForFiltering([]);
-                 setMasterChatListPaginationForFiltering(initialPaginationState);
-            }
-        }
-        setLastFetchedFilterId(null); 
-    }
-  };
-
-  const handleRefreshCloudStorage = () => {
-    toast({ title: "Refreshing Cloud Storage List..."});
-    fetchAppManagedCloudChannels(true);
-  };
-
-  const handleOpenCreateVirtualFolderDialog = (path: string) => {
-    setVirtualFolderParentPath(path || "/");
-    setIsCreateVirtualFolderDialogOpen(true);
-  };
-
-  const handleNavigateVirtualPath = (path: string) => {
-    setCurrentVirtualPath(normalizePath(path));
-  };
-
-  const handleDeleteFile = (file: CloudFile) => {
-    if (!file.inputPeer && (!selectedFolder || !selectedFolder.inputPeer)) {
-        toast({ title: "Error", description: "Cannot delete file: InputPeer is missing.", variant: "destructive" });
-        return;
-    }
-    const parentInputPeer = file.inputPeer || selectedFolder?.inputPeer;
-    if(!parentInputPeer) {
-      toast({ title: "Error", description: "Critical: Parent InputPeer for file deletion could not be determined.", variant: "destructive" });
-      return;
-    }
-    setItemToDelete({ type: 'file', file, parentInputPeer });
-    setIsDeleteItemDialogOpen(true);
-  };
-
-  const handleDeleteVirtualFolder = (folderPath: string, folderName: string, parentInputPeer?: InputPeer | null) => {
-     const actualParentInputPeer = parentInputPeer || selectedFolder?.inputPeer;
-     if (!actualParentInputPeer) {
-        toast({ title: "Error", description: "Cannot delete virtual folder: Parent InputPeer is missing.", variant: "destructive" });
-        return;
-    }
-    setItemToDelete({ type: 'virtualFolder', path: folderPath, name: folderName, parentInputPeer: actualParentInputPeer });
-    setIsDeleteItemDialogOpen(true);
-  };
-
-  const fetchDataForActiveFilter = useCallback((isLoadingMore: boolean) => {
-    if (!isConnected || !activeFilterDetails) {
-       return;
-    }
-
-    const currentFilterId = activeFilterDetails.id;
-    const filterType = activeFilterDetails._;
-
-    if (filterType === 'dialogFilterDefault') {
-      fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, isLoadingMore);
-    } else if (filterType === 'dialogFilter') {
-      fetchAndCacheDialogs(currentFilterId, isLoadingMore, currentFilterId);
-    } else if (filterType === 'dialogFilterChatlist') {
-      fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, isLoadingMore);
-    }
-  }, [isConnected, activeFilterDetails, fetchAndCacheDialogs]);
-
-  const loadMoreDisplayedChats = useCallback(async () => {
-    if (!activeFilterDetails || isLoadingDisplayedChats) return;
-
-    const filterType = activeFilterDetails._;
-    const currentFilterId = activeFilterDetails.id;
-    const cachedEntry = chatDataCache.get(currentFilterId);
-    const masterCacheEntry = chatDataCache.get(ALL_CHATS_FILTER_ID);
-
-    if (filterType === 'dialogFilterDefault') {
-        if (masterCacheEntry?.pagination.hasMore && !masterCacheEntry.isLoading) {
-            fetchDataForActiveFilter(true);
-        }
-    } else if (filterType === 'dialogFilter') {
-      if (cachedEntry?.error === 'FOLDER_ID_INVALID_FALLBACK') {
-        if (masterCacheEntry?.pagination.hasMore && !masterCacheEntry.isLoading) {
-          fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, true); 
-        }
-      } else if (cachedEntry?.pagination.hasMore && !cachedEntry.isLoading) {
-        fetchDataForActiveFilter(true); 
-      }
-    } else if (filterType === 'dialogFilterChatlist') {
-      if (masterCacheEntry?.pagination.hasMore && !masterCacheEntry.isLoading) {
-        fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, true); 
-      }
-    }
-  }, [activeFilterDetails, isLoadingDisplayedChats, chatDataCache, fetchDataForActiveFilter, fetchAndCacheDialogs]);
-
-
-  // useEffect hooks
+  // Initial connection check
   useEffect(() => {
-    downloadQueueRef.current = downloadQueue;
-  }, [downloadQueue]);
-
-  useEffect(() => {
-    checkExistingConnection();
+    connectionManager.checkExistingConnection();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); 
+  }, []); // Runs once on mount
 
+  // Effect to update activeFilterDetails when activeDialogFilterId or dialogFilters change
   useEffect(() => {
-    if (isLoadingDialogFilters) {
-        return;
-    }
-
-    let newFilter: DialogFilter | null = dialogFilters.find(f => f.id === activeDialogFilterId) || null;
-
-    if (!newFilter && dialogFilters.length > 0) {
-        newFilter = dialogFilters.find(f => f.id === ALL_CHATS_FILTER_ID) || dialogFilters[0];
-        if (newFilter && newFilter.id !== activeDialogFilterId) {
-          setActiveDialogFilterId(newFilter.id);
+    if (dialogFiltersManager.isLoadingDialogFilters) return;
+    let newFilter: DialogFilter | null = dialogFiltersManager.dialogFilters.find(f => f.id === dialogFiltersManager.activeDialogFilterId) || null;
+    if (!newFilter && dialogFiltersManager.dialogFilters.length > 0) {
+        newFilter = dialogFiltersManager.dialogFilters.find(f => f.id === telegramService.ALL_CHATS_FILTER_ID) || dialogFiltersManager.dialogFilters[0];
+        if (newFilter && newFilter.id !== dialogFiltersManager.activeDialogFilterId) {
+          dialogFiltersManager.setActiveDialogFilterId(newFilter.id); // This will trigger another run
           return;
         }
-    } else if (!newFilter && dialogFilters.length === 0) {
-        newFilter = defaultAllChatsFilter;
-        if (activeDialogFilterId !== ALL_CHATS_FILTER_ID) {
-            setActiveDialogFilterId(ALL_CHATS_FILTER_ID);
+    } else if (!newFilter && dialogFiltersManager.dialogFilters.length === 0) {
+        newFilter = dialogFiltersManager.defaultAllChatsFilter;
+        if (dialogFiltersManager.activeDialogFilterId !== telegramService.ALL_CHATS_FILTER_ID) {
+            dialogFiltersManager.setActiveDialogFilterId(telegramService.ALL_CHATS_FILTER_ID); // This will trigger another run
             return;
         }
     }
-
-    if (activeFilterDetails?.id !== newFilter?.id ||
-        activeFilterDetails?._ !== newFilter?._ ||
-        activeFilterDetails?.title !== newFilter?.title
+    if (dialogFiltersManager.activeFilterDetails?.id !== newFilter?.id ||
+        dialogFiltersManager.activeFilterDetails?._ !== newFilter?._ ||
+        dialogFiltersManager.activeFilterDetails?.title !== newFilter?.title
       ) {
-        setActiveFilterDetails(newFilter);
+        dialogFiltersManager.setActiveFilterDetails(newFilter);
     }
-  }, [activeDialogFilterId, dialogFilters, isLoadingDialogFilters, activeFilterDetails]);
+  }, [dialogFiltersManager.activeDialogFilterId, dialogFiltersManager.dialogFilters, dialogFiltersManager.isLoadingDialogFilters, dialogFiltersManager.activeFilterDetails, dialogFiltersManager.setActiveDialogFilterId, dialogFiltersManager.setActiveFilterDetails, dialogFiltersManager.defaultAllChatsFilter]);
 
-  useEffect(() => {
-    if (!isConnected || !activeFilterDetails || isLoadingDialogFilters) {
-      return;
-    }
-
-    const filterIdToFetch = activeFilterDetails.id;
-    const isNewFilter = lastFetchedFilterId !== filterIdToFetch;
-    if (isNewFilter) setCurrentErrorMessage(null);
-
-    const filterType = activeFilterDetails._;
-    let isCurrentFilterListEmptyAndNeedsLoad = false;
-
-    const cachedEntryForCurrent = chatDataCache.get(filterIdToFetch);
-    const cachedEntryForAllChats = chatDataCache.get(ALL_CHATS_FILTER_ID);
-
-    if (filterType === 'dialogFilterDefault') {
-        isCurrentFilterListEmptyAndNeedsLoad = (!cachedEntryForAllChats || cachedEntryForAllChats.folders.length === 0) &&
-                                             (!cachedEntryForAllChats || cachedEntryForAllChats.pagination.hasMore) &&
-                                             !cachedEntryForAllChats?.isLoading;
-    } else if (filterType === 'dialogFilterChatlist' || (filterType === 'dialogFilter' && cachedEntryForCurrent?.error === 'FOLDER_ID_INVALID_FALLBACK')) {
-        isCurrentFilterListEmptyAndNeedsLoad = (!cachedEntryForAllChats || cachedEntryForAllChats.folders.length === 0) &&
-                                             masterChatListPaginationForFiltering.hasMore &&
-                                             !cachedEntryForAllChats?.isLoading;
-    } else if (filterType === 'dialogFilter') {
-         isCurrentFilterListEmptyAndNeedsLoad = (!cachedEntryForCurrent || cachedEntryForCurrent.folders.length === 0) &&
-                                             (!cachedEntryForCurrent || cachedEntryForCurrent.pagination.hasMore) &&
-                                             !cachedEntryForCurrent?.isLoading;
-    }
-
-    if (isNewFilter || isCurrentFilterListEmptyAndNeedsLoad) {
-        if (isNewFilter) {
-            setDisplayedChats([]);
-            setSelectedFolder(null);
-            setCurrentChatMedia([]);
-            setCurrentVirtualPath("/");
-            setClipboardItem(null);
+  // Combined Reset for full disconnect or manual reset, ensuring cleanup from all hooks
+   const performFullReset = useCallback(async (performServerLogout = true) => {
+        // Abort video stream if active
+        if (mediaPreviewManager.videoStreamAbortControllerRef.current && !mediaPreviewManager.videoStreamAbortControllerRef.current.signal.aborted) {
+            mediaPreviewManager.videoStreamAbortControllerRef.current.abort("User reset application state");
         }
-        setLastFetchedFilterId(filterIdToFetch);
-        fetchDataForActiveFilter(false);
-    }
-  }, [
-      isConnected, activeFilterDetails, isLoadingDialogFilters, lastFetchedFilterId,
-      chatDataCache, masterChatListPaginationForFiltering.hasMore, fetchDataForActiveFilter
-  ]);
-
-  useEffect(() => {
-    if (!isConnected || !activeFilterDetails) {
-      setIsLoadingDisplayedChats(isConnecting || isLoadingDialogFilters);
-      setDisplayedChats([]);
-      return;
-    }
-
-    const currentFilterId = activeFilterDetails.id;
-    const filterType = activeFilterDetails._;
-    const cachedEntryForCurrentFilter = chatDataCache.get(currentFilterId);
-    const cachedEntryForAllChats = chatDataCache.get(ALL_CHATS_FILTER_ID);
-
-    if(lastFetchedFilterId !== currentFilterId && currentFilterId !== undefined) setCurrentErrorMessage(null);
-
-    if (filterType === 'dialogFilterDefault') {
-      if (cachedEntryForAllChats) {
-        setDisplayedChats(cachedEntryForAllChats.folders);
-        setHasMoreDisplayedChats(cachedEntryForAllChats.pagination.hasMore);
-        if (cachedEntryForAllChats.error && cachedEntryForAllChats.error !== 'FOLDER_ID_INVALID_FALLBACK') setCurrentErrorMessage(`Error for "All Chats": ${cachedEntryForAllChats.error}`);
-        setIsLoadingDisplayedChats(cachedEntryForAllChats.isLoading);
-      } else {
-        setDisplayedChats([]);
-        setHasMoreDisplayedChats(initialPaginationState.hasMore);
-        setIsLoadingDisplayedChats(true);
-      }
-    } else if (filterType === 'dialogFilter') {
-      if (cachedEntryForCurrentFilter?.error === 'FOLDER_ID_INVALID_FALLBACK') {
-        setCurrentErrorMessage(`"${activeFilterDetails.title}" couldn't be loaded directly. Showing matching chats from 'All Chats'. Some older chats might not appear until 'All Chats' is loaded further.`);
-
-        const masterCacheIsEmptyOrStale = !cachedEntryForAllChats || (cachedEntryForAllChats.folders.length === 0 && cachedEntryForAllChats.pagination.hasMore);
-        const masterCacheIsNotLoading = !cachedEntryForAllChats?.isLoading;
-
-        if (masterCacheIsEmptyOrStale && masterCacheIsNotLoading) {
-          fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, false);
-          setIsLoadingDisplayedChats(true);
-          setDisplayedChats([]);
-          return;
+        if (mediaPreviewManager.videoStreamUrlInternal) {
+            URL.revokeObjectURL(mediaPreviewManager.videoStreamUrlInternal);
         }
-
-        if (cachedEntryForAllChats) {
-            const includePeerKeys = new Set((activeFilterDetails.include_peers || []).map(peerToKey).filter(Boolean) as string[]);
-            const pinnedPeerKeys = new Set((activeFilterDetails.pinned_peers || []).map(peerToKey).filter(Boolean) as string[]);
-
-            const filtered = (cachedEntryForAllChats.folders || []).filter(chat => {
-                const chatKey = peerToKey(chat.inputPeer);
-                return chatKey && (includePeerKeys.has(chatKey) || pinnedPeerKeys.has(chatKey));
-            });
-            const pinned = filtered.filter(chat => { const key = peerToKey(chat.inputPeer); return key && pinnedPeerKeys.has(key); })
-                                 .sort((a,b) => (activeFilterDetails.pinned_peers?.findIndex(p => peerToKey(p) === peerToKey(a.inputPeer)) ?? 0) -
-                                                 (activeFilterDetails.pinned_peers?.findIndex(p => peerToKey(p) === peerToKey(b.inputPeer)) ?? 0));
-            const nonPinned = filtered.filter(chat => { const key = peerToKey(chat.inputPeer); return key && includePeerKeys.has(key) && !pinnedPeerKeys.has(key); });
-            setDisplayedChats([...pinned, ...nonPinned]);
-            setHasMoreDisplayedChats(cachedEntryForAllChats.pagination.hasMore);
-            setIsLoadingDisplayedChats(cachedEntryForAllChats.isLoading);
-        } else {
-            setDisplayedChats([]);
-            setHasMoreDisplayedChats(initialPaginationState.hasMore);
-            setIsLoadingDisplayedChats(true);
-        }
-      } else if (cachedEntryForCurrentFilter) {
-        setDisplayedChats(cachedEntryForCurrentFilter.folders);
-        setHasMoreDisplayedChats(cachedEntryForCurrentFilter.pagination.hasMore);
-        if (cachedEntryForCurrentFilter.error && cachedEntryForCurrentFilter.error !== 'FOLDER_ID_INVALID_FALLBACK') setCurrentErrorMessage(`Error for "${activeFilterDetails.title}": ${cachedEntryForCurrentFilter.error}`);
-        setIsLoadingDisplayedChats(cachedEntryForCurrentFilter.isLoading);
-      } else {
-         setDisplayedChats([]);
-         setHasMoreDisplayedChats(initialPaginationState.hasMore);
-         setIsLoadingDisplayedChats(true);
-      }
-    } else if (filterType === 'dialogFilterChatlist') {
-        setCurrentErrorMessage(null);
-        const masterCacheIsEmptyOrStale = !cachedEntryForAllChats || (cachedEntryForAllChats.folders.length === 0 && cachedEntryForAllChats.pagination.hasMore);
-        const masterCacheIsNotLoading = !cachedEntryForAllChats?.isLoading;
-
-        if (masterCacheIsEmptyOrStale && masterCacheIsNotLoading) {
-          fetchAndCacheDialogs(ALL_CHATS_FILTER_ID, false);
-          setIsLoadingDisplayedChats(true);
-          setDisplayedChats([]);
-          return;
-        }
-
-      if (cachedEntryForAllChats) {
-          const includePeerKeys = new Set((activeFilterDetails.include_peers || []).map(peerToKey).filter(Boolean) as string[]);
-          const pinnedPeerKeys = new Set((activeFilterDetails.pinned_peers || []).map(peerToKey).filter(Boolean) as string[]);
-          const filtered = (cachedEntryForAllChats.folders || []).filter(chat => {
-              const chatKey = peerToKey(chat.inputPeer);
-              return chatKey && (includePeerKeys.has(chatKey) || pinnedPeerKeys.has(chatKey));
-          });
-          const pinned = filtered.filter(chat => { const key = peerToKey(chat.inputPeer); return key && pinnedPeerKeys.has(key); })
-                               .sort((a,b) => (activeFilterDetails.pinned_peers?.findIndex(p => peerToKey(p) === peerToKey(a.inputPeer)) ?? 0) -
-                                               (activeFilterDetails.pinned_peers?.findIndex(p => peerToKey(p) === peerToKey(b.inputPeer)) ?? 0));
-          const nonPinned = filtered.filter(chat => { const key = peerToKey(chat.inputPeer); return key && includePeerKeys.has(key) && !pinnedPeerKeys.has(key); });
-          setDisplayedChats([...pinned, ...nonPinned]);
-          setHasMoreDisplayedChats(cachedEntryForAllChats.pagination.hasMore);
-          setIsLoadingDisplayedChats(cachedEntryForAllChats.isLoading);
-      } else {
-          setDisplayedChats([]);
-          setHasMoreDisplayedChats(initialPaginationState.hasMore);
-          setIsLoadingDisplayedChats(true);
-      }
-    }
-  }, [
-      isConnected, activeFilterDetails, chatDataCache, peerToKey, isConnecting, isLoadingDialogFilters, lastFetchedFilterId, fetchAndCacheDialogs
-  ]);
-
-  useEffect(() => {
-    const processQueue = async () => {
-      for (let i = 0; i < downloadQueueRef.current.length; i++) {
-        const itemInLoop = downloadQueueRef.current[i];
-        if (!itemInLoop) continue;
-
-        const currentItemFromState = downloadQueueRef.current.find(q => q.id === itemInLoop.id);
-
-        if (!currentItemFromState) {
-            if(activeDownloadsRef.current.has(itemInLoop.id)) {
-                activeDownloadsRef.current.delete(itemInLoop.id);
-            }
-            continue;
-        }
-        const upToDateItem = currentItemFromState;
-
-        if (upToDateItem.abortController?.signal.aborted && upToDateItem.status !== 'cancelled' && upToDateItem.status !== 'failed' && upToDateItem.status !== 'completed') {
-             setDownloadQueue(prevQ => prevQ.map(q => q.id === upToDateItem.id ? { ...q, status: 'cancelled', progress: 0, downloadedBytes: 0, error_message: "Aborted by user or system." } : q));
-             if(activeDownloadsRef.current.has(upToDateItem.id)) {
-                activeDownloadsRef.current.delete(upToDateItem.id);
-             }
-             continue;
-        }
-
-        if (upToDateItem.status === 'downloading' &&
-            upToDateItem.location &&
-            upToDateItem.totalSizeInBytes &&
-            upToDateItem.downloadedBytes < upToDateItem.totalSizeInBytes &&
-            !activeDownloadsRef.current.has(upToDateItem.id)
-            ) {
-
-          activeDownloadsRef.current.add(upToDateItem.id);
-
-          try {
-            if (upToDateItem.abortController?.signal.aborted) {
-                activeDownloadsRef.current.delete(upToDateItem.id);
-                if(upToDateItem.status !== 'cancelled') setDownloadQueue(prevQ => prevQ.map(q => q.id === upToDateItem.id ? { ...q, status: 'cancelled', error_message: "Aborted" } : q));
-                continue;
-            }
-
-            let actualLimitForApi: number;
-            let chunkResponse: telegramService.FileChunkResponse;
-
-            if (upToDateItem.cdnFileToken && upToDateItem.cdnDcId && upToDateItem.cdnFileHashes && upToDateItem.cdnEncryptionKey && upToDateItem.cdnEncryptionIv) {
-                const currentHashBlockIndex = upToDateItem.cdnCurrentFileHashIndex || 0;
-                if (currentHashBlockIndex >= upToDateItem.cdnFileHashes.length) {
-                    if (upToDateItem.downloadedBytes >= upToDateItem.totalSizeInBytes) {
-                        if (!browserDownloadTriggeredRef.current.has(upToDateItem.id) && upToDateItem.chunks && upToDateItem.chunks.length > 0) {
-                            browserDownloadTriggeredRef.current.add(upToDateItem.id);
-                            const fullFileBlob = new Blob(upToDateItem.chunks, { type: upToDateItem.telegramMessage?.mime_type || upToDateItem.telegramMessage?.document?.mime_type || 'application/octet-stream' });
-                            const url = URL.createObjectURL(fullFileBlob);
-                            const a = document.createElement('a');
-                            a.href = url;
-                            a.download = upToDateItem.name;
-                            document.body.appendChild(a);
-                            a.click();
-                            document.body.removeChild(a);
-                            URL.revokeObjectURL(url);
-                        }
-                        setDownloadQueue(prevQ => prevQ.map(q => q.id === upToDateItem.id ? { ...q, status: 'completed', progress: 100, downloadedBytes: upToDateItem.totalSizeInBytes!, chunks: [] } : q));
-                    } else {
-                        setDownloadQueue(prev => prevQ.map(q => q.id === upToDateItem.id ? { ...q, status: 'failed', error_message: 'CDN blocks exhausted before completion' } : q));
-                    }
-                    activeDownloadsRef.current.delete(upToDateItem.id);
-                    continue;
-                }
-                const cdnBlock = upToDateItem.cdnFileHashes[currentHashBlockIndex];
-                actualLimitForApi = cdnBlock.limit;
-
-                chunkResponse = await telegramService.downloadCdnFileChunk(
-                    {
-                        dc_id: upToDateItem.cdnDcId,
-                        file_token: upToDateItem.cdnFileToken,
-                        encryption_key: upToDateItem.cdnEncryptionKey,
-                        encryption_iv: upToDateItem.cdnEncryptionIv,
-                        file_hashes: upToDateItem.cdnFileHashes,
-                    },
-                    cdnBlock.offset,
-                    actualLimitForApi,
-                    upToDateItem.abortController?.signal
-                );
-
-                if (chunkResponse?.bytes && upToDateItem.cdnFileHashes) {
-                    const downloadedHash = await telegramService.calculateSHA256(chunkResponse.bytes);
-                    if (!telegramService.areUint8ArraysEqual(downloadedHash, cdnBlock.hash)) {
-                        setDownloadQueue(prevQ => prevQ.map(q => q.id === upToDateItem.id ? { ...q, status: 'failed', error_message: 'CDN Hash Mismatch' } : q));
-                        activeDownloadsRef.current.delete(upToDateItem.id);
-                        continue;
-                    }
-                }
-
-            } else {
-                const bytesNeededForFileDirect = upToDateItem.totalSizeInBytes - upToDateItem.downloadedBytes;
-                const offsetWithinCurrentBlockDirect = upToDateItem.currentOffset % ONE_MB;
-                const bytesLeftInCurrentBlockDirect = ONE_MB - offsetWithinCurrentBlockDirect;
-
-                let idealRequestSizeDirect = Math.min(bytesLeftInCurrentBlockDirect, DOWNLOAD_CHUNK_SIZE, bytesNeededForFileDirect);
-
-                if (bytesNeededForFileDirect <= 0) {
-                    actualLimitForApi = 0;
-                } else if (idealRequestSizeDirect <= 0) {
-                    actualLimitForApi = bytesNeededForFileDirect > 0 ? KB_1 : 0;
-                } else if (idealRequestSizeDirect < KB_1) {
-                    actualLimitForApi = KB_1;
-                } else {
-                    actualLimitForApi = Math.floor(idealRequestSizeDirect / KB_1) * KB_1;
-                }
-
-                if (actualLimitForApi === 0 && bytesNeededForFileDirect > 0 && idealRequestSizeDirect > 0) {
-                    actualLimitForApi = KB_1;
-                }
-
-                if (actualLimitForApi <= 0) {
-                   if (upToDateItem.downloadedBytes >= upToDateItem.totalSizeInBytes) {
-                        if (!browserDownloadTriggeredRef.current.has(upToDateItem.id) && upToDateItem.chunks && upToDateItem.chunks.length > 0) {
-                            browserDownloadTriggeredRef.current.add(upToDateItem.id);
-                            const fullFileBlob = new Blob(upToDateItem.chunks, { type: upToDateItem.telegramMessage?.mime_type || upToDateItem.telegramMessage?.document?.mime_type || 'application/octet-stream' });
-                            const url = URL.createObjectURL(fullFileBlob);
-                            const a = document.createElement('a');
-                            a.href = url;
-                            a.download = upToDateItem.name;
-                            document.body.appendChild(a);
-                            a.click();
-                            document.body.removeChild(a);
-                            URL.revokeObjectURL(url);
-                        }
-                       setDownloadQueue(prevQ => prevQ.map(q => q.id === upToDateItem.id ? { ...q, status: 'completed', progress: 100, downloadedBytes: upToDateItem.totalSizeInBytes!, currentOffset: upToDateItem.totalSizeInBytes!, chunks: [] } : q));
-                   } else if (bytesNeededForFileDirect > 0) {
-                        setDownloadQueue(prevQ => prevQ.map(q => q.id === upToDateItem.id ? { ...q, status: 'failed', error_message: 'Internal limit calculation error' } : q));
-                   }
-                   activeDownloadsRef.current.delete(upToDateItem.id);
-                   continue;
-                }
-
-                chunkResponse = await telegramService.downloadFileChunk(
-                    upToDateItem.location!,
-                    upToDateItem.currentOffset,
-                    actualLimitForApi,
-                    upToDateItem.abortController?.signal
-                );
-            }
-
-            if (upToDateItem.abortController?.signal.aborted) {
-              activeDownloadsRef.current.delete(upToDateItem.id);
-              if(upToDateItem.status !== 'cancelled') setDownloadQueue(prevQ => prevQ.map(q_item => q_item.id === upToDateItem.id ? { ...q_item, status: 'cancelled', error_message: "Aborted" } : q_item));
-              continue;
-            }
-
-            if (chunkResponse?.isCdnRedirect && chunkResponse.cdnRedirectData) {
-                setDownloadQueue(prevQ => prevQ.map(q_item => q_item.id === upToDateItem.id ? {
-                    ...q_item,
-                    status: 'downloading',
-                    cdnDcId: chunkResponse.cdnRedirectData!.dc_id,
-                    cdnFileToken: chunkResponse.cdnRedirectData!.file_token,
-                    cdnEncryptionKey: chunkResponse.cdnRedirectData!.encryption_key,
-                    cdnEncryptionIv: chunkResponse.cdnRedirectData!.encryption_iv,
-                    cdnFileHashes: chunkResponse.cdnRedirectData!.file_hashes.map(fh_raw => ({
-                        offset: Number(fh_raw.offset),
-                        limit: fh_raw.limit,
-                        hash: fh_raw.hash,
-                    })),
-                    cdnCurrentFileHashIndex: 0,
-                    currentOffset: 0,
-                    downloadedBytes: 0,
-                    progress: 0,
-                    chunks: [],
-                } : q_item));
-            } else if (chunkResponse?.errorType === 'FILE_REFERENCE_EXPIRED') {
-                setDownloadQueue(prevQ => prevQ.map(q_item => q_item.id === upToDateItem.id ? { ...q_item, status: 'refreshing_reference' } : q_item));
-
-            } else if (chunkResponse?.bytes) {
-              const chunkSize = chunkResponse.bytes.length;
-              setDownloadQueue(prevQ =>
-                prevQ.map(q_item => {
-                  if (q_item.id === upToDateItem.id) {
-                    const newDownloadedBytes = q_item.downloadedBytes + chunkSize;
-                    const newProgress = Math.min(100, Math.floor((newDownloadedBytes / q_item.totalSizeInBytes!) * 100));
-                    const newChunks = [...(q_item.chunks || []), chunkResponse.bytes!];
-
-                    let nextReqOffset = q_item.currentOffset;
-                    let nextCdnProcessingIndex = q_item.cdnCurrentFileHashIndex;
-
-                    if(q_item.cdnFileToken && q_item.cdnFileHashes) {
-                      nextCdnProcessingIndex = (q_item.cdnCurrentFileHashIndex || 0) + 1;
-                      nextReqOffset = newDownloadedBytes;
-                    } else {
-                      nextReqOffset = q_item.currentOffset + chunkSize;
-                    }
-
-                    if (newDownloadedBytes >= q_item.totalSizeInBytes!) {
-                      if (q_item.status !== 'completed' && !browserDownloadTriggeredRef.current.has(q_item.id)) {
-                        browserDownloadTriggeredRef.current.add(q_item.id);
-                        const fullFileBlob = new Blob(newChunks, { type: q_item.telegramMessage?.mime_type || q_item.telegramMessage?.document?.mime_type || 'application/octet-stream' });
-                        const url = URL.createObjectURL(fullFileBlob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = q_item.name;
-                        document.body.appendChild(a);
-                        a.click();
-                        document.body.removeChild(a);
-                        URL.revokeObjectURL(url);
-                      }
-                      return {
-                        ...q_item,
-                        status: 'completed',
-                        progress: 100,
-                        downloadedBytes: q_item.totalSizeInBytes!,
-                        chunks: [],
-                        cdnCurrentFileHashIndex: undefined,
-                        currentOffset: q_item.totalSizeInBytes!
-                      };
-                    }
-                    return {
-                      ...q_item,
-                      downloadedBytes: newDownloadedBytes,
-                      progress: newProgress,
-                      currentOffset: nextReqOffset,
-                      chunks: newChunks,
-                      cdnCurrentFileHashIndex: q_item.cdnFileToken ? nextCdnProcessingIndex : undefined,
-                      status: 'downloading',
-                    };
-                  }
-                  return q_item;
-                })
-              );
-            } else {
-              const errorMessage = chunkResponse?.errorType || (chunkResponse && Object.keys(chunkResponse).length === 0 ? 'Empty response object from service' : 'Unknown error or no data returned from service');
-              setDownloadQueue(prevQ => prevQ.map(q_item => q_item.id === upToDateItem.id ? { ...q_item, status: 'failed', error_message: `Download error: ${errorMessage}` } : q_item));
-            }
-          } catch (error: any) {
-             if (error.name === 'AbortError' || (error.message && error.message.toLowerCase().includes('aborted'))) {
-                if(upToDateItem.status !== 'cancelled' && upToDateItem.status !== 'failed' && upToDateItem.status !== 'completed' ) {
-                    setDownloadQueue(prevQ => prevQ.map(q_item => q_item.id === upToDateItem.id ? { ...q_item, status: 'cancelled', error_message: "Aborted by user or system." } : q_item));
-                }
-             } else {
-                setDownloadQueue(prev => prevQ.map(q_item => q_item.id === upToDateItem.id ? { ...q_item, status: 'failed', error_message: error.message || 'Processing error during chunk download' } : q_item));
-             }
-          } finally {
-             activeDownloadsRef.current.delete(upToDateItem.id);
-          }
-        } else if (upToDateItem.status === 'queued' && !activeDownloadsRef.current.has(upToDateItem.id)) {
-            setDownloadQueue(prevQ => prevQ.map(q => q.id === upToDateItem.id ? { ...q, status: 'downloading' } : q));
-        } else if (upToDateItem.status === 'refreshing_reference' && !activeDownloadsRef.current.has(upToDateItem.id)) {
-            activeDownloadsRef.current.add(upToDateItem.id);
-            try {
-                if (upToDateItem.abortController?.signal.aborted) {
-                    activeDownloadsRef.current.delete(upToDateItem.id);
-                     if(upToDateItem.status !== 'cancelled') setDownloadQueue(prevQ => prevQ.map(q => q.id === upToDateItem.id ? { ...q, status: 'cancelled', error_message: "Aborted" } : q));
-                    continue;
-                }
-
-                const updatedMediaObject = await telegramService.refreshFileReference(upToDateItem);
-                if (updatedMediaObject && updatedMediaObject.file_reference) {
-                    let newLocation;
-                    const actualMediaForRefresh = updatedMediaObject.media ? updatedMediaObject.media : updatedMediaObject;
-
-                    if ((actualMediaForRefresh._ === 'photo' || actualMediaForRefresh._ === 'messageMediaPhoto') && actualMediaForRefresh.id && actualMediaForRefresh.access_hash && actualMediaForRefresh.file_reference) {
-                        const photoData = actualMediaForRefresh.photo || actualMediaForRefresh;
-                        const largestSize = photoData.sizes?.find((s: any) => s.type === 'y') || photoData.sizes?.sort((a: any, b: any) => (b.w * b.h) - (a.w * a.h))[0];
-                        newLocation = {
-                            _: 'inputPhotoFileLocation',
-                            id: photoData.id,
-                            access_hash: photoData.access_hash,
-                            file_reference: photoData.file_reference,
-                            thumb_size: largestSize?.type || '',
-                        };
-                    } else if ((actualMediaForRefresh._ === 'document' || actualMediaForRefresh._ === 'messageMediaDocument') && actualMediaForRefresh.id && actualMediaForRefresh.access_hash && actualMediaForRefresh.file_reference) {
-                         const docData = actualMediaForRefresh.document || actualMediaForRefresh;
-                         newLocation = {
-                            _: 'inputDocumentFileLocation',
-                            id: docData.id,
-                            access_hash: docData.access_hash,
-                            file_reference: docData.file_reference,
-                            thumb_size: '',
-                        };
-                    }
-
-                    if (newLocation) {
-                        setDownloadQueue(prevQ => prevQ.map(q_item => q_item.id === upToDateItem.id ? {
-                            ...q_item,
-                            status: 'downloading',
-                            location: newLocation,
-                            telegramMessage: { ...(q_item.telegramMessage || {}), ...updatedMediaObject }
-                        } : q_item));
-                    } else {
-                         setDownloadQueue(prevQ => prevQ.map(q_item => q_item.id === upToDateItem.id ? { ...q_item, status: 'failed', error_message: 'Refresh failed (new location construction error)' } : q_item));
-                    }
-                } else {
-                    setDownloadQueue(prevQ => prevQ.map(q_item => q_item.id === upToDateItem.id ? { ...q_item, status: 'failed', error_message: 'Refresh failed (no new file_reference)' } : q_item));
-                }
-            } catch (refreshError: any) {
-                setDownloadQueue(prevQ => prevQ.map(q_item => q_item.id === upToDateItem.id ? { ...q_item, status: 'failed', error_message: refreshError.message || 'File reference refresh error' } : q_item));
-            } finally {
-                activeDownloadsRef.current.delete(upToDateItem.id);
-            }
-        } else if (['paused', 'completed', 'failed', 'cancelled'].includes(upToDateItem.status) ) {
-            if(activeDownloadsRef.current.has(upToDateItem.id)){
-                activeDownloadsRef.current.delete(upToDateItem.id);
-            }
-        }
-      }
-    };
-
-    const intervalId = setInterval(processQueue, 750);
-
-    return () => {
-        clearInterval(intervalId);
-        downloadQueueRef.current.forEach(item => {
-            if (item.abortController && !item.abortController.signal.aborted &&
-                (item.status === 'downloading' || item.status === 'refreshing_reference' || item.status === 'queued' || item.status === 'paused')) {
-                item.abortController.abort("Component cleanup or effect re-run");
+        // Abort downloads
+        downloadManager.downloadQueueRefForReset.current.forEach(item => {
+            if (item.abortController && !item.abortController.signal.aborted) {
+                item.abortController.abort("User reset application state");
             }
         });
-        activeDownloadsRef.current.clear();
-    };
-  }, []);
+        downloadManager.activeDownloadsRefForReset.current.clear();
+        downloadManager.browserDownloadTriggeredRefForReset.current.clear();
 
-  useEffect(() => {
-    return () => {
-        if (videoStreamUrl) {
-            URL.revokeObjectURL(videoStreamUrl);
-        }
-        if (videoStreamAbortControllerRef.current && !videoStreamAbortControllerRef.current.signal.aborted) {
-            videoStreamAbortControllerRef.current.abort("Component unmounting");
-        }
-    };
-  }, [videoStreamUrl]);
+        // Abort uploads
+        uploadManager.uploadAbortControllersRefForReset.current.forEach((controller) => {
+          if (!controller.signal.aborted) controller.abort("User reset application state");
+        });
+        uploadManager.uploadAbortControllersRefForReset.current.clear();
+
+        await connectionManager.handleReset(performServerLogout); // This calls onResetApp, which resets other hooks' states
+
+    }, [connectionManager, mediaPreviewManager, downloadManager, uploadManager]);
 
 
-  if (isConnecting || (isConnected && isLoadingDialogFilters && !activeFilterDetails && !hasFetchedDialogFiltersOnce) ) {
-     return (
+  // Loading state for initial app load
+  if (connectionManager.isConnecting && !connectionManager.isConnected && !authError && authStep === 'initial' && !dialogFiltersManager.hasFetchedDialogFiltersOnce) {
+    return (
       <div className="min-h-screen flex flex-col">
-        <Header ref={headerRef} isConnected={isConnected} />
+        <Header ref={headerRef} isConnected={false} />
         <main className="flex-grow flex items-center justify-center text-center">
           <div>
             <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
             <p className="text-lg text-muted-foreground">
-              {isConnecting ? "Connecting to Telegram..." :
-               isLoadingDialogFilters && !hasFetchedDialogFiltersOnce ? "Loading your folders..." :
-               "Initializing..."}
+              {connectionManager.isConnecting ? "Connecting to Telegram..." : "Initializing..."}
             </p>
           </div>
         </main>
-         <footer ref={footerRef} className="py-3 px-4 sm:px-6 lg:px-8 text-center border-t text-xs">
-            <p className="text-muted-foreground">
-            Telegram Cloudifier &copy; {new Date().getFullYear()}
-            </p>
-        </footer>
+        <footer ref={footerRef} className="py-3 px-4 sm:px-6 lg:px-8 text-center border-t text-xs"><p className="text-muted-foreground">Telegram Cloudifier &copy; {new Date().getFullYear()}</p></footer>
       </div>
     );
   }
 
-
-  if (!isConnected && !isConnecting) {
+  // Telegram Connect View
+  if (!connectionManager.isConnected && !connectionManager.isConnecting) {
     return (
       <>
         <Header ref={headerRef} isConnected={false} />
@@ -2082,230 +248,212 @@ export default function Home() {
           <TelegramConnect
             authStep={authStep}
             onSendCode={handleSendCode}
-            onSignIn={handleSignIn}
-            onCheckPassword={handleCheckPassword}
-            isLoading={isConnecting}
+            onSignIn={(code) => { setAuthPhoneCode(code); handleSignIn(code); }}
+            onCheckPassword={(pw) => { setAuthPassword(pw); handleCheckPassword(pw); }}
+            isLoading={connectionManager.isConnecting} // Use global connecting state
             error={authError}
-            phoneNumber={phoneNumber}
-            setPhoneNumber={setPhoneNumber}
-            phoneCode={phoneCode}
-            setPhoneCode={setPhoneCode}
-            password={password}
-            setPassword={setPassword}
-            onReset={() => handleReset(authStep !== 'initial')}
+            phoneNumber={connectionManager.appPhoneNumber || authInputPhoneNumber} // Display global if available, else local input
+            setPhoneNumber={setAuthInputPhoneNumber} // For the input field itself
+            phoneCode={authPhoneCode}
+            setPhoneCode={setAuthPhoneCode}
+            password={authPassword}
+            setPassword={setAuthPassword}
+            onReset={() => performFullReset(authStep !== 'initial')}
           />
         </main>
-        <footer ref={footerRef} className="py-4 px-4 sm:px-6 lg:px-8 text-center border-t">
-          <p className="text-sm text-muted-foreground">
-            Telegram Cloudifier &copy; {new Date().getFullYear()}
-          </p>
-        </footer>
+        <footer ref={footerRef} className="py-4 px-4 sm:px-6 lg:px-8 text-center border-t"><p className="text-sm text-muted-foreground">Telegram Cloudifier &copy; {new Date().getFullYear()}</p></footer>
       </>
     );
   }
 
-
+  // Main App View
   return (
     <div className="min-h-screen flex flex-col">
       <Header
         ref={headerRef}
-        isConnected={isConnected}
-        onDisconnect={() => handleReset(true)}
-        onOpenDownloadManager={handleOpenDownloadManager}
-        onOpenChatSelectionDialog={handleOpenChatSelectionDialog}
-        onOpenCloudStorageSelector={handleOpenCloudStorageSelector}
+        isConnected={connectionManager.isConnected}
+        onDisconnect={() => performFullReset(true)}
+        onOpenDownloadManager={downloadManager.handleOpenDownloadManagerSheet}
+        onOpenChatSelectionDialog={pageDialogs.handleOpenChatSelectionDialog}
+        onOpenCloudStorageSelector={pageDialogs.handleOpenCloudStorageSelector}
       />
       <div className="flex-1 flex overflow-hidden min-h-0">
         <main className="flex-1 overflow-y-auto bg-background">
-           <div className="container mx-auto h-full px-0 sm:px-0 lg:px-0 py-0 md:py-0 lg:py-0">
-            {selectedFolder ? (
-                <MainContentView
-                    folderName={selectedFolder.name}
-                    files={currentChatMedia}
-                    isLoading={isLoadingChatMedia && currentChatMedia.length === 0}
-                    isLoadingMoreMedia={isLoadingChatMedia && currentChatMedia.length > 0}
-                    hasMore={hasMoreChatMedia}
-                    onFileDetailsClick={handleOpenFileDetails}
-                    onQueueDownloadClick={handleQueueDownload}
-                    onFileViewImageClick={handleViewImage}
-                    onFilePlayVideoClick={handlePlayVideo}
-                    onOpenUploadDialog={handleOpenUploadDialog}
-                    isPreparingStream={isPreparingVideoStream}
-                    preparingStreamForFileId={preparingVideoStreamForFileId}
-                    onLoadMoreMedia={loadMoreChatMediaCallback}
-                    isCloudChannel={selectedFolder.isAppManagedCloud || false}
-                    cloudConfig={selectedFolder.cloudConfig}
-                    currentVirtualPath={currentVirtualPath}
-                    onNavigateVirtualPath={handleNavigateVirtualPath}
-                    onOpenCreateVirtualFolderDialog={handleOpenCreateVirtualFolderDialog}
-                    onDeleteFile={handleDeleteFile}
-                    onDeleteVirtualFolder={handleDeleteVirtualFolder}
-                    selectedFolderInputPeer={selectedFolder.inputPeer}
-                    onCopyFile={handleCopyFile}
-                    onCopyFolderStructure={handleCopyFolderStructure}
-                    onPasteItem={handlePasteItem}
-                    clipboardItem={clipboardItem}
-                 />
+          <div className="container mx-auto h-full px-0 sm:px-0 lg:px-0 py-0 md:py-0 lg:py-0">
+            {selectedMediaManager.selectedFolder ? (
+              <MainContentView
+                folderName={selectedMediaManager.selectedFolder.name}
+                files={selectedMediaManager.currentChatMedia}
+                isLoading={selectedMediaManager.isLoadingChatMedia && selectedMediaManager.currentChatMedia.length === 0}
+                isLoadingMoreMedia={selectedMediaManager.isLoadingChatMedia && selectedMediaManager.currentChatMedia.length > 0}
+                hasMore={selectedMediaManager.hasMoreChatMedia}
+                onFileDetailsClick={fileOperationsManager.handleOpenFileDetails}
+                onQueueDownloadClick={downloadManager.handleQueueDownloadFile}
+                onFileViewImageClick={mediaPreviewManager.handleViewImage}
+                onFilePlayVideoClick={mediaPreviewManager.handlePlayVideo}
+                onOpenUploadDialog={uploadManager.handleOpenUploadFilesDialog}
+                isPreparingStream={mediaPreviewManager.isPreparingVideoStream}
+                preparingStreamForFileId={mediaPreviewManager.preparingVideoStreamForFileId}
+                onLoadMoreMedia={selectedMediaManager.loadMoreChatMediaForSelected}
+                isCloudChannel={selectedMediaManager.selectedFolder.isAppManagedCloud || false}
+                cloudConfig={selectedMediaManager.selectedFolder.cloudConfig}
+                currentVirtualPath={selectedMediaManager.currentVirtualPath}
+                onNavigateVirtualPath={selectedMediaManager.handleNavigateVirtualPath}
+                onOpenCreateVirtualFolderDialog={pageDialogs.handleOpenCreateVirtualFolderDialog}
+                onDeleteFile={(file) => fileOperationsManager.handleRequestDeleteItem('file', file)}
+                onDeleteVirtualFolder={(path, name, peer) => fileOperationsManager.handleRequestDeleteItem('virtualFolder', { path, name }, peer)}
+                selectedFolderInputPeer={selectedMediaManager.selectedFolder.inputPeer}
+                onCopyFile={fileOperationsManager.handleCopyFileOp}
+                onCopyFolderStructure={fileOperationsManager.handleCopyFolderStructureOp}
+                onPasteItem={(targetPath) => fileOperationsManager.handlePasteItemOp(targetPath, pageDialogs.handleOpenCreateVirtualFolderDialog)}
+                clipboardItem={fileOperationsManager.clipboardItem}
+              />
             ) : (
-                <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground p-4">
-                  <LayoutPanelLeft className="w-16 h-16 mb-4 opacity-50" />
-                  <p className="text-lg mb-2">No chat selected.</p>
-                  <p className="text-sm mb-4">Select a chat folder or a cloud storage channel.</p>
-                  <div className="flex gap-4">
-                    <Button onClick={handleOpenChatSelectionDialog}>
-                        <MessageSquare className="mr-2 h-5 w-5" /> Select Chat Folder
-                    </Button>
-                    <Button onClick={handleOpenCloudStorageSelector} variant="outline">
-                        <Cloud className="mr-2 h-5 w-5" /> Select Cloud Storage
-                    </Button>
-                  </div>
-                  {isLoadingDisplayedChats && displayedChats.length === 0 && activeFilterDetails && (
-                    <div className="mt-4 flex items-center">
-                      <Loader2 className="animate-spin h-5 w-5 text-primary mr-2" />
-                      <span>Loading initial chat list for "{activeFilterDetails?.title || 'current folder'}"...</span>
-                    </div>
-                  )}
-                   { !isLoadingDisplayedChats && displayedChats.length === 0 && !currentErrorMessage && isConnected && activeFilterDetails && !cachedDataForActiveFilterIsLoading(activeFilterDetails, chatDataCache) && (
-                     <div className="mt-4 flex items-center text-sm">
-                        <MessageSquare className="mr-2 h-5 w-5 text-muted-foreground" />
-                        <span>Chat list for "{activeFilterDetails.title}" appears to be empty.</span>
-                    </div>
-                    )}
-                    {currentErrorMessage && (
-                        <div className="mt-4 p-3 bg-destructive/10 text-destructive rounded-md text-sm">
-                            <p>{currentErrorMessage}</p>
-                        </div>
-                    )}
+              <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground p-4">
+                <LayoutPanelLeft className="w-16 h-16 mb-4 opacity-50" />
+                <p className="text-lg mb-2">No chat selected.</p>
+                <p className="text-sm mb-4">Select a chat folder or a cloud storage channel.</p>
+                <div className="flex gap-4">
+                  <Button onClick={pageDialogs.handleOpenChatSelectionDialog}><MessageSquare className="mr-2 h-5 w-5" /> Select Chat Folder</Button>
+                  <Button onClick={pageDialogs.handleOpenCloudStorageSelector} variant="outline"><Cloud className="mr-2 h-5 w-5" /> Select Cloud Storage</Button>
                 </div>
+                {chatListManager.isLoadingDisplayedChats && chatListManager.displayedChats.length === 0 && dialogFiltersManager.activeFilterDetails && (
+                  <div className="mt-4 flex items-center"><Loader2 className="animate-spin h-5 w-5 text-primary mr-2" /><span>Loading initial chat list for "{dialogFiltersManager.activeFilterDetails?.title || 'current folder'}"...</span></div>
+                )}
+                {!chatListManager.isLoadingDisplayedChats && chatListManager.displayedChats.length === 0 && !chatListManager.currentErrorMessageForChatList && connectionManager.isConnected && dialogFiltersManager.activeFilterDetails && !chatListManager.cachedDataForActiveFilterIsLoading(dialogFiltersManager.activeFilterDetails) && (
+                  <div className="mt-4 flex items-center text-sm"><MessageSquare className="mr-2 h-5 w-5 text-muted-foreground" /><span>Chat list for "{dialogFiltersManager.activeFilterDetails.title}" appears to be empty.</span></div>
+                )}
+                {chatListManager.currentErrorMessageForChatList && (
+                  <div className="mt-4 p-3 bg-destructive/10 text-destructive rounded-md text-sm"><p>{chatListManager.currentErrorMessageForChatList}</p></div>
+                )}
+              </div>
             )}
           </div>
         </main>
       </div>
-      <footer ref={footerRef} className="py-3 px-4 sm:px-6 lg:px-8 text-center border-t text-xs">
-        <p className="text-muted-foreground">
-          Telegram Cloudifier &copy; {new Date().getFullYear()}
-        </p>
-      </footer>
+      <footer ref={footerRef} className="py-3 px-4 sm:px-6 lg:px-8 text-center border-t text-xs"><p className="text-muted-foreground">Telegram Cloudifier &copy; {new Date().getFullYear()}</p></footer>
 
       <ChatSelectionDialog
-        isOpen={isChatSelectionDialogOpen}
-        onOpenChange={setIsChatSelectionDialogOpen}
+        isOpen={pageDialogs.isChatSelectionDialogOpen}
+        onOpenChange={pageDialogs.setIsChatSelectionDialogOpen}
         viewMode="default"
-        dialogFilters={dialogFilters}
-        activeDialogFilterId={activeDialogFilterId}
-        onSelectDialogFilter={handleSelectDialogFilter}
-        isLoadingDialogFilters={isLoadingDialogFilters}
-        isReorderingFolders={isReorderingFolders}
-        onToggleReorderFolders={handleToggleReorderFolders}
-        onMoveFilter={handleMoveFilter}
-        onShareFilter={handleShareFilter}
-        folders={displayedChats}
-        isLoading={isLoadingDisplayedChats && displayedChats.length === 0}
-        isLoadingMore={isLoadingDisplayedChats && displayedChats.length > 0}
-        hasMore={hasMoreDisplayedChats}
-        selectedFolderId={selectedFolder?.id || null}
-        onSelectFolder={handleSelectFolder}
-        onLoadMore={loadMoreDisplayedChats}
-        onRefresh={handleRefreshCurrentFilter}
-        currentErrorMessage={currentErrorMessage}
+        dialogFilters={dialogFiltersManager.dialogFilters}
+        activeDialogFilterId={dialogFiltersManager.activeDialogFilterId}
+        onSelectDialogFilter={dialogFiltersManager.handleSelectDialogFilter}
+        isLoadingDialogFilters={dialogFiltersManager.isLoadingDialogFilters}
+        isReorderingFolders={dialogFiltersManager.isReorderingFolders}
+        onToggleReorderFolders={dialogFiltersManager.handleToggleReorderFolders}
+        onMoveFilter={dialogFiltersManager.handleMoveFilter}
+        onShareFilter={dialogFiltersManager.handleShareFilter}
+        folders={chatListManager.displayedChats}
+        isLoading={chatListManager.isLoadingDisplayedChats && chatListManager.displayedChats.length === 0}
+        isLoadingMore={chatListManager.isLoadingDisplayedChats && chatListManager.displayedChats.length > 0}
+        hasMore={chatListManager.hasMoreDisplayedChats}
+        selectedFolderId={selectedMediaManager.selectedFolder?.id || null}
+        onSelectFolder={(id) => { selectedMediaManager.handleSelectFolderOrChannel(id, 'chat'); pageDialogs.setIsChatSelectionDialogOpen(false);}}
+        onLoadMore={chatListManager.loadMoreDisplayedChatsInManager}
+        onRefresh={dialogFiltersManager.handleRefreshCurrentFilterView}
+        currentErrorMessage={chatListManager.currentErrorMessageForChatList}
       />
 
       <ChatSelectionDialog
-        isOpen={isCloudStorageSelectorOpen}
-        onOpenChange={setIsCloudStorageSelectorOpen}
+        isOpen={pageDialogs.isCloudStorageSelectorOpen}
+        onOpenChange={pageDialogs.setIsCloudStorageSelectorOpen}
         viewMode="cloudStorage"
-        folders={appManagedCloudFolders}
-        isLoading={isLoadingAppManagedCloudFolders && appManagedCloudFolders.length === 0}
-        isLoadingMore={false}
-        hasMore={false}
-        selectedFolderId={selectedFolder?.isAppManagedCloud ? selectedFolder.id : null}
-        onSelectFolder={handleSelectCloudChannel}
+        folders={appCloudChannelsManager.appManagedCloudFolders}
+        isLoading={appCloudChannelsManager.isLoadingAppManagedCloudFolders && appCloudChannelsManager.appManagedCloudFolders.length === 0}
+        isLoadingMore={false} /* Cloud channels don't have load more for now */
+        hasMore={false}      /* Cloud channels don't have load more for now */
+        selectedFolderId={selectedMediaManager.selectedFolder?.isAppManagedCloud ? selectedMediaManager.selectedFolder.id : null}
+        onSelectFolder={(id) => {selectedMediaManager.handleSelectFolderOrChannel(id, 'cloud'); pageDialogs.setIsCloudStorageSelectorOpen(false);}}
         onLoadMore={() => {}}
-        onRefresh={handleRefreshCloudStorage}
-        onOpenCreateCloudChannelDialog={handleOpenCreateCloudChannelDialog}
+        onRefresh={appCloudChannelsManager.fetchAppManagedCloudChannelsList.bind(null, true)}
+        onOpenCreateCloudChannelDialog={pageDialogs.handleOpenCreateCloudChannelDialog}
       />
 
       <CreateCloudChannelDialog
-        isOpen={isCreateCloudChannelDialogOpen}
-        onClose={() => setIsCreateCloudChannelDialogOpen(false)}
-        onCreate={handleCreateCloudChannel}
-        isLoading={isCreatingCloudChannel}
+        isOpen={pageDialogs.isCreateCloudChannelDialogOpen}
+        onClose={() => pageDialogs.setIsCreateCloudChannelDialogOpen(false)}
+        onCreate={async (name: string, type: CloudChannelType) => {
+            const result = await telegramService.createManagedCloudChannel(name, type);
+            if (result && result.channelInfo && result.initialConfig) {
+                toast({ title: "Cloud Storage Created!", description: `Channel "${result.channelInfo.title}" created.` });
+                pageDialogs.setIsCreateCloudChannelDialogOpen(false);
+                const newCF: CloudFolder = {id: `channel-${result.channelInfo.id}`, name: result.channelInfo.title, isChatFolder:false, inputPeer: { _: 'inputPeerChannel', channel_id: result.channelInfo.id, access_hash: result.channelInfo.access_hash }, files:[], folders:[], isAppManagedCloud: true, cloudConfig: result.initialConfig };
+                appCloudChannelsManager.addCreatedCloudChannelToList(newCF);
+            } else { throw new Error("Channel creation did not return expected info."); }
+        }}
+        isLoading={fileOperationsManager.isProcessingVirtualFolder} // Re-use for now
       />
 
       <CreateVirtualFolderDialog
-        isOpen={isCreateVirtualFolderDialogOpen}
-        onClose={() => setIsCreateVirtualFolderDialogOpen(false)}
-        onCreate={(folderName) => handleCreateVirtualFolder(folderName)}
-        isLoading={isProcessingVirtualFolder}
-        parentPath={virtualFolderParentPath}
+        isOpen={pageDialogs.isCreateVirtualFolderDialogOpen}
+        onClose={() => pageDialogs.setIsCreateVirtualFolderDialogOpen(false)}
+        onCreate={async (folderName: string) => {
+            if (!selectedMediaManager.selectedFolder || !selectedMediaManager.selectedFolder.inputPeer) {
+                 toast({ title: "Error", description: "No cloud channel selected or inputPeer missing.", variant: "destructive" }); return;
+            }
+            fileOperationsManager.setIsProcessingVirtualFolder(true);
+            try {
+                const updatedConfig = await telegramService.addVirtualFolderToCloudChannel(selectedMediaManager.selectedFolder.inputPeer, pageDialogs.virtualFolderParentPath, folderName);
+                if (updatedConfig) {
+                    selectedMediaManager.updateSelectedFolderConfig(updatedConfig);
+                    appCloudChannelsManager.setAppManagedCloudFoldersState(prev => prev.map(cf => cf.id === selectedMediaManager.selectedFolder?.id ? {...cf, cloudConfig: updatedConfig} : cf));
+                    toast({ title: "Virtual Folder Created", description: `Folder "${folderName}" created.`});
+                    pageDialogs.setIsCreateVirtualFolderDialogOpen(false);
+                } else { toast({ title: "Creation Failed", variant: "destructive" }); }
+            } catch (e:any) { handleGlobalApiError(e, "Error Creating Folder", e.message); }
+            finally { fileOperationsManager.setIsProcessingVirtualFolder(false); }
+        }}
+        isLoading={fileOperationsManager.isProcessingVirtualFolder}
+        parentPath={pageDialogs.virtualFolderParentPath}
       />
 
       <DeleteItemConfirmationDialog
-        isOpen={isDeleteItemDialogOpen}
-        onClose={() => setIsDeleteItemDialogOpen(false)}
-        onConfirm={confirmDeleteItem}
-        isLoading={isProcessingDeletion}
-        itemName={itemToDelete?.type === 'file' ? itemToDelete.file.name : itemToDelete?.name || "item"}
-        itemType={itemToDelete?.type || "item"}
+        isOpen={fileOperationsManager.isDeleteItemDialogOpen}
+        onClose={() => fileOperationsManager.handleCancelDeletion()}
+        onConfirm={fileOperationsManager.handleConfirmDeletion}
+        isLoading={fileOperationsManager.isProcessingDeletion}
+        itemName={fileOperationsManager.itemToDelete?.type === 'file' ? fileOperationsManager.itemToDelete.file.name : fileOperationsManager.itemToDelete?.name || "item"}
+        itemType={fileOperationsManager.itemToDelete?.type || "item"}
       />
-
 
       <FileDetailsPanel
-        file={selectedFileForDetails}
-        isOpen={isDetailsPanelOpen}
-        onClose={handleCloseFileDetails}
-        onQueueDownload={handleQueueDownload}
+        file={fileOperationsManager.selectedFileForDetails}
+        isOpen={fileOperationsManager.isDetailsPanelOpen}
+        onClose={fileOperationsManager.handleCloseFileDetails}
+        onQueueDownload={downloadManager.handleQueueDownloadFile}
       />
       <ImageViewer
-        isOpen={isImageViewerOpen}
-        onClose={() => setIsImageViewerOpen(false)}
-        imageUrl={viewingImageUrl}
-        imageName={viewingImageName}
+        isOpen={mediaPreviewManager.isImageViewerOpen}
+        onClose={mediaPreviewManager.handleCloseImageViewer}
+        imageUrl={mediaPreviewManager.viewingImageUrl}
+        imageName={mediaPreviewManager.viewingImageName}
       />
       <VideoPlayer
-        isOpen={isVideoPlayerOpen}
-        onClose={handleCloseVideoPlayer}
-        videoUrl={playingVideoUrl}
-        videoName={playingVideoName}
-        isLoading={isPreparingVideoStream && playingVideoUrl === null}
+        isOpen={mediaPreviewManager.isVideoPlayerOpen}
+        onClose={mediaPreviewManager.handleCloseVideoPlayerAndStream}
+        videoUrl={mediaPreviewManager.playingVideoUrl}
+        videoName={mediaPreviewManager.playingVideoName}
+        isLoading={mediaPreviewManager.isPreparingVideoStream && mediaPreviewManager.playingVideoUrl === null}
       />
       <DownloadManagerDialog
-        isOpen={isDownloadManagerOpen}
-        onClose={handleCloseDownloadManager}
-        queue={downloadQueue}
-        onCancel={handleCancelDownload}
-        onPause={handlePauseDownload}
-        onResume={handleResumeDownload}
+        isOpen={downloadManager.isDownloadManagerOpen}
+        onClose={downloadManager.handleCloseDownloadManagerSheet}
+        queue={downloadManager.downloadQueue}
+        onCancel={downloadManager.handleCancelDownloadOp}
+        onPause={downloadManager.handlePauseDownloadOp}
+        onResume={downloadManager.handleResumeDownloadOp}
       />
       <UploadDialog
-        isOpen={isUploadDialogOpen}
-        onClose={handleCloseUploadDialog}
-        onFilesSelected={handleFilesSelectedForUpload}
-        onUpload={handleStartUpload}
-        selectedFiles={filesToUpload}
-        isLoading={isUploadingFiles}
+        isOpen={uploadManager.isUploadDialogOpen}
+        onClose={uploadManager.handleCloseUploadFilesDialog}
+        onFilesSelected={uploadManager.handleFilesSelectedForUploadList}
+        onUpload={uploadManager.handleStartFileUploads}
+        selectedFiles={uploadManager.filesToUpload}
+        isLoading={uploadManager.isUploadingFiles}
       />
     </div>
   );
 }
-
-function cachedDataForActiveFilterIsLoading(activeFilterDetails: DialogFilter | null, chatDataCache: Map<number, CachedFolderData>): boolean {
-    if (!activeFilterDetails) return false;
-    const filterId = activeFilterDetails.id;
-    const filterType = activeFilterDetails._;
-
-    if (filterType === 'dialogFilterDefault') {
-        return chatDataCache.get(ALL_CHATS_FILTER_ID)?.isLoading || false;
-    }
-    const cachedEntry = chatDataCache.get(filterId);
-    if (filterType === 'dialogFilter' && cachedEntry?.error === 'FOLDER_ID_INVALID_FALLBACK') {
-        return chatDataCache.get(ALL_CHATS_FILTER_ID)?.isLoading || false;
-    }
-    if (filterType === 'dialogFilterChatlist') {
-        return chatDataCache.get(ALL_CHATS_FILTER_ID)?.isLoading || false;
-    }
-    return cachedEntry?.isLoading || false;
-}
-
-    
 
