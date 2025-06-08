@@ -25,7 +25,7 @@ export {
   updateDialogFiltersOrder,
   exportChatlistInvite,
   updateDialogFilter,
-  transformDialogToCloudFolder, // Export if needed by UI directly, though hooks might encapsulate this
+  transformDialogToCloudFolder, 
 } from './telegramDialogs';
 
 // File Operations (Media History, Download, Upload, Edit, Delete)
@@ -53,11 +53,11 @@ export {
   IDENTIFICATION_MESSAGE_SUFFIX,
   createManagedCloudChannel,
   fetchAndVerifyManagedCloudChannels,
-  // getCloudChannelConfig, // Kept internal to telegramCloud.ts unless needed externally
-  // updateCloudChannelConfig, // Kept internal
+  getCloudChannelConfig, 
+  updateCloudChannelConfig, 
   addVirtualFolderToCloudChannel,
   removeVirtualFolderFromCloudChannel,
-  ensureChannelInCloudFolder, // Export if direct manipulation is needed, e.g. after creation
+  ensureChannelInCloudFolder, 
   getChannelFullInfo,
   updateChannelAbout,
   checkChatUsername,
@@ -67,7 +67,7 @@ export {
   editChannelTitle,
   searchUsers,
   inviteUserToChannel,
-  getContacts, // Added getContacts
+  getContacts, 
 } from './telegramCloud'; 
 
 // Real-time Updates
@@ -75,6 +75,3 @@ export { initializeTelegramUpdateListener } from './telegramUpdates';
 
 // Re-export formatFileSize from lib/utils if it was previously exported from here
 export { formatFileSize };
-
-
-
