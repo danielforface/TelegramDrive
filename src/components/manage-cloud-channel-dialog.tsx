@@ -20,13 +20,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, X, Link2, Edit3, Copy, Settings2, UserPlus, Search, Save, Users2, AlertTriangle, Check, Ban, Image as ImageIcon } from "lucide-react";
+import { Loader2, X, Link2, Edit3, Copy, Settings2, UserPlus, Search, Save, Users2, AlertTriangle, Check, Ban, Image as ImageIcon, UserCheck, PlusCircle } from "lucide-react";
 import { useChannelAdminManager, type UsernameAvailabilityStatus } from '@/hooks/features/useChannelAdminManager';
 
 interface ManageCloudChannelDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  channel: CloudFolder | null; // This is selectedManagingChannel from page.tsx context
+  channel: CloudFolder | null;
   handleGlobalApiError: (error: any, title: string, defaultMessage: string, doPageReset?: boolean) => void;
   onChannelDetailsUpdatedAppLevel: (updatedFolder: CloudFolder) => void;
 }
@@ -34,7 +34,7 @@ interface ManageCloudChannelDialogProps {
 export function ManageCloudChannelDialog({
   isOpen,
   onClose,
-  channel: selectedManagingChannel, // Renamed for clarity within this component
+  channel: selectedManagingChannel,
   handleGlobalApiError,
   onChannelDetailsUpdatedAppLevel,
 }: ManageCloudChannelDialogProps) {
@@ -51,7 +51,6 @@ export function ManageCloudChannelDialog({
     activeTab,
   });
 
-  // Local state for editable fields, synced with adminManager.channelDetails
   const [localEditableTitle, setLocalEditableTitle] = useState("");
   const [localEditableDescription, setLocalEditableDescription] = useState("");
   const [localEditableUsername, setLocalEditableUsername] = useState("");
@@ -61,8 +60,6 @@ export function ManageCloudChannelDialog({
   const usernameCheckTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    // This effect syncs local input fields when the authoritative channelDetails from the hook changes,
-    // or when the dialog opens.
     if (isOpen) {
       if (adminManager.channelDetails) {
         setLocalEditableTitle(adminManager.channelDetails.title || "");
@@ -70,26 +67,23 @@ export function ManageCloudChannelDialog({
         setLocalEditableUsername(adminManager.channelDetails.username || "");
         setCurrentPhotoPreview(adminManager.channelDetails.chat_photo?.photo_big?.local?.path || null);
       } else if (selectedManagingChannel) {
-        // Fallback to selectedManagingChannel for initial render if adminManager.channelDetails isn't ready
         setLocalEditableTitle(selectedManagingChannel.name || "");
         setLocalEditableDescription(selectedManagingChannel.fullChannelInfo?.about || "");
         setLocalEditableUsername(selectedManagingChannel.fullChannelInfo?.username || "");
         setCurrentPhotoPreview(selectedManagingChannel.fullChannelInfo?.chat_photo?.photo_big?.local?.path || null);
       } else {
-        // If nothing is available (e.g., error state or channel is null)
         setLocalEditableTitle("");
         setLocalEditableDescription("");
         setLocalEditableUsername("");
         setCurrentPhotoPreview(null);
       }
-      setSelectedPhotoFile(null); // Reset selected file on open/channel change
+      setSelectedPhotoFile(null);
       if(fileInputRef.current) fileInputRef.current.value = "";
     }
   }, [isOpen, adminManager.channelDetails, selectedManagingChannel]);
 
 
   useEffect(() => {
-    // Cleanup debounce timer on component unmount or when dialog closes
     return () => {
       if (usernameCheckTimeoutRef.current) {
         clearTimeout(usernameCheckTimeoutRef.current);
@@ -110,7 +104,7 @@ export function ManageCloudChannelDialog({
   const handlePublicUsernameInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newUsername = e.target.value.replace(/[^a-zA-Z0-9_]/g, '').toLowerCase();
     setLocalEditableUsername(newUsername);
-    adminManager.setUsernameAvailability(null); // Reset status immediately
+    adminManager.setUsernameAvailability(null);
 
     if (usernameCheckTimeoutRef.current) {
       clearTimeout(usernameCheckTimeoutRef.current);
@@ -123,7 +117,7 @@ export function ManageCloudChannelDialog({
     }
 
     if (newUsername.length < 5) {
-      adminManager.setUsernameAvailability('unavailable'); // Or a new state like 'too_short'
+      adminManager.setUsernameAvailability('unavailable');
       return;
     }
 
@@ -212,7 +206,7 @@ export function ManageCloudChannelDialog({
       <li key={user.id} className="flex items-center justify-between p-2 hover:bg-muted rounded-md">
         <div className="flex items-center gap-2 min-w-0">
           <Avatar className="h-8 w-8 flex-shrink-0">
-            <AvatarImage src={user.photo?.photo_small?.local?.path} alt={user.first_name} data-ai-hint="user avatar" />
+            <AvatarImage src={user.photo?.photo_small?.local?.path || `https://placehold.co/40x40.png?text=${user.first_name?.substring(0,1)}`} alt={user.first_name} data-ai-hint="user avatar" />
             <AvatarFallback>{user.first_name?.substring(0,1)}{user.last_name?.substring(0,1) || ''}</AvatarFallback>
           </Avatar>
           <div className="truncate">
@@ -220,6 +214,7 @@ export function ManageCloudChannelDialog({
             <span className="text-xs text-muted-foreground block truncate">@{user.username || `ID: ${user.id}`}</span>
           </div>
         </div>
+        {user.contact && user.mutual_contact && <UserCheck className="h-4 w-4 text-green-500 mr-2 flex-shrink-0" title="Mutual Contact"/>}
         <Button
           size="sm"
           variant="outline"
@@ -386,7 +381,7 @@ export function ManageCloudChannelDialog({
 
               <TabsContent value="add-members" className="p-6 space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="memberSearch" className="text-base font-semibold">Search or Select from Contacts</Label>
+                  <Label htmlFor="memberSearch" className="text-base font-semibold">Search or Select from Mutual Contacts</Label>
                   <div className="flex gap-2">
                     <Input
                       id="memberSearch"
@@ -403,7 +398,7 @@ export function ManageCloudChannelDialog({
                 </div>
 
                 { (adminManager.isLoadingContacts && !adminManager.memberSearchTerm.trim()) && (
-                   <div className="text-sm text-muted-foreground flex items-center justify-center py-4"><Loader2 className="mr-2 h-4 w-4 animate-spin"/>Loading contacts...</div>
+                   <div className="text-sm text-muted-foreground flex items-center justify-center py-4"><Loader2 className="mr-2 h-4 w-4 animate-spin"/>Loading mutual contacts...</div>
                 )}
                 { (adminManager.isSearchingMembers && adminManager.memberSearchTerm.trim()) && (
                   <div className="text-sm text-muted-foreground flex items-center justify-center py-4"><Loader2 className="mr-2 h-4 w-4 animate-spin"/>Searching...</div>
@@ -411,11 +406,11 @@ export function ManageCloudChannelDialog({
 
                 <ScrollArea className="max-h-60 border rounded-md">
                   <ul className="p-2 space-y-1">
-                    {!adminManager.memberSearchTerm.trim() && !adminManager.isLoadingContacts && adminManager.contactList.length === 0 && (
-                      <p className="text-sm text-muted-foreground text-center py-4">No contacts found or unable to load. Try searching.</p>
+                    {!adminManager.memberSearchTerm.trim() && !adminManager.isLoadingContacts && adminManager.displayedContactList.length === 0 && (
+                      <p className="text-sm text-muted-foreground text-center py-4">No mutual contacts found or unable to load. Try searching.</p>
                     )}
-                    {!adminManager.memberSearchTerm.trim() && !adminManager.isLoadingContacts && adminManager.contactList.length > 0 && (
-                      adminManager.contactList.map((user) => renderUserListItem(user, 'contact'))
+                    {!adminManager.memberSearchTerm.trim() && !adminManager.isLoadingContacts && adminManager.displayedContactList.length > 0 && (
+                      adminManager.displayedContactList.map((user) => renderUserListItem(user, 'contact'))
                     )}
 
                     {adminManager.memberSearchTerm.trim() && !adminManager.isSearchingMembers && adminManager.memberSearchResults.length === 0 && (
@@ -426,6 +421,14 @@ export function ManageCloudChannelDialog({
                     )}
                   </ul>
                 </ScrollArea>
+                {!adminManager.memberSearchTerm.trim() && adminManager.canLoadMoreContacts && (
+                  <div className="flex justify-center mt-2">
+                    <Button onClick={adminManager.loadMoreContacts} variant="outline" size="sm" disabled={adminManager.isLoadingContacts}>
+                      {adminManager.isLoadingContacts ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <PlusCircle className="h-4 w-4 mr-1" />}
+                      Load More Contacts (10)
+                    </Button>
+                  </div>
+                )}
                 <p className="text-xs text-muted-foreground">Note: You can typically only add users who are in your contacts or if they allow being added by their username. Adding many users might be rate-limited by Telegram.</p>
               </TabsContent>
 
@@ -461,7 +464,7 @@ export function ManageCloudChannelDialog({
                 )}
                 {adminManager.hasMoreParticipants && !adminManager.isLoadingParticipants && adminManager.participants.length > 0 && (
                   <div className="mt-4 text-center">
-                    <Button onClick={() => selectedManagingChannel?.inputPeer && adminManager.fetchParticipants(selectedManagingChannel.inputPeer, adminManager.participants.length)} variant="outline" disabled={adminManager.isLoadingParticipants}>
+                    <Button onClick={() => selectedManagingChannel?.inputPeer && adminManager.fetchParticipants(selectedManagingChannel.inputPeer)} variant="outline" disabled={adminManager.isLoadingParticipants}>
                       {adminManager.isLoadingParticipants ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                       Load More Participants
                     </Button>
@@ -475,3 +478,4 @@ export function ManageCloudChannelDialog({
     </Dialog>
   );
 }
+

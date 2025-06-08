@@ -1,3 +1,4 @@
+
 'use client';
 
 import { telegramApiInstance, sleep } from './telegramAPI';
@@ -505,15 +506,12 @@ export async function updateChannelPhotoService(channelInputPeer: InputPeer, pho
         throw new Error("InputChatPhoto is required to update channel photo.");
     }
     try {
-        // The 'result' here is an 'Updates' object as per the schema provided.
         const result = await telegramApiInstance.call('channels.editPhoto', {
-            channel: channelInputPeer, // This is an InputChannel, derived from InputPeer
-            photo: photoInputChatPhoto,    // This MUST be InputChatPhoto
+            channel: channelInputPeer,
+            photo: photoInputChatPhoto,
         });
 
-        // Process the Updates object to find the new photo
         if (result && (result._ === 'updates' || result._ === 'updatesCombined')) {
-            // Check the 'chats' array within the Updates object for the updated channel
             if (result.chats && Array.isArray(result.chats)) {
                 const updatedChannelEntity = result.chats.find(
                     (c: any) => c._ === 'channel' && String(c.id) === String(channelInputPeer.channel_id)
@@ -522,7 +520,6 @@ export async function updateChannelPhotoService(channelInputPeer: InputPeer, pho
                     return { photo: updatedChannelEntity.photo, date: result.date || Math.floor(Date.now() / 1000) };
                 }
             }
-            // Also, check the 'updates' vector (array of individual Update objects) for a specific updateChannelPhoto
             if (result.updates && Array.isArray(result.updates)) {
                 for (const singleUpdate of result.updates) {
                     if (singleUpdate._ === 'updateChannelPhoto' && String(singleUpdate.channel_id) === String(channelInputPeer.channel_id)) {
@@ -531,18 +528,12 @@ export async function updateChannelPhotoService(channelInputPeer: InputPeer, pho
                 }
             }
         } else if (result && result._ === 'updateShort' && result.update) {
-            // Handle cases where 'result' might be a single Update object like 'updateShort'
             const singleUpdate = result.update;
              if (singleUpdate._ === 'updateChannelPhoto' && String(singleUpdate.channel_id) === String(channelInputPeer.channel_id)) {
-                return { photo: singleUpdate.photo, date: result.date }; // Use date from parent updateShort
+                return { photo: singleUpdate.photo, date: result.date };
             }
         }
-        
-        // If the call succeeded but we couldn't specifically find the new photo in this response,
-        // it's likely updated. The calling hook should refetch channel details.
-        // For this service function, returning null means we didn't extract the photo object directly from *this* response.
         return null;
-
     } catch (error: any) {
         throw error;
     }
@@ -594,11 +585,10 @@ export async function uploadFileToServerForPhoto(
       throw error;
     }
   }
-  // After all parts are uploaded, return the InputFile object
   if (isBigFile) {
     return { _: 'inputFileBig', id: client_file_id_str, parts: totalParts, name: fileToUpload.name };
   } else {
-    return { _: 'inputFile', id: client_file_id_str, parts: totalParts, name: fileToUpload.name, md5_checksum: '' /* Optional */ };
+    return { _: 'inputFile', id: client_file_id_str, parts: totalParts, name: fileToUpload.name, md5_checksum: '' };
   }
 }
 
@@ -615,10 +605,10 @@ export async function editChannelTitle(channelInputPeer: InputPeer, newTitle: st
       channel: channelInputPeer,
       title: newTitle.trim(),
     });
-    // After successfully editing title, update config message
+
     const config = await getCloudChannelConfig(channelInputPeer);
     if (config && config.app_signature === CLOUDIFIER_APP_SIGNATURE_V1) {
-        config.channel_title_at_creation = newTitle.trim(); // Or a new field like 'current_channel_title'
+        config.channel_title_at_creation = newTitle.trim();
         config.last_updated_timestamp_utc = new Date().toISOString();
         await updateCloudChannelConfig(channelInputPeer, config);
     }
@@ -665,22 +655,29 @@ export async function inviteUserToChannel(channelInputPeer: InputPeer, userToInv
 export async function getContacts(): Promise<any[]> {
   console.log("[TelegramCloud_GetContacts] Attempting to fetch contacts...");
   try {
-    const result = await telegramApiInstance.call('contacts.getContacts', { hash: 0 }); // hash: 0 for full list
+    const result = await telegramApiInstance.call('contacts.getContacts', { hash: 0 });
     console.log("[TelegramCloud_GetContacts] Raw API Result:", JSON.stringify(result, null, 2));
 
     if (result && result._ === 'contacts.contacts' && Array.isArray(result.contacts) && Array.isArray(result.users)) {
       console.log(`[TelegramCloud_GetContacts] Received ${result.contacts.length} contact entries and ${result.users.length} user objects.`);
       
-      const contactUsers = result.contacts.map((contact: any) => {
-        const foundUser = result.users.find((user: any) => String(user.id) === String(contact.user_id));
-        if (!foundUser) {
-          console.warn(`[TelegramCloud_GetContacts] User ID ${contact.user_id} from contacts not found in users array.`);
-        }
-        return foundUser;
-      }).filter((user: any) => user !== undefined); // Filter out any undefined entries if user not found
+      const mutualContacts = result.contacts
+        .map((contact: any) => {
+          const userDetail = result.users.find((user: any) => String(user.id) === String(contact.user_id));
+          if (!userDetail) {
+            console.warn(`[TelegramCloud_GetContacts] User ID ${contact.user_id} from contacts not found in users array.`);
+            return null;
+          }
+          // Check the mutual_contact flag on the User object itself, or on the Contact object
+          // The schema indicates 'mutual:Bool' on Contact object, and 'mutual_contact:flags.12?true' on User object
+          // Prefer the flag on the User object if available, otherwise the Contact object's flag.
+          const isMutual = userDetail.mutual_contact === true || contact.mutual === true;
+          return isMutual ? userDetail : null;
+        })
+        .filter((user: any) => user !== null);
       
-      console.log(`[TelegramCloud_GetContacts] Processed ${contactUsers.length} contacts successfully.`);
-      return contactUsers;
+      console.log(`[TelegramCloud_GetContacts] Processed and filtered ${mutualContacts.length} mutual contacts successfully.`);
+      return mutualContacts;
     }
     console.warn("[TelegramCloud_GetContacts] Unexpected structure in contacts.getContacts response. Expected 'contacts.contacts' with 'contacts' and 'users' arrays. Result:", result);
     return [];
