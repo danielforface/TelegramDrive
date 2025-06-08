@@ -503,6 +503,11 @@ export async function checkChatUsername(channelInputPeer: InputPeer, username: s
     });
     return result === true || (typeof result === 'object' && result._ === 'boolTrue'); 
   } catch (error: any) {
+    const errorMessage = error.message || error.originalErrorObject?.error_message;
+    if (errorMessage === 'USERNAME_PURCHASE_AVAILABLE') {
+      // This specific error means it's a "premium" username, treat as unavailable for direct setting.
+      throw new Error('USERNAME_PURCHASE_AVAILABLE');
+    }
     throw error;
   }
 }
@@ -619,6 +624,22 @@ export async function inviteUserToChannel(channelInputPeer: InputPeer, userToInv
   } catch (error: any) {
     // console.error(`Error inviting user ${userToInviteInputPeer.user_id} to channel ${channelInputPeer.channel_id}:`, error);
     throw error; // Let the caller handle UI feedback, specific errors like USER_PRIVACY_RESTRICTED etc.
+  }
+}
+
+export async function getContacts(): Promise<any[]> { // `any[]` should ideally be `User[]` or a more specific contact type
+  try {
+    // hash: 0 typically means "fetch all if client has none stored"
+    // or "fetch diffs if client has a previous hash".
+    // For a simple fetch-all, 0 is usually fine.
+    const result = await telegramApiInstance.call('contacts.getContacts', { hash: 0 });
+    // The result is of type contacts.Contacts, which contains `users` and `contacts` arrays.
+    // `users` contains full User objects. `contacts` contains Contact objects with user_id and mutual status.
+    // We usually want the User objects.
+    return result.users || [];
+  } catch (error) {
+    // console.error("Error fetching contacts:", error);
+    throw error; // Let the caller handle UI feedback
   }
 }
     

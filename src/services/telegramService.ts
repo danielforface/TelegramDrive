@@ -67,6 +67,7 @@ export {
   editChannelTitle,
   searchUsers,
   inviteUserToChannel,
+  getContacts, // Added getContacts
 } from './telegramCloud'; 
 
 // Real-time Updates
@@ -74,5 +75,6 @@ export { initializeTelegramUpdateListener } from './telegramUpdates';
 
 // Re-export formatFileSize from lib/utils if it was previously exported from here
 export { formatFileSize };
+
 
 

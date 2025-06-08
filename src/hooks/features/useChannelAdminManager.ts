@@ -11,6 +11,8 @@ interface UseChannelAdminManagerProps {
   handleGlobalApiError: (error: any, title: string, defaultMessage: string, doPageReset?: boolean) => void;
   selectedManagingChannel: CloudFolder | null;
   onChannelDetailsUpdatedAppLevel?: (updatedFolder: CloudFolder) => void;
+  isOpen?: boolean; // Added to control fetching based on dialog visibility
+  activeTab?: string; // Added to control fetching based on active tab
 }
 
 export type UsernameAvailabilityStatus = 'idle' | 'checking' | 'available' | 'unavailable' | 'error' | null;
@@ -20,11 +22,12 @@ export function useChannelAdminManager({
   handleGlobalApiError,
   selectedManagingChannel,
   onChannelDetailsUpdatedAppLevel,
+  isOpen,
+  activeTab,
 }: UseChannelAdminManagerProps) {
   const [channelDetails, setChannelDetails] = useState<FullChat | null>(null);
   const [isLoadingChannelDetails, setIsLoadingChannelDetails] = useState(false);
   
-  const [editableTitle, setEditableTitle] = useState("");
   const [isUpdatingTitle, setIsUpdatingTitle] = useState(false);
   const [isUpdatingAbout, setIsUpdatingAbout] = useState(false);
   const [isUpdatingPhoto, setIsUpdatingPhoto] = useState(false);
@@ -43,11 +46,13 @@ export function useChannelAdminManager({
   const [isSearchingMembers, setIsSearchingMembers] = useState(false);
   const [isAddingMember, setIsAddingMember] = useState<string | null>(null);
 
+  const [contactList, setContactList] = useState<any[]>([]);
+  const [isLoadingContacts, setIsLoadingContacts] = useState(false);
+
 
   const resetAdminManagerState = useCallback((keepChannelDetails = false) => {
     if (!keepChannelDetails) {
       setChannelDetails(null);
-      setEditableTitle("");
     }
     setIsLoadingChannelDetails(false);
     setIsUpdatingTitle(false);
@@ -64,6 +69,8 @@ export function useChannelAdminManager({
     setMemberSearchResults([]);
     setIsSearchingMembers(false);
     setIsAddingMember(null);
+    setContactList([]);
+    setIsLoadingContacts(false);
   }, []);
   
   const fetchChannelDetails = useCallback(async (channelInputPeer: InputPeer, currentChannelName: string) => {
@@ -76,14 +83,12 @@ export function useChannelAdminManager({
     try {
       const details = await telegramService.getChannelFullInfo(channelInputPeer);
       setChannelDetails(details);
-      setEditableTitle(details?.title || currentChannelName); 
       if (details && selectedManagingChannel && onChannelDetailsUpdatedAppLevel) {
         onChannelDetailsUpdatedAppLevel({ ...selectedManagingChannel, name: details.title || selectedManagingChannel.name, fullChannelInfo: details });
       }
     } catch (error: any) {
       handleGlobalApiError(error, "Error Fetching Channel Details", "Could not load channel information. Ensure you have admin rights.");
       setChannelDetails(null);
-      setEditableTitle(currentChannelName);
     } finally {
       setIsLoadingChannelDetails(false);
     }
@@ -92,23 +97,21 @@ export function useChannelAdminManager({
 
   useEffect(() => {
     if (selectedManagingChannel && selectedManagingChannel.inputPeer) {
-      if (channelDetails?.id !== selectedManagingChannel.id || 
-          (!channelDetails && !isLoadingChannelDetails) ||
-          (selectedManagingChannel.fullChannelInfo && !channelDetails && channelDetails?.id !== selectedManagingChannel.id)) {
-        
+      if (!channelDetails || channelDetails.id !== selectedManagingChannel.id || isLoadingChannelDetails) {
+         // If no details, different channel, or details were loading for current but failed somehow
         resetAdminManagerState(selectedManagingChannel.fullChannelInfo && channelDetails?.id === selectedManagingChannel.id); 
         
-        if (selectedManagingChannel.fullChannelInfo && (!channelDetails || channelDetails.id !== selectedManagingChannel.id) ) {
+        if (selectedManagingChannel.fullChannelInfo && (!channelDetails || channelDetails.id !== selectedManagingChannel.id)) {
             setChannelDetails(selectedManagingChannel.fullChannelInfo); 
-            setEditableTitle(selectedManagingChannel.fullChannelInfo.title || selectedManagingChannel.name);
-        } else {
+        } else if (!isLoadingChannelDetails) { // Avoid refetch if already loading
             fetchChannelDetails(selectedManagingChannel.inputPeer, selectedManagingChannel.name);
         }
       }
-    } else if (!selectedManagingChannel) {
+    } else if (!selectedManagingChannel && channelDetails) { // If dialog closed or channel deselected
        resetAdminManagerState();
     }
   }, [selectedManagingChannel, fetchChannelDetails, channelDetails, isLoadingChannelDetails, resetAdminManagerState]);
+
 
   const updateChannelTitle = useCallback(async (inputPeer: InputPeer, newTitle: string) => {
     setIsUpdatingTitle(true);
@@ -118,7 +121,6 @@ export function useChannelAdminManager({
         toast({ title: "Title Updated", description: "Channel title has been successfully updated." });
         const updatedDetails = { ...(channelDetails || {} as FullChat), title: newTitle };
         setChannelDetails(updatedDetails as FullChat);
-        setEditableTitle(newTitle);
         if (selectedManagingChannel && onChannelDetailsUpdatedAppLevel) {
              onChannelDetailsUpdatedAppLevel({ ...selectedManagingChannel, name: newTitle, fullChannelInfo: updatedDetails as FullChat });
         }
@@ -159,15 +161,16 @@ export function useChannelAdminManager({
     try {
       const isAvailable = await telegramService.checkChatUsername(inputPeer, usernameToCheck);
       setUsernameAvailability(isAvailable ? 'available' : 'unavailable');
-      toast({ 
-        title: "Username Check", 
-        description: `Username "${usernameToCheck}" is ${isAvailable ? 'available' : 'not available or invalid'}.`,
-        variant: isAvailable ? 'default' : 'destructive' 
-      });
+      // Toast is handled in dialog now for specific messages
       return isAvailable;
     } catch (error: any) {
-      setUsernameAvailability('error');
-      toast({ title: "Username Check Failed", description: error.message || "Could not check username.", variant: "destructive" });
+      if (error.message === 'USERNAME_PURCHASE_AVAILABLE') {
+        setUsernameAvailability('unavailable'); // Treat as unavailable
+        toast({ title: "Username Unavailable", description: `"${usernameToCheck}" is a premium username and cannot be set directly.`, variant: "default" });
+      } else {
+        setUsernameAvailability('error');
+        toast({ title: "Username Check Failed", description: error.message || "Could not check username.", variant: "destructive" });
+      }
       return false;
     } finally {
       setIsCheckingUsername(false);
@@ -182,7 +185,7 @@ export function useChannelAdminManager({
         toast({ title: "Username Updated", description: `Channel username set to "${usernameToSet}". Public link: t.me/${usernameToSet}` });
         const updatedDetails = { ...(channelDetails || {} as FullChat), username: usernameToSet };
         setChannelDetails(updatedDetails as FullChat);
-        setUsernameAvailability(null); // Reset availability status, new username is now current
+        setUsernameAvailability(null); 
          if (selectedManagingChannel && onChannelDetailsUpdatedAppLevel) {
              onChannelDetailsUpdatedAppLevel({ ...selectedManagingChannel, fullChannelInfo: updatedDetails as FullChat });
         }
@@ -202,7 +205,8 @@ export function useChannelAdminManager({
       const link = await telegramService.exportChannelInviteLink(inputPeer);
       if (link) {
         toast({ title: "Invite Link Generated", description: `Link: ${link}` });
-        const updatedDetails = { ...(channelDetails || {} as FullChat), exported_invite: { ...(channelDetails?.exported_invite || {}), link:link, _:"chatInviteExported"} };
+        const updatedInvite = { ...(channelDetails?.exported_invite || {}), link:link, _:"chatInviteExported"};
+        const updatedDetails = { ...(channelDetails || {} as FullChat), exported_invite: updatedInvite };
         setChannelDetails(updatedDetails as FullChat);
          if (selectedManagingChannel && onChannelDetailsUpdatedAppLevel) {
              onChannelDetailsUpdatedAppLevel({ ...selectedManagingChannel, fullChannelInfo: updatedDetails as FullChat});
@@ -281,6 +285,45 @@ export function useChannelAdminManager({
     }
   }, [handleGlobalApiError]);
 
+  const fetchContacts = useCallback(async () => {
+    if (isLoadingContacts) return;
+    setIsLoadingContacts(true);
+    try {
+      const contacts = await telegramService.getContacts();
+      setContactList(contacts || []);
+    } catch (error: any) {
+      handleGlobalApiError(error, "Error Fetching Contacts", "Could not load your contacts list.");
+      setContactList([]);
+    } finally {
+      setIsLoadingContacts(false);
+    }
+  }, [handleGlobalApiError, isLoadingContacts]);
+
+  useEffect(() => {
+    const currentChannelInputPeer = selectedManagingChannel?.inputPeer;
+    if (isOpen && currentChannelInputPeer && channelDetails) {
+      if (activeTab === 'participants' && participants.length === 0 && hasMoreParticipants && !isLoadingParticipants) {
+        fetchParticipants(currentChannelInputPeer, 0);
+      }
+      if (activeTab === 'add-members' && contactList.length === 0 && !isLoadingContacts) {
+        fetchContacts();
+      }
+    }
+  }, [
+    isOpen,
+    activeTab,
+    selectedManagingChannel, 
+    channelDetails, 
+    participants.length, 
+    hasMoreParticipants,
+    isLoadingParticipants,
+    contactList.length, 
+    isLoadingContacts,
+    fetchParticipants,
+    fetchContacts
+  ]);
+
+
   const handleSearchMembers = useCallback(async () => {
     if (!memberSearchTerm.trim() || !selectedManagingChannel?.inputPeer) {
       setMemberSearchResults([]);
@@ -318,7 +361,13 @@ export function useChannelAdminManager({
       const success = await telegramService.inviteUserToChannel(channelInputPeer, inputUser);
       if (success) {
         toast({ title: "Member Invited", description: `${userToAdd.first_name || 'User'} invited to the channel.` });
-        if (channelInputPeer) fetchParticipants(channelInputPeer, 0);
+        // Refresh participant list and potentially channelDetails participant count
+        if (channelInputPeer) {
+            fetchParticipants(channelInputPeer, 0); // Refresh participants
+            if (selectedManagingChannel) { // Refresh full channel details to update count
+                 fetchChannelDetails(channelInputPeer, selectedManagingChannel.name);
+            }
+        }
       } else {
         throw new Error("Server indicated failure to invite user.");
       }
@@ -327,19 +376,17 @@ export function useChannelAdminManager({
     } finally {
       setIsAddingMember(null);
     }
-  }, [toast, handleGlobalApiError, fetchParticipants]);
+  }, [toast, handleGlobalApiError, fetchParticipants, selectedManagingChannel, fetchChannelDetails]);
   
   return {
     channelDetails,
     isLoadingChannelDetails,
-    editableTitle,
-    setEditableTitle,
     isUpdatingTitle,
     isUpdatingAbout,
     isUpdatingUsername,
     isCheckingUsername,
     usernameAvailability,
-    setUsernameAvailability, // Expose setter for dialog to reset
+    setUsernameAvailability,
     isExportingInvite,
     isUpdatingPhoto,
     participants,
@@ -360,6 +407,9 @@ export function useChannelAdminManager({
     memberSearchResults,
     handleAddMemberToChannel,
     isAddingMember,
+    contactList,
+    isLoadingContacts,
+    fetchContacts,
   };
 }
     

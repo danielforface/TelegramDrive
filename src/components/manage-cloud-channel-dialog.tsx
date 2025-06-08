@@ -18,9 +18,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge"; // Corrected import
+import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, X, Info, Link2, Users, Image as ImageIcon, CheckCircle, Edit3, Copy, Settings2, UserPlus, Search, Save, Users2, AlertTriangle, Check } from "lucide-react"; // Added Check, AlertTriangle
+import { Loader2, X, Info, Link2, Users, Image as ImageIcon, CheckCircle, Edit3, Copy, Settings2, UserPlus, Search, Save, Users2, AlertTriangle, Check, Ban } from "lucide-react";
 import { useChannelAdminManager, type UsernameAvailabilityStatus } from '@/hooks/features/useChannelAdminManager';
 
 interface ManageCloudChannelDialogProps {
@@ -40,48 +40,48 @@ export function ManageCloudChannelDialog({
 }: ManageCloudChannelDialogProps) {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [activeTab, setActiveTab] = useState("edit");
 
   const adminManager = useChannelAdminManager({
     toast,
     handleGlobalApiError,
     selectedManagingChannel: channel,
     onChannelDetailsUpdatedAppLevel,
+    isOpen, 
+    activeTab,
   });
   
-  const [activeTab, setActiveTab] = useState("edit");
-  // Local state for inputs to avoid clearing on hook state changes during typing
   const [localEditableTitle, setLocalEditableTitle] = useState("");
   const [localEditableDescription, setLocalEditableDescription] = useState("");
   const [localEditableUsername, setLocalEditableUsername] = useState("");
   
   const [currentPhotoPreview, setCurrentPhotoPreview] = useState<string | null>(null);
   const [selectedPhotoFile, setSelectedPhotoFile] = useState<File | null>(null);
+  const [debounceTimeout, setDebounceTimeout] = useState<NodeJS.Timeout | null>(null);
 
-  // Sync local input states when channelDetails from hook changes (initial load or after save)
+
   useEffect(() => {
     if (adminManager.channelDetails) {
       setLocalEditableTitle(adminManager.channelDetails.title || channel?.name || "");
       setLocalEditableDescription(adminManager.channelDetails.about || "");
       setLocalEditableUsername(adminManager.channelDetails.username || "");
       setCurrentPhotoPreview(adminManager.channelDetails.chat_photo?.photo_big?.local?.path || null);
-    } else if (channel) { // Fallback if channelDetails is null but channel prop exists
+    } else if (channel && isOpen) { // Fallback if channelDetails is null but channel prop exists and dialog is open
       setLocalEditableTitle(channel.name || "");
-      setLocalEditableDescription(channel.fullChannelInfo?.about || "");
-      setLocalEditableUsername(channel.fullChannelInfo?.username || "");
-      setCurrentPhotoPreview(channel.fullChannelInfo?.chat_photo?.photo_big?.local?.path || null);
+      // Assuming fullChannelInfo might be on the initial channel prop from page.tsx
+      const initialFullInfo = channel.fullChannelInfo;
+      setLocalEditableDescription(initialFullInfo?.about || "");
+      setLocalEditableUsername(initialFullInfo?.username || "");
+      setCurrentPhotoPreview(initialFullInfo?.chat_photo?.photo_big?.local?.path || null);
     }
   }, [adminManager.channelDetails, channel, isOpen]);
 
 
   useEffect(() => {
     if (isOpen && channel) {
-      // Initial state setting happens in the effect above based on adminManager.channelDetails or channel prop
       setSelectedPhotoFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
-      
-      if(adminManager.channelDetails && adminManager.participants.length === 0 && !adminManager.isLoadingParticipants && adminManager.hasMoreParticipants && activeTab === "participants") {
-         if (channel.inputPeer) adminManager.fetchParticipants(channel.inputPeer, 0);
-      }
+      // Tab-specific data fetching is now handled within useChannelAdminManager based on activeTab and isOpen
     } else if (!isOpen) {
       adminManager.resetAdminManagerState(); 
       setLocalEditableTitle("");
@@ -90,17 +90,21 @@ export function ManageCloudChannelDialog({
       setCurrentPhotoPreview(null);
       setSelectedPhotoFile(null);
       setActiveTab("edit"); 
-      adminManager.setUsernameAvailability(null); // Reset username availability status
+      adminManager.setUsernameAvailability(null);
+      if (debounceTimeout) clearTimeout(debounceTimeout);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, channel]); // adminManager.resetAdminManagerState removed as it causes re-renders issues with its own state
-                        // Dependencies should be minimal to avoid loops. Specific manager states if needed.
-
+  }, [isOpen, channel]); // adminManager.resetAdminManagerState is stable, debounceTimeout added for cleanup
+  
   useEffect(() => {
-    if (isOpen && activeTab === 'participants' && channel?.inputPeer && adminManager.participants.length === 0 && adminManager.hasMoreParticipants && !adminManager.isLoadingParticipants && adminManager.channelDetails) {
-        adminManager.fetchParticipants(channel.inputPeer, 0);
-    }
-  }, [isOpen, activeTab, channel?.inputPeer, adminManager.participants.length, adminManager.hasMoreParticipants, adminManager.isLoadingParticipants, adminManager.channelDetails, adminManager.fetchParticipants]);
+    // Cleanup debounce timer on component unmount or when dialog closes
+    return () => {
+      if (debounceTimeout) {
+        clearTimeout(debounceTimeout);
+      }
+    };
+  }, [debounceTimeout]);
+
 
   const handleTitleSave = async () => {
     if (!channel?.inputPeer || !localEditableTitle.trim() || localEditableTitle.trim() === (adminManager.channelDetails?.title || "")) return;
@@ -112,18 +116,36 @@ export function ManageCloudChannelDialog({
     await adminManager.updateChannelDescription(channel.inputPeer, localEditableDescription);
   };
 
-  const handleUsernameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePublicUsernameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newUsername = e.target.value.replace(/[^a-zA-Z0-9_]/g, '').toLowerCase();
     setLocalEditableUsername(newUsername);
-    if (newUsername !== (adminManager.channelDetails?.username || "")) {
-      adminManager.setUsernameAvailability(null); // Reset availability if username changes
+    adminManager.setUsernameAvailability(null); // Reset status immediately
+
+    if (debounceTimeout) {
+      clearTimeout(debounceTimeout);
     }
+
+    const currentActualUsername = adminManager.channelDetails?.username || "";
+    if (newUsername.trim() === '' || newUsername.trim() === currentActualUsername) {
+      adminManager.setUsernameAvailability(newUsername.trim() === currentActualUsername ? 'idle' : null); // 'idle' if same as current
+      return;
+    }
+    
+    if (newUsername.length < 5) {
+        adminManager.setUsernameAvailability('unavailable'); // Or a new state like 'too_short'
+        toast({title:"Username too short", description:"Public username must be at least 5 characters.", variant:"default"});
+        return;
+    }
+
+
+    const timeoutId = setTimeout(() => {
+      if (channel?.inputPeer && newUsername.trim() !== '' && newUsername.trim() !== currentActualUsername) {
+        adminManager.checkUsernameAvailability(channel.inputPeer, newUsername.trim());
+      }
+    }, 750); // 750ms debounce
+    setDebounceTimeout(timeoutId);
   };
 
-  const handleUsernameCheck = async () => {
-    if (!channel?.inputPeer || !localEditableUsername) return;
-    await adminManager.checkUsernameAvailability(channel.inputPeer, localEditableUsername);
-  };
 
   const handleUsernameSave = async () => {
     if (!channel?.inputPeer || !localEditableUsername || localEditableUsername === (adminManager.channelDetails?.username || "") || adminManager.usernameAvailability !== 'available') return;
@@ -167,23 +189,50 @@ export function ManageCloudChannelDialog({
   }
   
   const currentInviteLink = adminManager.channelDetails?.exported_invite?.link;
-  const currentUsernameVal = adminManager.channelDetails?.username;
+  const currentUsernameVal = adminManager.channelDetails?.username || "";
 
   const renderUsernameAvailability = () => {
     if (adminManager.isCheckingUsername || adminManager.usernameAvailability === 'checking') {
       return <span className="text-xs text-muted-foreground ml-2 flex items-center"><Loader2 className="h-3 w-3 animate-spin mr-1" />Checking...</span>;
     }
-    if (adminManager.usernameAvailability === 'available') {
+    if (adminManager.usernameAvailability === 'available' && localEditableUsername.trim() !== "" && localEditableUsername.trim() !== currentUsernameVal) {
       return <span className="text-xs text-green-600 ml-2 flex items-center"><Check className="h-3 w-3 mr-1" />Available</span>;
     }
-    if (adminManager.usernameAvailability === 'unavailable') {
-      return <span className="text-xs text-red-600 ml-2 flex items-center"><AlertTriangle className="h-3 w-3 mr-1" />Unavailable/Invalid</span>;
+    if (adminManager.usernameAvailability === 'unavailable' && localEditableUsername.trim() !== "" && localEditableUsername.trim() !== currentUsernameVal) {
+      return <span className="text-xs text-red-600 ml-2 flex items-center"><Ban className="h-3 w-3 mr-1" />Unavailable/Invalid</span>;
     }
-    if (adminManager.usernameAvailability === 'error') {
+    if (localEditableUsername.trim() !== "" && localEditableUsername.length < 5 && localEditableUsername.trim() !== currentUsernameVal) {
+        return <span className="text-xs text-red-600 ml-2 flex items-center"><Ban className="h-3 w-3 mr-1" />Too short</span>;
+    }
+    if (adminManager.usernameAvailability === 'error' && localEditableUsername.trim() !== "" && localEditableUsername.trim() !== currentUsernameVal) {
       return <span className="text-xs text-red-600 ml-2">Error checking</span>;
     }
-    return null;
+    return <span className="text-xs text-muted-foreground ml-2">&nbsp;</span>; // Placeholder for alignment
   };
+
+  const renderUserListItem = (user: any, context: 'search' | 'contact') => (
+      <li key={user.id} className="flex items-center justify-between p-2 hover:bg-muted rounded-md">
+        <div className="flex items-center gap-2 min-w-0">
+          <Avatar className="h-8 w-8 flex-shrink-0">
+            <AvatarImage src={user.photo?.photo_small?.local?.path} alt={user.first_name} data-ai-hint="user avatar" />
+            <AvatarFallback>{user.first_name?.substring(0,1)}{user.last_name?.substring(0,1) || ''}</AvatarFallback>
+          </Avatar>
+          <div className="truncate">
+            <span className="text-sm block truncate">{user.first_name} {user.last_name || ''}</span>
+            <span className="text-xs text-muted-foreground block truncate">@{user.username || `ID: ${user.id}`}</span>
+          </div>
+        </div>
+        <Button 
+          size="sm" 
+          variant="outline" 
+          onClick={() => channel.inputPeer && adminManager.handleAddMemberToChannel(channel.inputPeer, user)} 
+          disabled={adminManager.isAddingMember === String(user.id) || (!!adminManager.isAddingMember && adminManager.isAddingMember !== String(user.id))}
+          className="ml-2 flex-shrink-0"
+        >
+          {adminManager.isAddingMember === String(user.id) ? <Loader2 className="h-4 w-4 animate-spin"/> : "Add"}
+        </Button>
+      </li>
+  );
 
 
   return (
@@ -246,7 +295,6 @@ export function ManageCloudChannelDialog({
                       Save Title
                     </Button>
                   </div>
-                  <p className="text-xs text-muted-foreground mt-1">Note: Channel title editing might be restricted by Telegram in some cases.</p>
                 </div>
 
                 <div>
@@ -292,22 +340,15 @@ export function ManageCloudChannelDialog({
                       <Input
                         id="channelUsername"
                         value={localEditableUsername}
-                        onChange={handleUsernameChange}
-                        placeholder="your_channel_username"
+                        onChange={handlePublicUsernameChange}
+                        placeholder="your_channel_username (min 5 chars)"
                         className="flex-grow"
                         disabled={adminManager.isUpdatingUsername || adminManager.isCheckingUsername || adminManager.isLoadingChannelDetails}
                       />
-                       {renderUsernameAvailability()}
                     </div>
+                     <div className="h-4 mt-1">{renderUsernameAvailability()}</div>
                     <div className="flex gap-2 flex-wrap mt-2">
-                      <Button 
-                        onClick={handleUsernameCheck} 
-                        disabled={adminManager.isCheckingUsername || adminManager.isUpdatingUsername || !localEditableUsername || localEditableUsername === currentUsernameVal || adminManager.isLoadingChannelDetails} 
-                        size="sm" 
-                        variant="outline"
-                      >
-                        {adminManager.isCheckingUsername ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null} Check Availability
-                      </Button>
+                       {/* "Check Availability" button removed */}
                       <Button 
                         onClick={handleUsernameSave} 
                         disabled={
@@ -316,7 +357,8 @@ export function ManageCloudChannelDialog({
                             !localEditableUsername || 
                             localEditableUsername === currentUsernameVal || 
                             adminManager.isLoadingChannelDetails ||
-                            adminManager.usernameAvailability !== 'available'
+                            adminManager.usernameAvailability !== 'available' ||
+                            localEditableUsername.length < 5
                         } 
                         size="sm"
                       >
@@ -348,14 +390,14 @@ export function ManageCloudChannelDialog({
               
               <TabsContent value="add-members" className="p-6 space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="memberSearch" className="text-base font-semibold">Search for Users to Add</Label>
+                  <Label htmlFor="memberSearch" className="text-base font-semibold">Search or Select from Contacts</Label>
                   <div className="flex gap-2">
                     <Input 
                       id="memberSearch" 
-                      placeholder="Enter username or part of name..." 
+                      placeholder="Enter username or part of name to search..." 
                       value={adminManager.memberSearchTerm}
                       onChange={(e) => adminManager.setMemberSearchTerm(e.target.value)}
-                      disabled={adminManager.isSearchingMembers || !!adminManager.isAddingMember || adminManager.isLoadingChannelDetails}
+                      disabled={adminManager.isSearchingMembers || !!adminManager.isAddingMember || adminManager.isLoadingChannelDetails || adminManager.isLoadingContacts}
                       onKeyDown={(e) => e.key === 'Enter' && !adminManager.isSearchingMembers && adminManager.memberSearchTerm.trim() && adminManager.handleSearchMembers()}
                     />
                     <Button onClick={adminManager.handleSearchMembers} disabled={adminManager.isSearchingMembers || !!adminManager.isAddingMember || !adminManager.memberSearchTerm.trim() || adminManager.isLoadingChannelDetails} variant="outline">
@@ -363,35 +405,31 @@ export function ManageCloudChannelDialog({
                     </Button>
                   </div>
                 </div>
-                {adminManager.isSearchingMembers && <div className="text-sm text-muted-foreground flex items-center justify-center py-4"><Loader2 className="mr-2 h-4 w-4 animate-spin"/>Searching...</div>}
-                {!adminManager.isSearchingMembers && adminManager.memberSearchResults.length > 0 && (
-                  <ScrollArea className="max-h-60 border rounded-md">
-                    <ul className="p-2 space-y-1">
-                    {adminManager.memberSearchResults.map((user: any) => (
-                      <li key={user.id} className="flex items-center justify-between p-2 hover:bg-muted rounded-md">
-                        <div className="flex items-center gap-2">
-                          <Avatar className="h-8 w-8">
-                            <AvatarImage src={user.photo?.photo_small?.local?.path} alt={user.first_name} data-ai-hint="user avatar" />
-                            <AvatarFallback>{user.first_name?.substring(0,1)}{user.last_name?.substring(0,1) || ''}</AvatarFallback>
-                          </Avatar>
-                          <span className="text-sm">{user.first_name} {user.last_name || ''} <span className="text-xs text-muted-foreground">(@{user.username || `ID: ${user.id}`})</span></span>
-                        </div>
-                        <Button 
-                          size="sm" 
-                          variant="outline" 
-                          onClick={() => channel.inputPeer && adminManager.handleAddMemberToChannel(channel.inputPeer, user)} 
-                          disabled={adminManager.isAddingMember === String(user.id) || (!!adminManager.isAddingMember && adminManager.isAddingMember !== String(user.id))}
-                        >
-                          {adminManager.isAddingMember === String(user.id) ? <Loader2 className="h-4 w-4 animate-spin"/> : "Add"}
-                        </Button>
-                      </li>
-                    ))}
-                    </ul>
-                  </ScrollArea>
+
+                {adminManager.isLoadingContacts && !adminManager.memberSearchTerm.trim() && (
+                   <div className="text-sm text-muted-foreground flex items-center justify-center py-4"><Loader2 className="mr-2 h-4 w-4 animate-spin"/>Loading contacts...</div>
                 )}
-                {!adminManager.isSearchingMembers && adminManager.memberSearchTerm && adminManager.memberSearchResults.length === 0 && (
-                  <p className="text-sm text-muted-foreground text-center py-4">No users found matching your search.</p>
+                {adminManager.isSearchingMembers && adminManager.memberSearchTerm.trim() && (
+                  <div className="text-sm text-muted-foreground flex items-center justify-center py-4"><Loader2 className="mr-2 h-4 w-4 animate-spin"/>Searching...</div>
                 )}
+
+                <ScrollArea className="max-h-60 border rounded-md">
+                  <ul className="p-2 space-y-1">
+                    {!adminManager.memberSearchTerm.trim() && !adminManager.isLoadingContacts && adminManager.contactList.length > 0 && (
+                      adminManager.contactList.map((user) => renderUserListItem(user, 'contact'))
+                    )}
+                    {!adminManager.memberSearchTerm.trim() && !adminManager.isLoadingContacts && adminManager.contactList.length === 0 && (
+                      <p className="text-sm text-muted-foreground text-center py-4">No contacts found or unable to load.</p>
+                    )}
+                    
+                    {adminManager.memberSearchTerm.trim() && !adminManager.isSearchingMembers && adminManager.memberSearchResults.length > 0 && (
+                      adminManager.memberSearchResults.map((user) => renderUserListItem(user, 'search'))
+                    )}
+                    {adminManager.memberSearchTerm.trim() && !adminManager.isSearchingMembers && adminManager.memberSearchResults.length === 0 && (
+                      <p className="text-sm text-muted-foreground text-center py-4">No users found matching your search.</p>
+                    )}
+                  </ul>
+                </ScrollArea>
                 <p className="text-xs text-muted-foreground">Note: You can typically only add users who are in your contacts or if they allow being added by their username. Adding many users might be rate-limited by Telegram.</p>
               </TabsContent>
 
