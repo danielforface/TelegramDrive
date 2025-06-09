@@ -7,7 +7,7 @@ import { FileText, Image as ImageIcon, Video, FileAudio, FileQuestion, Download,
 import { Card } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { ContextMenu } from "@/components/context-menu"; 
+import { ContextMenu } from "@/components/context-menu";
 
 interface ContentFileItemProps {
   file: CloudFile;
@@ -19,7 +19,8 @@ interface ContentFileItemProps {
   isPreparingStream?: boolean;
   preparingStreamForFileId?: string | null;
   onDeleteFile: (file: CloudFile) => void;
-  onCopyFile: (file: CloudFile) => void; 
+  onCopyFile: (file: CloudFile) => void;
+  isGlobalViewContext?: boolean; // To know if we are in default global drive
 }
 
 const FileTypeIcon = ({ type, name, dataAiHint }: { type: CloudFile['type'], name: string, dataAiHint?: string }) => {
@@ -42,8 +43,8 @@ const FileTypeIcon = ({ type, name, dataAiHint }: { type: CloudFile['type'], nam
 };
 
 export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
-  ({ file, style, onDetailsClick, onQueueDownloadClick, onViewImageClick, onPlayVideoClick, isPreparingStream, preparingStreamForFileId, onDeleteFile, onCopyFile }, ref) => {
-    
+  ({ file, style, onDetailsClick, onQueueDownloadClick, onViewImageClick, onPlayVideoClick, isPreparingStream, preparingStreamForFileId, onDeleteFile, onCopyFile, isGlobalViewContext = false }, ref) => {
+
     const [contextMenu, setContextMenu] = useState<{
       visible: boolean;
       x: number;
@@ -52,53 +53,63 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
     }>({ visible: false, x: 0, y: 0, items: [] });
 
     const handleCardClick = (e: MouseEvent) => {
-      if (e.button !== 2) {
+      if (e.button !== 2) { // Allow right-click to open context menu without triggering details
         onDetailsClick(file);
       }
     };
 
     const isCurrentlyPreparingThisFile = isPreparingStream && preparingStreamForFileId === file.id;
 
-    const fileMenuItems: MenuItemType[] = [
-      {
-        label: "Details",
-        onClick: () => onDetailsClick(file),
-        icon: <Info className="w-3.5 h-3.5"/>,
-      },
-      {
-        label: "Download",
-        onClick: () => onQueueDownloadClick(file),
-        icon: <Download className="w-3.5 h-3.5"/>,
-      },
-      {
-        label: "Copy File",
-        onClick: () => onCopyFile(file),
-        icon: <Copy className="w-3.5 h-3.5"/>,
-      },
-    ];
+    const generateFileMenuItems = (): MenuItemType[] => {
+      const items: MenuItemType[] = [
+        {
+          label: "Details",
+          onClick: () => onDetailsClick(file),
+          icon: <Info className="w-3.5 h-3.5"/>,
+        },
+        {
+          label: "Download",
+          onClick: () => onQueueDownloadClick(file),
+          icon: <Download className="w-3.5 h-3.5"/>,
+        },
+      ];
 
-    if (file.type === 'image' && file.url) {
-      fileMenuItems.push({
-        label: "View Image",
-        onClick: () => onViewImageClick(file),
-        icon: <Eye className="w-3.5 h-3.5"/>,
+      // Add "Copy File" for VFS (isGlobalViewContext is false) or default Global View
+      if (!isGlobalViewContext || (isGlobalViewContext)) { // Effectively means always add copy if onCopyFile is provided
+         items.push({
+            label: "Copy File",
+            onClick: () => onCopyFile(file),
+            icon: <Copy className="w-3.5 h-3.5"/>,
+          });
+      }
+
+
+      if (file.type === 'image' && file.url) {
+        items.push({
+          label: "View Image",
+          onClick: () => onViewImageClick(file),
+          icon: <Eye className="w-3.5 h-3.5"/>,
+        });
+      }
+      if (file.type === 'video') {
+        items.push({
+          label: isCurrentlyPreparingThisFile ? "Preparing..." : "Play Video",
+          onClick: () => onPlayVideoClick(file),
+          icon: isCurrentlyPreparingThisFile ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlayCircle className="w-3.5 h-3.5"/>,
+          disabled: isCurrentlyPreparingThisFile,
+        });
+      }
+      // Delete is more complex for Global View (default) as it might come from various peers.
+      // For now, enable delete if onDeleteFile is provided, assuming parent handles logic.
+      items.push({ isSeparator: true });
+      items.push({
+        label: "Delete File",
+        onClick: () => onDeleteFile(file),
+        icon: <Trash2 className="w-3.5 h-3.5"/>,
+        className: "text-destructive hover:bg-destructive/10 focus:bg-destructive/10",
       });
+      return items;
     }
-    if (file.type === 'video') {
-      fileMenuItems.push({
-        label: isCurrentlyPreparingThisFile ? "Preparing..." : "Play Video",
-        onClick: () => onPlayVideoClick(file),
-        icon: isCurrentlyPreparingThisFile ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlayCircle className="w-3.5 h-3.5"/>,
-        disabled: isCurrentlyPreparingThisFile,
-      });
-    }
-    fileMenuItems.push({ isSeparator: true });
-    fileMenuItems.push({
-      label: "Delete File",
-      onClick: () => onDeleteFile(file),
-      icon: <Trash2 className="w-3.5 h-3.5"/>,
-      className: "text-destructive hover:bg-destructive/10 focus:bg-destructive/10",
-    });
 
 
     const handleContextMenu = (event: React.MouseEvent) => {
@@ -107,7 +118,7 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
         visible: true,
         x: event.clientX,
         y: event.clientY,
-        items: fileMenuItems,
+        items: generateFileMenuItems(),
       });
     };
 
@@ -164,4 +175,3 @@ export const ContentFileItem = forwardRef<HTMLDivElement, ContentFileItemProps>(
 );
 
 ContentFileItem.displayName = "ContentFileItem";
-

@@ -1,5 +1,4 @@
 
-
 "use client";
 
 import * as React from "react";
@@ -9,7 +8,7 @@ import { ContentFolderItem } from "./content-folder-item";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Search, FolderOpen, Loader2, CalendarDays, XCircle as ClearIcon, UploadCloud, Cloud, FolderPlus, ArrowUpCircle, ChevronRight, FolderUp, ArrowLeftCircle, ClipboardPaste, Settings2, Globe, Info as InfoIcon, ListTree, Columns, AlertTriangle } from "lucide-react";
+import { Search, FolderOpen, Loader2, CalendarDays, XCircle as ClearIcon, UploadCloud, Cloud, FolderPlus, ArrowUpCircle, ChevronRight, FolderUp, ArrowLeftCircle, ClipboardPaste, Settings2, Globe, Info as InfoIcon, ListTree, Columns, AlertTriangle, Copy as CopyIcon } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
@@ -126,7 +125,9 @@ export function MainContentView({
     setSelectedDate(undefined);
     setSearchTerm("");
     if (isGlobalView && organizationMode === 'custom') {
-      setCurrentCustomGlobalPath("/"); // Reset custom path when global drive with custom org is (re)activated
+      setCurrentCustomGlobalPath("/");
+    } else if (!isGlobalView || organizationMode === 'default') {
+      setCurrentCustomGlobalPath("/"); // Reset for default global too
     }
   }, [folderName, isGlobalView, isCloudChannel, organizationMode]);
 
@@ -139,7 +140,8 @@ export function MainContentView({
     event.preventDefault();
     const clickedOnItem = (event.target as HTMLElement).closest('[data-file-item="true"]') || (event.target as HTMLElement).closest('[data-folder-item="true"]');
 
-    if (clickedOnItem || (!isCloudChannel && !isGlobalView)) {
+    // If clicked on an item, or if it's a default global view (no background VFS actions), hide menu.
+    if (clickedOnItem || (isGlobalView && organizationMode === 'default')) {
       setBackgroundContextMenu({ visible: false, x: 0, y: 0, items: [] });
       return;
     }
@@ -238,7 +240,6 @@ export function MainContentView({
     if (!isGlobalView || organizationMode !== 'custom' || !customGlobalDriveConfig) return [];
     const normalizedCurrentPath = normalizePath(currentCustomGlobalPath);
 
-    // Helper to traverse the config based on path
     const getCustomEntries = (config: GlobalDriveConfigV1, path: string): { [name: string]: GlobalDriveFolderEntry | any } | null => {
         if (path === '/') return config.root_entries;
         const segments = path.split('/').filter(s => s);
@@ -248,7 +249,7 @@ export function MainContentView({
             if (entry && entry.type === 'folder') {
                 currentLevel = (entry as GlobalDriveFolderEntry).entries;
             } else {
-                return null; // Path not found or not a folder
+                return null;
             }
         }
         return currentLevel;
@@ -261,18 +262,17 @@ export function MainContentView({
     Object.entries(currentEntries).forEach(([name, entry]) => {
         if (entry.type === 'folder') {
             const subFolderCount = Object.values(entry.entries || {}).filter(e => e.type === 'folder').length;
-            // File count for custom global folders is not implemented in this phase
             displayedCustomFolders.push({ type: 'folder', name, entry, itemCount: subFolderCount });
         }
-        // File references are not rendered in this phase
     });
     return displayedCustomFolders.sort((a, b) => a.name.localeCompare(b.name));
   }, [isGlobalView, organizationMode, customGlobalDriveConfig, currentCustomGlobalPath]);
 
 
   const mediaFilesToDisplay = useMemo(() => {
-    let processedFiles = files;
+    let processedFiles = files; // 'files' prop is globalMediaItems when in global view
 
+    // Apply tab filtering if in default organization mode (regular chat or default global)
     if (organizationMode === 'default' && (!isCloudChannel || isGlobalView)) {
         switch (activeTab) {
           case "images":
@@ -298,10 +298,12 @@ export function MainContentView({
             break;
           case "all":
           default:
+            // No type filtering needed for "all"
             break;
         }
     }
 
+    // Apply date filtering if a date is selected
     if (selectedDate) {
       processedFiles = processedFiles.filter(file =>
         file.timestamp && isSameDay(new Date(file.timestamp * 1000), selectedDate)
@@ -326,9 +328,9 @@ export function MainContentView({
                         : (isGlobalView ? mediaFilesToDisplay : (isCloudChannel && organizationMode === 'default' ? vfsItems : mediaFilesToDisplay));
 
 
-  const noResultsForFilter = (!isCloudChannel || isGlobalView) && organizationMode === 'default' && (activeTab !== "all" || selectedDate || searchTerm) && mediaFilesToDisplay.length === 0 && !isLoading && !isLoadingMoreMedia;
+  const noResultsForFilter = (isGlobalView || !isCloudChannel) && organizationMode === 'default' && (activeTab !== "all" || selectedDate || searchTerm) && mediaFilesToDisplay.length === 0 && !isLoading && !isLoadingMoreMedia;
   const noMediaAtAll = !isGlobalView && !isCloudChannel && organizationMode === 'default' && activeTab === "all" && !selectedDate && !searchTerm && mediaFilesToDisplay.length === 0 && !isLoading && !isLoadingMoreMedia && !hasMore;
-  const noGlobalMedia = isGlobalView && organizationMode === 'default' && mediaFilesToDisplay.length === 0 && !isLoading && !isLoadingMoreMedia && !hasMore && !globalStatusMessage?.includes("Loading");
+  const noGlobalMediaDefaultOrg = isGlobalView && organizationMode === 'default' && mediaFilesToDisplay.length === 0 && !isLoading && !isLoadingMoreMedia && !hasMore && !(globalStatusMessage || "").toLowerCase().includes("loading") && !(globalStatusMessage || "").toLowerCase().includes("initializing") && !(globalStatusMessage || "").toLowerCase().includes("fetching");
 
 
   let lastDisplayedDay: Date | null = null;
@@ -402,7 +404,7 @@ export function MainContentView({
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
                 {displayItems.map((item, index) => {
-                  if (item.type === 'folder') { // Custom global folders
+                  if (item.type === 'folder') {
                     const folderItem = item as { type: 'folder'; name: string; entry: GlobalDriveFolderEntry, itemCount: number };
                     const syntheticFolder: CloudFolder = {
                       id: `custom-global-${currentCustomGlobalPath}-${folderItem.name}`,
@@ -417,13 +419,13 @@ export function MainContentView({
                         itemCountOverride={folderItem.itemCount}
                         style={{ animationDelay: `${index * 30}ms` }}
                         onClick={() => setCurrentCustomGlobalPath(syntheticFolder.vfsPath!)}
-                        onDelete={() => onDeleteVirtualFolder(normalizePath(currentCustomGlobalPath + folderItem.name + '/'), folderItem.name)}
+                        onDelete={() => onDeleteVirtualFolder(normalizePath(currentCustomGlobalPath), folderItem.name)}
                         onCreateFolderInside={() => onOpenCreateVirtualFolderDialog(normalizePath(currentCustomGlobalPath + folderItem.name + '/'))}
-                        isCloudChannelContext={true}
+                        isCloudChannelContext={true} // Enables context menu for custom global folders
                       />
                     );
                   }
-                  return null; // No files rendered in custom global folders in this phase
+                  return null;
                 })}
               </div>
             )}
@@ -434,12 +436,17 @@ export function MainContentView({
                 <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center py-10 h-full">
                   <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
                   <p className="text-lg">
-                      {isGlobalView ? "Global Drive is empty or still loading initial content." : "This folder is empty."}
+                      {isGlobalView && organizationMode === 'default' && globalStatusMessage && !(globalStatusMessage || "").toLowerCase().includes("complete") && !(globalStatusMessage || "").toLowerCase().includes("idle") ? "Global Drive is initializing or loading content." :
+                       (noResultsForFilter ? "No media items found for the current filter." :
+                       (noGlobalMediaDefaultOrg ? "Global Drive is empty or content is still loading." :
+                       (isCloudChannel ? "This folder is empty." :
+                       (noMediaAtAll ? "This chat contains no media items." : "No items to display.")) ))
+                      }
                   </p>
-                   {isGlobalView && globalStatusMessage && <p className="text-sm mt-2">{globalStatusMessage}</p>}
-                   {noResultsForFilter && hasMore && onLoadMoreMedia && (
+                   {isGlobalView && organizationMode === 'default' && globalStatusMessage && <p className="text-sm mt-2">{globalStatusMessage}</p>}
+                   {(noResultsForFilter || noGlobalMediaDefaultOrg) && hasMore && onLoadMoreMedia && (
                      <>
-                      <p className="text-base mt-2">Try loading more to see if items appear in this category.</p>
+                      <p className="text-base mt-2">Try loading more to see if items appear {noResultsForFilter ? "in this category" : ""}.</p>
                       <Button onClick={onLoadMoreMedia} disabled={isLoadingMoreMedia || isLoading} variant="outline" className="mt-4">
                         {(isLoadingMoreMedia || isLoading) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Load More
                       </Button>
@@ -466,7 +473,7 @@ export function MainContentView({
                             itemCountOverride={(item as any).itemCount}
                             style={{ animationDelay: `${index * 30}ms` }}
                             onClick={() => onNavigateVirtualPath(normalizePath(currentVirtualPath + item.name + '/'))}
-                            onDelete={() => onDeleteVirtualFolder(normalizePath(currentVirtualPath + item.name + '/'), item.name, selectedFolderInputPeer)}
+                            onDelete={() => onDeleteVirtualFolder(normalizePath(currentVirtualPath), item.name, selectedFolderInputPeer)}
                             onCreateFolderInside={() => onOpenCreateVirtualFolderDialog(normalizePath(currentVirtualPath + item.name + '/'))}
                             onCopyFolderStructure={onCopyFolderStructure}
                             isCloudChannelContext={true}
@@ -476,7 +483,7 @@ export function MainContentView({
                       const fileItem = (isCloudChannel && !isGlobalView && organizationMode === 'default') ? (item as any).cloudFile as CloudFile : item as CloudFile;
                       if (!fileItem || !fileItem.id) return null;
 
-                      if (!fileItem.timestamp && !isGlobalView && !isCloudChannel) return null;
+                      if (!fileItem.timestamp && !isGlobalView && !isCloudChannel && organizationMode === 'default') return null;
 
                       const fileDate = fileItem.timestamp ? new Date(fileItem.timestamp * 1000) : new Date();
                       let dayHeader = null;
@@ -515,6 +522,7 @@ export function MainContentView({
                             preparingStreamForFileId={preparingStreamForFileId}
                             onDeleteFile={() => onDeleteFile(fileItem)}
                             onCopyFile={onCopyFile}
+                            isGlobalViewContext={isGlobalView && organizationMode === 'default'}
                           />
                       );
                        return (
@@ -579,7 +587,7 @@ export function MainContentView({
                     <ListTree className="w-5 h-5 text-muted-foreground"/>
                 </div>
             )}
-            {isGlobalView && globalStatusMessage && (
+            {isGlobalView && organizationMode === 'default' && globalStatusMessage && (
               <div className="text-xs text-muted-foreground flex items-center bg-secondary px-3 py-1.5 rounded-full">
                 {(isLoading || isLoadingCustomGlobalDriveConfig) ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <InfoIcon className="h-4 w-4 mr-2 text-primary/70" />}
                 <span>{globalStatusMessage}</span>
@@ -589,9 +597,9 @@ export function MainContentView({
           {renderBreadcrumbs()}
       </div>
 
-      {organizationMode === 'default' && ( // Controls for default organization (regular chats or default global)
+      {organizationMode === 'default' && (
         <div className="flex flex-col sm:flex-row gap-3 mb-3 items-center flex-wrap flex-shrink-0">
-          {isCloudChannel && !isGlobalView ? (
+          {isCloudChannel && !isGlobalView ? ( // VFS Cloud Channel controls
             <>
               {currentVirtualPath !== '/' && (
                 <Button variant="outline" onClick={() => onNavigateVirtualPath(getParentPath(currentVirtualPath))} className="w-full sm:w-auto">
@@ -608,7 +616,7 @@ export function MainContentView({
                 <Settings2 className="mr-2 h-4 w-4" /> Manage Channel
               </Button>}
             </>
-          ) : (!isCloudChannel || isGlobalView) ? (
+          ) : ( // Default Chat or Default Global Drive controls
               <>
                 <Button variant="outline" onClick={handleSearchButtonClick} className="w-full sm:w-auto">
                   <Search className="mr-2 h-4 w-4" /> Search
@@ -633,8 +641,8 @@ export function MainContentView({
                   <UploadCloud className="mr-2 h-4 w-4" /> Upload File
                 </Button>}
               </>
-          ) : null }
-          {(!isCloudChannel || isGlobalView) ? (
+          )}
+          {(!isCloudChannel || isGlobalView) && organizationMode === 'default' && ( // Tabs for Default Chat or Default Global
             <>
               <div className="flex-grow"></div> {}
               <Tabs defaultValue="all" onValueChange={setActiveTab} value={activeTab} className="w-full sm:w-auto">
@@ -647,10 +655,10 @@ export function MainContentView({
                 </TabsList>
               </Tabs>
             </>
-          ) : null}
+          )}
         </div>
       )}
-      {isGlobalView && organizationMode === 'custom' && ( // Controls specific to Custom Global Drive
+      {isGlobalView && organizationMode === 'custom' && (
           <div className="flex flex-col sm:flex-row gap-3 mb-3 items-center flex-wrap flex-shrink-0">
               {currentCustomGlobalPath !== '/' && (
                 <Button variant="outline" onClick={() => setCurrentCustomGlobalPath(getParentPath(currentCustomGlobalPath))} className="w-full sm:w-auto">
@@ -660,48 +668,20 @@ export function MainContentView({
               <Button variant="outline" onClick={() => onOpenCreateVirtualFolderDialog(currentCustomGlobalPath)} className="w-full sm:w-auto" disabled={isLoadingCustomGlobalDriveConfig || !!customGlobalDriveConfigError}>
                 <FolderPlus className="mr-2 h-4 w-4" /> Create Folder Here
               </Button>
-              {/* Other custom global controls can go here */}
           </div>
       )}
 
 
-      {(isLoading && displayItems.length === 0 && (!isGlobalView || !globalStatusMessage?.includes("complete") || organizationMode === 'default')) ? (
+      {(isLoading && displayItems.length === 0 && (!isGlobalView || organizationMode === 'default' || (organizationMode === 'custom' && isLoadingCustomGlobalDriveConfig))) ? (
           <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center h-full">
               <Loader2 className="animate-spin h-12 w-12 text-primary mb-4" />
               <p className="text-lg">
-                {isGlobalView && globalStatusMessage ? globalStatusMessage : (isCloudChannel ? "Loading cloud storage contents..." : "Loading media...")}
+                {isGlobalView && organizationMode === 'default' && globalStatusMessage ? globalStatusMessage :
+                 (isGlobalView && organizationMode === 'custom' && isLoadingCustomGlobalDriveConfig ? "Loading custom configuration..." :
+                 (isCloudChannel ? "Loading cloud storage contents..." : "Loading media..."))}
               </p>
           </div>
-      ) : noResultsForFilter && organizationMode === 'default' ? (
-        <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center h-full">
-          <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
-          <p className="text-lg">
-            No media items found for the current filter
-            {activeTab !== "all" ? ` in "${TABS_CONFIG.find(t=>t.value === activeTab)?.label}"` : ""}
-            {selectedDate ? ` on ${format(selectedDate, "PPP")}` : ""}.
-          </p>
-          {hasMore && onLoadMoreMedia && (
-             <>
-                <span className="block text-base mt-2">Try loading more to see if items appear in this category.</span>
-                <Button onClick={onLoadMoreMedia} disabled={isLoadingMoreMedia || isLoading} variant="outline" className="mt-4">
-                {(isLoadingMoreMedia || isLoading) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Load More
-                </Button>
-            </>
-          )}
-        </div>
-      ) : noMediaAtAll && organizationMode === 'default' ? (
-         <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center h-full">
-          <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
-          <p className="text-lg">This chat contains no media items.</p>
-        </div>
-      ) : noGlobalMedia && isGlobalView && organizationMode === 'default' ? (
-         <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center h-full">
-          <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
-          <p className="text-lg">Global Drive is empty or content is still loading.</p>
-          {globalStatusMessage && <p className="text-sm mt-2">{globalStatusMessage}</p>}
-        </div>
-      ): mainItemsContent() }
+      ) : mainItemsContent() }
 
       {backgroundContextMenu.visible && (
         <ContextMenu
