@@ -26,32 +26,47 @@ const DEFAULT_GLOBAL_DRIVE_CONFIG: GlobalDriveConfigV1 = {
 interface UseGlobalDriveConfigManagerProps {
   toast: ReturnType<typeof useToast>['toast'];
   handleGlobalApiError: (error: any, title: string, defaultMessage: string, doPageReset?: boolean) => void;
-  isConnected: boolean;
+  isConnected: boolean; // This will be initialIsConnected
+  setIsConnected?: (isConnected: boolean) => void; // Optional prop for external update
 }
 
 export function useGlobalDriveConfigManager({
   toast,
   handleGlobalApiError,
-  isConnected,
+  isConnected: initialIsConnected,
+  setIsConnected: setExternalIsConnected,
 }: UseGlobalDriveConfigManagerProps) {
   const [customConfig, setCustomConfig] = useState<GlobalDriveConfigV1 | null>(null);
   const [isLoadingConfig, setIsLoadingConfig] = useState(false);
   const [configError, setConfigError] = useState<string | null>(null);
   const [selfPeer, setSelfPeer] = useState<InputPeer | null>(null);
   const [configMessageId, setConfigMessageId] = useState<number | null>(null);
+  const [isConnectedInternal, setIsConnectedInternal] = useState(initialIsConnected);
+
+  useEffect(() => {
+    setIsConnectedInternal(initialIsConnected);
+  }, [initialIsConnected]);
+
+  const setIsConnected = useCallback((connected: boolean) => {
+    setIsConnectedInternal(connected);
+    if (setExternalIsConnected) {
+      setExternalIsConnected(connected);
+    }
+  }, [setExternalIsConnected]);
+
 
   useEffect(() => {
     const fetchSelfPeer = async () => {
-      if (isConnected && !selfPeer) {
+      if (isConnectedInternal && !selfPeer) {
         const peer = await telegramService.getSelfInputPeer();
         setSelfPeer(peer);
       }
     };
     fetchSelfPeer();
-  }, [isConnected, selfPeer]);
+  }, [isConnectedInternal, selfPeer]);
 
   const updateAndSaveConfig = useCallback(async (newConfig: GlobalDriveConfigV1) => {
-    if (!isConnected || !selfPeer) {
+    if (!isConnectedInternal || !selfPeer) {
       toast({ title: "Save Failed", description: "Not connected or self peer unavailable.", variant: "destructive" });
       return false;
     }
@@ -85,7 +100,12 @@ export function useGlobalDriveConfigManager({
       }
 
       if (configMessageId && configMessageId !== newConfigMsgId) {
-        await telegramService.deleteTelegramMessages(selfPeer, [configMessageId]);
+        // Ensure selfPeer is not null before attempting deletion
+        if (selfPeer) {
+            await telegramService.deleteTelegramMessages(selfPeer, [configMessageId]);
+        } else {
+            console.warn("Self peer not available, cannot delete old config message.");
+        }
       }
 
       setCustomConfig(updatedConfigWithTimestamp);
@@ -99,11 +119,11 @@ export function useGlobalDriveConfigManager({
     } finally {
       setIsLoadingConfig(false);
     }
-  }, [isConnected, selfPeer, configMessageId, toast, handleGlobalApiError]);
+  }, [isConnectedInternal, selfPeer, configMessageId, toast, handleGlobalApiError]);
 
 
   const loadOrCreateConfig = useCallback(async () => {
-    if (!isConnected || !selfPeer) {
+    if (!isConnectedInternal || !selfPeer) {
       setConfigError("Not connected or self peer not available.");
       return;
     }
@@ -184,7 +204,7 @@ export function useGlobalDriveConfigManager({
     } finally {
       setIsLoadingConfig(false);
     }
-  }, [isConnected, selfPeer, toast, handleGlobalApiError]);
+  }, [isConnectedInternal, selfPeer, toast, handleGlobalApiError]);
 
   const resetConfigState = useCallback(() => {
     setCustomConfig(null);
@@ -198,21 +218,24 @@ export function useGlobalDriveConfigManager({
       toast({ title: "Error", description: "No custom config loaded to add folder to.", variant: "destructive" });
       return;
     }
-    const newConfig = JSON.parse(JSON.stringify(customConfig)) as GlobalDriveConfigV1;
+    const newConfig = JSON.parse(JSON.stringify(customConfig)) as GlobalDriveConfigV1; // Deep copy
     let currentEntries = newConfig.root_entries;
     const segments = normalizePath(parentPath).split('/').filter(s => s);
+    
     for (const segment of segments) {
-      if (currentEntries[segment] && currentEntries[segment].type === 'folder') {
+      if (currentEntries[segment] && currentEntries[segment].type === 'folder' && (currentEntries[segment] as GlobalDriveFolderEntry).entries) {
         currentEntries = (currentEntries[segment] as GlobalDriveFolderEntry).entries;
       } else {
         toast({ title: "Error", description: `Invalid parent path: ${parentPath}`, variant: "destructive" });
         return;
       }
     }
+
     if (currentEntries[folderName]) {
       toast({ title: "Error", description: `Folder "${folderName}" already exists in ${parentPath}.`, variant: "destructive" });
       return;
     }
+
     const now = new Date().toISOString();
     currentEntries[folderName] = {
       type: 'folder',
@@ -229,36 +252,27 @@ export function useGlobalDriveConfigManager({
       toast({ title: "Error", description: "No custom config loaded to remove folder from.", variant: "destructive" });
       return;
     }
-    const newConfig = JSON.parse(JSON.stringify(customConfig)) as GlobalDriveConfigV1;
+    const newConfig = JSON.parse(JSON.stringify(customConfig)) as GlobalDriveConfigV1; // Deep copy
     let parentEntries = newConfig.root_entries;
 
-
-    const fullPathToDelete = normalizePath(folderPath + folderName);
-
-
-    const segments = fullPathToDelete.split('/').filter(s => s);
-    const nameToDelete = segments.pop();
-
-    if (!nameToDelete) {
-       toast({ title: "Error", description: `Cannot determine folder to delete from path: ${fullPathToDelete}`, variant: "destructive" });
-       return;
-    }
-
+    // folderPath is the path *to* the folder to be deleted.
+    // folderName is the name of the folder to delete *within* folderPath.
+    const segments = normalizePath(folderPath).split('/').filter(s => s); 
 
     for (const segment of segments) {
-      if (parentEntries[segment] && parentEntries[segment].type === 'folder') {
+      if (parentEntries[segment] && parentEntries[segment].type === 'folder' && (parentEntries[segment] as GlobalDriveFolderEntry).entries) {
         parentEntries = (parentEntries[segment] as GlobalDriveFolderEntry).entries;
       } else {
-        toast({ title: "Error", description: `Invalid parent path segment "${segment}" for deletion of "${nameToDelete}"`, variant: "destructive" });
+        toast({ title: "Error", description: `Invalid parent path segment "${segment}" for deletion of "${folderName}"`, variant: "destructive" });
         return;
       }
     }
 
-    if (parentEntries[nameToDelete] && parentEntries[nameToDelete].type === 'folder') {
-      delete parentEntries[nameToDelete];
+    if (parentEntries[folderName] && parentEntries[folderName].type === 'folder') {
+      delete parentEntries[folderName];
       await updateAndSaveConfig(newConfig);
     } else {
-      toast({ title: "Error", description: `Folder "${nameToDelete}" not found in its parent for deletion.`, variant: "destructive" });
+      toast({ title: "Error", description: `Folder "${folderName}" not found in its parent path "${folderPath}" for deletion.`, variant: "destructive" });
     }
   }, [customConfig, updateAndSaveConfig, toast]);
 
@@ -273,5 +287,6 @@ export function useGlobalDriveConfigManager({
     addVirtualFolderInConfig,
     removeVirtualFolderFromConfig,
     resetConfigState,
+    setIsConnected, // Expose setter
   };
 }
