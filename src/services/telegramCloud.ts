@@ -29,8 +29,6 @@ function generateRandomLong(): string {
 export async function getSelfInputPeer(): Promise<InputPeer | null> {
   if (!(await isUserConnected())) return null;
   try {
-    // Fetching self user to ensure access_hash is up-to-date if needed,
-    // though 'inputPeerSelf' doesn't require access_hash.
     const selfUser = await telegramApiInstance.call('users.getUsers', { id: [{ _: 'inputUserSelf' }] });
     if (selfUser && selfUser.length > 0) {
       return { _: 'inputPeerSelf' };
@@ -42,6 +40,37 @@ export async function getSelfInputPeer(): Promise<InputPeer | null> {
   }
 }
 
+async function checkMessagesForConfig(
+  messages: any[],
+  captionKey: string,
+  captionValue: string,
+  expectedFilename: string
+): Promise<any | null> {
+  if (!messages || messages.length === 0) return null;
+
+  for (const message of messages) {
+    // Ensure message has media, is a document, and has a caption (message.message)
+    if (message.media && message.media._ === 'messageMediaDocument' && message.message) {
+      const doc = message.media.document;
+      const filenameAttribute = doc.attributes?.find((attr: any) => attr._ === 'documentAttributeFilename');
+      const actualFilename = filenameAttribute?.file_name;
+
+      if (actualFilename !== expectedFilename) {
+        continue; // Skip if filename doesn't match
+      }
+
+      try {
+        // The caption for document messages is in `message.message`
+        const parsedCaption = JSON.parse(message.message);
+        if (parsedCaption && parsedCaption[captionKey] === captionValue) {
+          return message; // Found the config message
+        }
+      } catch (e) { /* ignore messages with non-JSON captions or parse errors */ }
+    }
+  }
+  return null;
+}
+
 export async function searchSelfMessagesByCaption(
   captionKey: string,
   captionValue: string
@@ -50,42 +79,57 @@ export async function searchSelfMessagesByCaption(
   if (!selfPeer) return null;
 
   try {
-    // Fetch a reasonable number of recent messages from Saved Messages
-    // Telegram search by caption isn't a direct API feature, so we filter client-side or rely on broad search.
-    // Using messages.search with inputPeerSelf
-    const searchResults = await telegramApiInstance.call('messages.search', {
+    // 1. Check pinned messages first
+    const pinnedResults = await telegramApiInstance.call('messages.search', {
       peer: selfPeer,
-      q: '', // Empty query, relying on filter or manual check
-      filter: { _: 'inputMessagesFilterPinned' }, // Check pinned messages first
+      q: '',
+      filter: { _: 'inputMessagesFilterPinned' },
       min_date: 0,
       max_date: 0,
       offset_id: 0,
       add_offset: 0,
-      limit: 10, // Check last 10 pinned
+      limit: 20, // Check last 20 pinned
       max_id: 0,
       min_id: 0,
       hash: 0,
     });
-    
-    if (searchResults && searchResults.messages) {
-      for (const message of searchResults.messages) {
-        if (message.message) { // Caption is in message.message for documents
-          try {
-            const parsedCaption = JSON.parse(message.message);
-            if (parsedCaption && parsedCaption[captionKey] === captionValue) {
-              return message; // Found the config message
-            }
-          } catch (e) { /* ignore messages with non-JSON captions */ }
-        }
+
+    if (pinnedResults && pinnedResults.messages) {
+      const foundInPinned = await checkMessagesForConfig(pinnedResults.messages, captionKey, captionValue, GLOBAL_DRIVE_CONFIG_FILENAME);
+      if (foundInPinned) {
+        return foundInPinned;
       }
     }
-    // If not found in pinned, could extend to search more messages, but that's less efficient.
-    // For now, relying on it being pinned.
+
+    // 2. If not in pinned, check recent general history (e.g., last 100 messages)
+    // We specifically look for documents, as the config is a JSON file.
+    const historyResults = await telegramApiInstance.call('messages.search', {
+      peer: selfPeer,
+      q: '', // General search
+      filter: { _: 'inputMessagesFilterDocument' }, // Only search for documents
+      limit: 100, // Check last 100 document messages
+      offset_id: 0,
+      add_offset: 0,
+      min_date: 0,
+      max_date: 0,
+      max_id: 0,
+      min_id: 0,
+      hash: 0,
+    });
+
+    if (historyResults && historyResults.messages) {
+       const foundInHistory = await checkMessagesForConfig(historyResults.messages, captionKey, captionValue, GLOBAL_DRIVE_CONFIG_FILENAME);
+       if (foundInHistory) {
+         return foundInHistory;
+       }
+    }
+
   } catch (error) {
-    // console.error("Error searching self messages:", error);
+    // console.error("Error searching self messages for config:", error);
   }
   return null;
 }
+
 
 export async function uploadTextAsFileToSelfChat(
   fileName: string,
@@ -102,14 +146,10 @@ export async function uploadTextAsFileToSelfChat(
 
   const captionString = JSON.stringify(captionJson);
 
-  // Use the existing uploadFile service
   try {
     const sentMessageContainer = await uploadFile(selfPeer, file, (progress) => {
-      // console.log(`Uploading ${fileName} to self chat: ${progress}%`);
-    }, undefined /* no signal */, captionString);
-    
-    // The structure of sentMessageContainer can vary.
-    // Often it's an 'updates' object containing the message.
+    }, undefined, captionString);
+
     if (sentMessageContainer && (sentMessageContainer._ === 'updates' || sentMessageContainer._ === 'updatesCombined')) {
         const updatesArray = sentMessageContainer.updates || [];
         for (const update of updatesArray) {
@@ -122,11 +162,9 @@ export async function uploadTextAsFileToSelfChat(
                 }
             }
         }
-    } else if (sentMessageContainer && sentMessageContainer.media && sentMessageContainer.media.document) { // Simpler response
+    } else if (sentMessageContainer && sentMessageContainer.media && sentMessageContainer.media.document) {
         return sentMessageContainer;
     }
-    // console.warn("Could not confirm exact sent message object after upload:", sentMessageContainer);
-    // Fallback: try to fetch the last message sent to self chat if specific object not found (less reliable)
     const history = await telegramApiInstance.call('messages.getHistory', { peer: selfPeer, limit: 1, offset_id: 0, offset_date: 0, add_offset: 0, max_id: 0, min_id: 0, hash: 0 });
     if (history && history.messages && history.messages.length > 0) {
         const lastMsg = history.messages[0];
@@ -137,9 +175,8 @@ export async function uploadTextAsFileToSelfChat(
             }
         }
     }
-    return null; // Or throw error if critical
+    return null;
   } catch (error) {
-    // console.error(`Error uploading ${fileName} to self chat:`, error);
     throw error;
   }
 }
@@ -150,13 +187,12 @@ export async function pinSelfChatMessage(messageId: number, silent: boolean = tr
   try {
     const result = await telegramApiInstance.call('messages.updatePinnedMessage', {
       silent: silent,
-      unpin: false, // Explicitly false to pin
+      unpin: false,
       peer: selfPeer,
       id: messageId,
     });
     return result && (result._ === 'updates' || result._ === 'updatesCombined');
   } catch (error) {
-    // console.error("Error pinning self chat message:", error);
     return false;
   }
 }
@@ -168,13 +204,10 @@ export async function unpinAllSelfChatMessages(): Promise<boolean> {
     const result = await telegramApiInstance.call('messages.unpinAllMessages', {
       peer: selfPeer,
     });
-    // messages.affectedHistory seems to be the success response
     return result && result._ === 'messages.affectedHistory';
-  } catch (error) {
-    // console.error("Error unpinning all self chat messages:", error);
-    // It might fail if nothing is pinned, which is fine.
+  } catch (error: any) {
     if ((error as any).message?.includes('PINNED_DIALOGS_TOO_MUCH') || (error as any).message?.includes('MESSAGE_NOT_MODIFIED')) {
-        return true; // Treat as success if there was nothing to unpin or already unpinned.
+        return true;
     }
     return false;
   }
@@ -198,13 +231,11 @@ export async function getCloudChannelConfig(channelInputPeer: InputPeer): Promis
             return tempConfig as CloudChannelConfigV1;
           }
         } catch (parseError) {
-          // console.error("Error parsing config message:", parseError, configMessage.message);
           return null;
         }
       }
     }
   } catch (error: any) {
-    // console.error(`Error fetching config for channel ${channelInputPeer.channel_id}:`, error);
   }
   return null;
 }
@@ -223,8 +254,7 @@ export async function updateCloudChannelConfig(channelInputPeer: InputPeer, newC
     });
     return !!result;
   } catch (error: any) {
-    // console.error(`Error updating config for channel ${channelInputPeer.channel_id}:`, error);
-    throw error; // Re-throw to allow specific handling in hook
+    throw error;
   }
 }
 
@@ -284,12 +314,8 @@ export async function ensureChannelInCloudFolder(channelInputPeer: InputPeer, ch
       await telegramApiInstance.call('messages.updateDialogFilter', { id: CLOUDIFIER_MANAGED_FOLDER_ID, filter: newFilter });
       updateNeeded = true;
     }
-    if (updateNeeded && !isNewChannelCreation) {
-      // console.log(`Ensured channel "${channelTitleForLog}" is in "${CLOUDIFIER_MANAGED_FOLDER_NAME}". Update performed.`);
-    }
     return updateNeeded;
   } catch (error) {
-    // console.error(`Error ensuring channel ${channelTitleForLog} in Cloudifier folder:`, error);
     return false;
   }
 }
@@ -333,7 +359,6 @@ export async function createManagedCloudChannel(
             no_webpage: true,
         });
     } catch (initMsgError) {
-        // console.warn("Failed to send identification message, but proceeding:", initMsgError);
     }
 
     const now = new Date().toISOString();
@@ -460,11 +485,10 @@ export async function fetchAndVerifyManagedCloudChannels(): Promise<CloudFolder[
             if (tempConfig && tempConfig.app_signature === CLOUDIFIER_APP_SIGNATURE_V1) {
               parsedConfig = tempConfig as CloudChannelConfigV1;
             }
-          } catch (parseError) { /* console.error("Error parsing config for channel:", channelInfo.title, parseError); */ }
+          } catch (parseError) {  }
         }
       }
     } catch (error: any) {
-      // console.debug(`Skipping channel ${channelInfo.title} during verification (getMessages error):`, error.message);
     }
 
     if (isIdentified && parsedConfig) {
@@ -667,7 +691,7 @@ export async function updateChannelPhotoService(channelInputPeer: InputPeer, pho
     if (!channelInputPeer || channelInputPeer._ !== 'inputPeerChannel') {
         throw new Error("Invalid input peer for updating channel photo.");
     }
-    if (!photoInputChatPhoto) { // This should be of type InputChatPhoto
+    if (!photoInputChatPhoto) {
         throw new Error("InputChatPhoto is required to update channel photo.");
     }
     try {
@@ -677,7 +701,6 @@ export async function updateChannelPhotoService(channelInputPeer: InputPeer, pho
         });
 
         if (result && (result._ === 'updates' || result._ === 'updatesCombined')) {
-            // Try to find the updated channel photo in result.chats
             if (result.chats && Array.isArray(result.chats)) {
                 const updatedChannelEntity = result.chats.find(
                     (c: any) => c._ === 'channel' && String(c.id) === String(channelInputPeer.channel_id)
@@ -686,7 +709,6 @@ export async function updateChannelPhotoService(channelInputPeer: InputPeer, pho
                     return { photo: updatedChannelEntity.photo, date: result.date || Math.floor(Date.now() / 1000) };
                 }
             }
-            // Fallback to looking for updateChannelPhoto in result.updates
             if (result.updates && Array.isArray(result.updates)) {
                 for (const singleUpdate of result.updates) {
                     if (singleUpdate._ === 'updateChannelPhoto' && String(singleUpdate.channel_id) === String(channelInputPeer.channel_id)) {
@@ -695,14 +717,12 @@ export async function updateChannelPhotoService(channelInputPeer: InputPeer, pho
                 }
             }
         } else if (result && result._ === 'updateShort' && result.update) {
-            // Handle simpler update types if the API ever returns them for this
             const singleUpdate = result.update;
              if (singleUpdate._ === 'updateChannelPhoto' && String(singleUpdate.channel_id) === String(channelInputPeer.channel_id)) {
                 return { photo: singleUpdate.photo, date: result.date };
             }
         }
-        // console.warn("Could not extract updated photo from channels.editPhoto response:", JSON.stringify(result, null, 2));
-        return null; // Photo might have updated but wasn't easily extractable from this response structure
+        return null;
     } catch (error: any) {
         throw error;
     }
@@ -713,9 +733,9 @@ export async function uploadFileToServerForPhoto(
   onProgress: (percent: number) => void,
   signal?: AbortSignal
 ): Promise<any> { // Should return an InputFile or InputFileBig
-  const client_file_id_str = String(Date.now()) + String(Math.floor(Math.random() * 1000000)); // Unique enough for client-side
-  const isBigFile = fileToUpload.size > (10 * 1024 * 1024); // 10MB threshold for big file
-  const partSize = 512 * 1024; // 512KB
+  const client_file_id_str = String(Date.now()) + String(Math.floor(Math.random() * 1000000));
+  const isBigFile = fileToUpload.size > (10 * 1024 * 1024);
+  const partSize = 512 * 1024;
   const totalParts = Math.ceil(fileToUpload.size / partSize);
 
   onProgress(0);
@@ -822,40 +842,25 @@ export async function inviteUserToChannel(channelInputPeer: InputPeer, userToInv
 }
 
 export async function getContacts(): Promise<any[]> {
-  console.log("[TelegramCloud_GetContacts] Attempting to fetch contacts...");
   try {
     const result = await telegramApiInstance.call('contacts.getContacts', { hash: 0 });
-    console.log("[TelegramCloud_GetContacts] Raw API Result:", JSON.stringify(result, null, 2));
 
     if (result && result._ === 'contacts.contacts' && Array.isArray(result.contacts) && Array.isArray(result.users)) {
-      console.log(`[TelegramCloud_GetContacts] Received ${result.contacts.length} contact entries and ${result.users.length} user objects.`);
-      
       const mutualContacts = result.contacts
         .map((contact: any) => {
           const userDetail = result.users.find((user: any) => String(user.id) === String(contact.user_id));
           if (!userDetail) {
-            console.warn(`[TelegramCloud_GetContacts] User ID ${contact.user_id} from contacts not found in users array.`);
             return null;
           }
-          // Prefer the 'mutual_contact' flag on the User object, fallback to 'mutual' on Contact.
           const isMutual = userDetail.mutual_contact === true || contact.mutual === true;
           return isMutual ? userDetail : null;
         })
         .filter((user: any) => user !== null);
-      
-      console.log(`[TelegramCloud_GetContacts] Processed and filtered ${mutualContacts.length} mutual contacts successfully.`);
       return mutualContacts;
     }
-    console.warn("[TelegramCloud_GetContacts] Unexpected structure in contacts.getContacts response. Expected 'contacts.contacts' with 'contacts' and 'users' arrays. Result:", result);
     return [];
   } catch (error) {
-    console.error("[TelegramCloud_GetContacts] Error fetching contacts:", error);
     throw error;
   }
 }
-    
-
-// Removed the redundant export block below, as constants are already exported with `export const`
-// Constants for Global Drive Config File
-// export { GLOBAL_DRIVE_CONFIG_FILENAME, GLOBAL_DRIVE_CONFIG_CAPTION_KEY, GLOBAL_DRIVE_CONFIG_CAPTION_VALUE };
 
