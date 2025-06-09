@@ -1,5 +1,4 @@
 
-
 "use client";
 
 import { useState, useCallback, useEffect } from 'react';
@@ -16,15 +15,15 @@ const GLOBAL_DRIVE_CONFIG_CAPTION_VALUE = "telegram_cloudifier_global_drive_conf
 const DEFAULT_GLOBAL_DRIVE_CONFIG: GlobalDriveConfigV1 = {
   app_signature: "GLOBAL_DRIVE_CONFIG_V1.0",
   version: 1,
-  last_updated_timestamp_utc: new Date().toISOString(), // Will be set fresh on creation
+  last_updated_timestamp_utc: "", // Will be set fresh on creation/update
   root_entries: {} // Starts empty
 };
 
 interface UseGlobalDriveConfigManagerProps {
   toast: ReturnType<typeof useToast>['toast'];
   handleGlobalApiError: (error: any, title: string, defaultMessage: string, doPageReset?: boolean) => void;
-  isConnected: boolean; // This will be initialIsConnected
-  setIsConnected?: (isConnected: boolean) => void; // Optional prop for external update
+  isConnected: boolean; 
+  setIsConnected?: (isConnected: boolean) => void; 
 }
 
 export function useGlobalDriveConfigManager({
@@ -58,8 +57,9 @@ export function useGlobalDriveConfigManager({
         try {
           const peer = await telegramService.getSelfInputPeer();
           setSelfPeer(peer);
-        } catch (e) {
-          setConfigError("Failed to get self peer for config management.");
+        } catch (e: any) {
+          setConfigError("Failed to get self peer for config management: " + e.message);
+          // console.error("Failed to get self peer for config management:", e);
         }
       }
     };
@@ -73,6 +73,10 @@ export function useGlobalDriveConfigManager({
     }
     setIsLoadingConfig(true);
     setConfigError(null);
+
+    // Capture the configMessageId at the time this function instance was created/called.
+    // This value will be used for deleting the old message if a new one is successfully created.
+    const oldConfigMessageIdToPotentiallyDelete = configMessageId;
 
     try {
       const updatedConfigWithTimestamp = {
@@ -100,16 +104,13 @@ export function useGlobalDriveConfigManager({
         toast({ title: "Pinning Failed", description: "New config uploaded but could not be pinned. Please pin it manually in Saved Messages.", variant: "default" });
       }
 
-      if (configMessageId && configMessageId !== newConfigMsgId) {
-        if (selfPeer) {
-            await telegramService.deleteTelegramMessages(selfPeer, [configMessageId]);
-        } else {
-            console.warn("Self peer not available, cannot delete old config message.");
-        }
+      // Delete the old config message if there was one and it's different from the new one
+      if (oldConfigMessageIdToPotentiallyDelete && oldConfigMessageIdToPotentiallyDelete !== newConfigMsgId && selfPeer) {
+        await telegramService.deleteTelegramMessages(selfPeer, [oldConfigMessageIdToPotentiallyDelete]);
       }
 
       setCustomConfig(updatedConfigWithTimestamp);
-      setConfigMessageId(newConfigMsgId);
+      setConfigMessageId(newConfigMsgId); 
       toast({ title: "Configuration Saved", description: "Your Global Drive custom organization has been updated." });
       return true;
     } catch (error: any) {
@@ -119,19 +120,18 @@ export function useGlobalDriveConfigManager({
     } finally {
       setIsLoadingConfig(false);
     }
-  }, [isConnectedInternal, selfPeer, configMessageId, toast, handleGlobalApiError]);
-
+  }, [isConnectedInternal, selfPeer, toast, handleGlobalApiError]); // configMessageId removed from dependencies
 
   const loadOrCreateConfig = useCallback(async () => {
     if (!isConnectedInternal || !selfPeer) {
       setConfigError("Not connected or self peer not available for loading/creating config.");
-      setIsLoadingConfig(false); // Ensure loading is false if we can't proceed
+      setIsLoadingConfig(false);
       return;
     }
 
     setIsLoadingConfig(true);
     setConfigError(null);
-    setCustomConfig(null);
+    setCustomConfig(null); 
     setConfigMessageId(null);
 
     try {
@@ -144,6 +144,7 @@ export function useGlobalDriveConfigManager({
       if (existingConfigMessage && existingConfigMessage.media && existingConfigMessage.media._ === 'messageMediaDocument') {
         const document = existingConfigMessage.media.document;
         toast({ title: "Custom Config", description: `Found existing config file: ${document.attributes.find((a:any) => a._ === 'documentAttributeFilename')?.file_name}. Downloading...`});
+        
         const jsonContent = await telegramService.downloadDocumentContent(document);
         if (jsonContent) {
           try {
@@ -155,57 +156,34 @@ export function useGlobalDriveConfigManager({
               setIsLoadingConfig(false);
               return;
             } else {
-              toast({ title: "Config Invalid", description: "Found config file, but signature is invalid. Creating a new one.", variant: "default" });
+              toast({ title: "Config Invalid", description: "Found config file, but signature is invalid. A new one will be created if you make changes.", variant: "default" });
             }
           } catch (parseError) {
-            toast({ title: "Config Corrupted", description: "Could not parse existing config file. Creating a new one.", variant: "destructive" });
+            toast({ title: "Config Corrupted", description: "Could not parse existing config file. A new one will be created if you make changes.", variant: "destructive" });
           }
         } else {
-            toast({ title: "Config Download Failed", description: "Could not download content of existing config file. Creating a new one.", variant: "destructive" });
+            toast({ title: "Config Download Failed", description: "Could not download content of existing config file. A new one will be created if you make changes.", variant: "destructive" });
         }
       } else {
-         toast({ title: "Custom Config", description: "No existing configuration found."});
+         toast({ title: "Custom Config", description: "No existing configuration found. A new one will be created if you add custom folders."});
       }
-
-      toast({ title: "Custom Config", description: `Creating default configuration file "${GLOBAL_DRIVE_CONFIG_FILENAME}"...`});
-      const defaultConfigWithTimestamp = {
-          ...DEFAULT_GLOBAL_DRIVE_CONFIG, // This now has empty root_entries
-          last_updated_timestamp_utc: new Date().toISOString(),
+      
+      const initialEmptyConfig: GlobalDriveConfigV1 = {
+        ...DEFAULT_GLOBAL_DRIVE_CONFIG,
+        last_updated_timestamp_utc: new Date().toISOString(),
       };
-      const defaultConfigJson = JSON.stringify(defaultConfigWithTimestamp, null, 2);
-      const caption = { [GLOBAL_DRIVE_CONFIG_CAPTION_KEY]: GLOBAL_DRIVE_CONFIG_CAPTION_VALUE };
-
-      const sentMessage = await telegramService.uploadTextAsFileToSelfChat(
-        GLOBAL_DRIVE_CONFIG_FILENAME,
-        defaultConfigJson,
-        "application/json",
-        caption
-      );
-
-      if (sentMessage && sentMessage.id) {
-        setConfigMessageId(sentMessage.id);
-        toast({ title: "Custom Config File Created", description: `"${GLOBAL_DRIVE_CONFIG_FILENAME}" uploaded to your Saved Messages.`});
-        await telegramService.unpinAllSelfChatMessages();
-        const pinned = await telegramService.pinSelfChatMessage(sentMessage.id, true);
-        if (pinned) {
-          toast({ title: "Custom Config Pinned", description: "New configuration file has been pinned in your Saved Messages." });
-        } else {
-          toast({ title: "Pinning Failed", description: "Could not pin the new config file. Please pin it manually.", variant: "default" });
-        }
-        setCustomConfig(defaultConfigWithTimestamp);
-      } else {
-        throw new Error("Failed to upload or confirm new configuration file message.");
-      }
+      setCustomConfig(initialEmptyConfig); 
+      // ConfigMessageId remains null as no file exists on server yet. It will be set by updateAndSaveConfig.
 
     } catch (error: any) {
       setConfigError(error.message || "An unknown error occurred while managing custom config.");
-      handleGlobalApiError(error, "Custom Config Error", "Failed to load or create custom Global Drive configuration.");
+      handleGlobalApiError(error, "Custom Config Error", "Failed to load or prepare custom Global Drive configuration.");
       setCustomConfig(null);
       setConfigMessageId(null);
     } finally {
       setIsLoadingConfig(false);
     }
-  }, [isConnectedInternal, selfPeer, toast, handleGlobalApiError]);
+  }, [isConnectedInternal, selfPeer, toast, handleGlobalApiError]); // Removed updateAndSaveConfig from here as it's not directly called in this path anymore
 
   const resetConfigState = useCallback(() => {
     setCustomConfig(null);
@@ -215,11 +193,17 @@ export function useGlobalDriveConfigManager({
   }, []);
 
   const addVirtualFolderInConfig = useCallback(async (parentPath: string, folderName: string) => {
-    if (!customConfig) {
-      toast({ title: "Error", description: "No custom config loaded to add folder to.", variant: "destructive" });
-      return;
+    let currentConfig = customConfig;
+    if (!currentConfig) {
+      // If no config exists, create a default one before adding the folder
+      currentConfig = { 
+        ...DEFAULT_GLOBAL_DRIVE_CONFIG, // this has empty root_entries
+        last_updated_timestamp_utc: new Date().toISOString(),
+      };
+      toast({ title: "Initializing Config", description: "Creating initial custom drive configuration file."});
     }
-    const newConfig = JSON.parse(JSON.stringify(customConfig)) as GlobalDriveConfigV1; // Deep copy
+    
+    const newConfig = JSON.parse(JSON.stringify(currentConfig)) as GlobalDriveConfigV1; // Deep copy
     let currentEntries = newConfig.root_entries;
     const segments = normalizePath(parentPath).split('/').filter(s => s);
     
@@ -282,11 +266,10 @@ export function useGlobalDriveConfigManager({
     configError,
     configMessageId,
     loadOrCreateConfig,
-    updateAndSaveConfig,
+    updateAndSaveConfig, 
     addVirtualFolderInConfig,
     removeVirtualFolderFromConfig,
     resetConfigState,
     setIsConnected,
   };
 }
-
