@@ -53,7 +53,7 @@ interface MainContentViewProps {
   customGlobalDriveConfig?: GlobalDriveConfigV1 | null;
   isLoadingCustomGlobalDriveConfig?: boolean;
   customGlobalDriveConfigError?: string | null;
-  isGlobalScanActive?: boolean; // New prop to know if scan is running
+  isGlobalScanActive?: boolean; 
 }
 
 const TABS_CONFIG = [
@@ -104,7 +104,7 @@ export function MainContentView({
   customGlobalDriveConfig,
   isLoadingCustomGlobalDriveConfig,
   customGlobalDriveConfigError,
-  isGlobalScanActive, // Consuming the new prop
+  isGlobalScanActive, 
 }: MainContentViewProps) {
   const [activeTab, setActiveTab] = useState("all");
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
@@ -539,15 +539,15 @@ export function MainContentView({
                 <p className="ml-3 text-muted-foreground">Loading more content...</p>
               </div>
             )}
-            {isGlobalView && organizationMode === 'default' && !isGlobalScanActive && hasMore && onLoadMoreMedia && (
+             {isGlobalView && organizationMode === 'default' && !isGlobalScanActive && hasMore && onLoadMoreMedia && (
               <div className="col-span-full flex justify-center py-4 mt-4">
                   <Button onClick={onLoadMoreMedia} disabled={isLoading || isLoadingMoreMedia} variant="outline">
                       {(isLoading || isLoadingMoreMedia) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                      Resume Full Scan
+                      Resume Scan
                   </Button>
               </div>
             )}
-            {(!isGlobalView || organizationMode === 'default') && !isLoading && !isLoadingMoreMedia && hasMore && displayItems.length > 0 && onLoadMoreMedia && !isGlobalScanActive && !(isGlobalView && organizationMode === 'default') && (
+            {(!isGlobalView || (isGlobalView && organizationMode === 'default' && !isGlobalScanActive) ) && !isLoading && !isLoadingMoreMedia && hasMore && displayItems.length > 0 && onLoadMoreMedia && (
               <div className="col-span-full flex justify-center py-4 mt-4">
                 <Button onClick={onLoadMoreMedia} disabled={isLoadingMoreMedia || isLoading} variant="outline">
                   {(isLoadingMoreMedia || isLoading) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
