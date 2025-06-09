@@ -15,9 +15,9 @@ import { CreateCloudChannelDialog } from "@/components/create-cloud-channel-dial
 import { CreateVirtualFolderDialog } from "@/components/create-virtual-folder-dialog";
 import { DeleteItemConfirmationDialog } from "@/components/delete-item-confirmation-dialog";
 import { ManageCloudChannelDialog } from "@/components/manage-cloud-channel-dialog";
-import type { CloudFolder, DialogFilter, CloudChannelType, CloudChannelConfigV1 } from "@/types";
+import type { CloudFolder, DialogFilter, CloudChannelType, CloudChannelConfigV1, CloudFile } from "@/types"; // Added CloudFile
 import { Button } from "@/components/ui/button";
-import { Loader2, LayoutPanelLeft, MessageSquare, Cloud } from "lucide-react";
+import { Loader2, LayoutPanelLeft, MessageSquare, Cloud, Globe } from "lucide-react"; // Added Globe
 import { useToast } from "@/hooks/use-toast";
 import * as telegramService from '@/services/telegramService';
 
@@ -33,12 +33,19 @@ import { useMediaPreviewManager } from "@/hooks/features/useMediaPreviewManager"
 import { useDownloadManager } from "@/hooks/features/useDownloadManager";
 import { useUploadManager } from "@/hooks/features/useUploadManager";
 import { usePageDialogsVisibility } from "@/hooks/features/usePageDialogsVisibility";
-// useChannelAdminManager is used internally by ManageCloudChannelDialog, not directly here
+// import { useGlobalDriveManager } from "@/hooks/features/useGlobalDriveManager"; // Will be added later
 
 export default function Home() {
   const { toast } = useToast();
   const headerRef = useRef<HTMLDivElement>(null);
   const footerRef = useRef<HTMLDivElement>(null);
+
+  const [isGlobalDriveActive, setIsGlobalDriveActive] = useState(false);
+  // Placeholder for global drive data - will be replaced by useGlobalDriveManager
+  const [globalDriveMedia, setGlobalDriveMedia] = useState<CloudFile[]>([]);
+  const [isLoadingGlobalDrive, setIsLoadingGlobalDrive] = useState(false);
+  const [hasMoreGlobalDrive, setHasMoreGlobalDrive] = useState(false);
+
 
   const handleGlobalApiError = useCallback((error: any, title: string, defaultMessage: string, doPageReset: boolean = false) => {
     let description = defaultMessage;
@@ -84,7 +91,10 @@ export default function Home() {
     toast,
     handleGlobalApiError,
     dialogFilters: dialogFiltersManager.dialogFilters,
-    resetSelectedMedia: () => selectedMediaManager?.resetSelectedMedia(),
+    resetSelectedMedia: () => {
+      selectedMediaManager?.resetSelectedMedia();
+      setIsGlobalDriveActive(false); // Deactivate global drive if a specific chat is selected
+    },
     setClipboardItem: (item) => fileOperationsManager?.setClipboardItem(item),
   });
 
@@ -92,7 +102,6 @@ export default function Home() {
     isConnected: false,
     toast,
     handleGlobalApiError,
-    // onCloudChannelListChange prop removed here. Refreshing dialog filters will be handled more specifically.
   });
 
   const selectedMediaManager = useSelectedMediaManager({
@@ -106,10 +115,10 @@ export default function Home() {
   const fileOperationsManager = useFileOperationsManager({
     toast,
     handleGlobalApiError,
-    selectedFolder: selectedMediaManager.selectedFolder,
+    selectedFolder: isGlobalDriveActive ? null : selectedMediaManager.selectedFolder, // Nullify selectedFolder if global drive active
     currentVirtualPath: selectedMediaManager.currentVirtualPath,
-    currentChatMedia: selectedMediaManager.currentChatMedia,
-    setCurrentChatMedia: selectedMediaManager.setCurrentChatMedia,
+    currentChatMedia: isGlobalDriveActive ? globalDriveMedia : selectedMediaManager.currentChatMedia,
+    setCurrentChatMedia: isGlobalDriveActive ? setGlobalDriveMedia : selectedMediaManager.setCurrentChatMedia,
     updateSelectedFolderConfig: selectedMediaManager.updateSelectedFolderConfig,
     setAppManagedCloudFoldersState: appCloudChannelsManager.setAppManagedCloudFolders,
     fetchInitialChatMediaForSelectedManager: selectedMediaManager.fetchInitialChatMediaForSelected,
@@ -120,25 +129,26 @@ export default function Home() {
 
   const uploadManager = useUploadManager({
     toast,
-    selectedFolder: selectedMediaManager.selectedFolder,
+    selectedFolder: isGlobalDriveActive ? null : selectedMediaManager.selectedFolder, // Disable upload for global drive for now
     currentVirtualPath: selectedMediaManager.currentVirtualPath,
     refreshMediaCallback: () => {
-        if (selectedMediaManager.selectedFolder) {
-            selectedMediaManager.fetchInitialChatMediaForSelected(selectedMediaManager.selectedFolder);
+        if (isGlobalDriveActive) {
+          // TODO: globalDriveManager.refreshGlobalMedia();
+        } else if (selectedMediaManager.selectedFolder) {
+          selectedMediaManager.fetchInitialChatMediaForSelected(selectedMediaManager.selectedFolder);
         }
     },
   });
 
-  // This callback is passed to ManageCloudChannelDialog and then to useChannelAdminManager
-  // It needs to be stable to prevent re-renders/loops in the hook.
   const onChannelDetailsUpdatedForAdminHook = useCallback((updatedChannel: CloudFolder) => {
     appCloudChannelsManager.setAppManagedCloudFolders(prev =>
         prev.map(cf => cf.id === updatedChannel.id ? { ...cf, ...updatedChannel } : cf)
     );
-    if (selectedMediaManager.selectedFolder?.id === updatedChannel.id) {
+    if (!isGlobalDriveActive && selectedMediaManager.selectedFolder?.id === updatedChannel.id) {
         selectedMediaManager.setSelectedFolder(prev => prev ? { ...prev, ...updatedChannel } : null);
     }
   }, [
+      isGlobalDriveActive,
       appCloudChannelsManager.setAppManagedCloudFolders, 
       selectedMediaManager.setSelectedFolder, 
       selectedMediaManager.selectedFolder?.id 
@@ -149,7 +159,8 @@ export default function Home() {
     toast,
     onInitialConnect: async () => {
       await dialogFiltersManager.fetchDialogFilters(true);
-      await appCloudChannelsManager.fetchAppManagedCloudChannelsList(true); // Initial fetch for cloud channels
+      await appCloudChannelsManager.fetchAppManagedCloudChannelsList(true);
+      // TODO: Potentially trigger initial load for globalDriveManager if needed on connect
     },
     onResetApp: () => {
       authManager.resetAuthVisuals();
@@ -162,12 +173,14 @@ export default function Home() {
       downloadManager.resetDownloadManager();
       uploadManager.resetUploadManager();
       pageDialogs.resetAllDialogsVisibility();
+      setIsGlobalDriveActive(false);
+      setGlobalDriveMedia([]);
+      // TODO: globalDriveManager.reset();
     },
     setAuthStep: authManager.setAuthStep,
     handleGlobalApiError,
     handleNewCloudChannelDiscoveredAppLevel: (folder, source) => {
       const listChanged = appCloudChannelsManager?.handleNewCloudChannelVerifiedAndUpdateList(folder, source);
-      // If a new channel was actually added via an 'update' (not initial scan), refresh dialog filters
       if (listChanged && source === 'update') {
         dialogFiltersManager.fetchDialogFilters(true);
       }
@@ -181,6 +194,7 @@ export default function Home() {
     dialogFiltersManager.setIsConnected(isConnected);
     chatListManager.setIsConnected(isConnected);
     appCloudChannelsManager.setIsConnected(isConnected);
+    // TODO: globalDriveManager.setIsConnected(isConnected);
   }, [connectionManager.isConnected, dialogFiltersManager, chatListManager, appCloudChannelsManager]);
 
   useEffect(() => {
@@ -244,6 +258,12 @@ export default function Home() {
         await connectionManager.handleReset(performServerLogout);
     }, [connectionManager, mediaPreviewManager, downloadManager, uploadManager]);
 
+  const handleOpenGlobalDrive = () => {
+    setIsGlobalDriveActive(true);
+    selectedMediaManager.resetSelectedMedia(); // Clear any specific chat selection
+    // TODO: globalDriveManager.fetchInitialGlobalMedia(); // Trigger initial load
+    toast({ title: "Global Drive Activated", description: "Loading all accessible media..."});
+  };
 
   if (connectionManager.isConnecting && !connectionManager.isConnected && !authManager.authError && authManager.authStep === 'initial' && !dialogFiltersManager.hasFetchedDialogFiltersOnce) {
     return (
@@ -295,13 +315,43 @@ export default function Home() {
         isConnected={connectionManager.isConnected}
         onDisconnect={() => performFullReset(true)}
         onOpenDownloadManager={downloadManager.handleOpenDownloadManagerSheet}
-        onOpenChatSelectionDialog={pageDialogs.handleOpenChatSelectionDialog}
-        onOpenCloudStorageSelector={pageDialogs.handleOpenCloudStorageSelector}
+        onOpenChatSelectionDialog={() => { setIsGlobalDriveActive(false); pageDialogs.handleOpenChatSelectionDialog(); }}
+        onOpenCloudStorageSelector={() => { setIsGlobalDriveActive(false); pageDialogs.handleOpenCloudStorageSelector(); }}
+        onOpenGlobalDrive={handleOpenGlobalDrive}
       />
       <div className="flex-1 flex overflow-hidden min-h-0">
         <main className="flex-1 overflow-y-auto bg-background">
           <div className="container mx-auto h-full px-0 sm:px-0 lg:px-0 py-0 md:py-0 lg:py-0">
-            {selectedMediaManager.selectedFolder ? (
+            {isGlobalDriveActive ? (
+              <MainContentView
+                folderName="Global Drive"
+                files={globalDriveMedia} // Will come from globalDriveManager
+                isLoading={isLoadingGlobalDrive} // Will come from globalDriveManager
+                isLoadingMoreMedia={isLoadingGlobalDrive && globalDriveMedia.length > 0}
+                hasMore={hasMoreGlobalDrive} // Will come from globalDriveManager
+                onFileDetailsClick={fileOperationsManager.handleOpenFileDetails}
+                onQueueDownloadClick={downloadManager.handleQueueDownloadFile}
+                onFileViewImageClick={mediaPreviewManager.handleViewImage}
+                onFilePlayVideoClick={mediaPreviewManager.handlePlayVideo}
+                onOpenUploadDialog={() => toast({title: "Upload Not Available", description: "Uploads are not supported in Global Drive view."})} // No uploads to global drive
+                isPreparingStream={mediaPreviewManager.isPreparingVideoStream}
+                preparingStreamForFileId={mediaPreviewManager.preparingVideoStreamForFileId}
+                onLoadMoreMedia={() => { /* TODO: globalDriveManager.loadMoreGlobalMedia(); */ }}
+                isCloudChannel={false} // Global drive is not a VFS cloud channel
+                currentVirtualPath="/" // Global drive is flat for now
+                onNavigateVirtualPath={() => {}} // No VFS navigation
+                onOpenCreateVirtualFolderDialog={() => {}} // No VFS
+                onDeleteFile={(file) => fileOperationsManager.handleRequestDeleteItem('file', file, file.inputPeer)} // Deletion needs peer from file
+                onDeleteVirtualFolder={() => {}} // No VFS
+                selectedFolderInputPeer={null} // No single peer for global drive
+                onCopyFile={fileOperationsManager.handleCopyFileOp}
+                onPasteItem={() => {}} // No VFS pasting
+                clipboardItem={fileOperationsManager.clipboardItem}
+                selectedFolderForView={null}
+                onOpenManageCloudChannelDialog={() => {}}
+                isGlobalView={true} // Indicate global view to MainContentView
+              />
+            ) : selectedMediaManager.selectedFolder ? (
               <MainContentView
                 folderName={selectedMediaManager.selectedFolder.name}
                 files={selectedMediaManager.currentChatMedia}
@@ -330,15 +380,17 @@ export default function Home() {
                 clipboardItem={fileOperationsManager.clipboardItem}
                 selectedFolderForView={selectedMediaManager.selectedFolder}
                 onOpenManageCloudChannelDialog={pageDialogs.handleOpenManageCloudChannelDialog}
+                isGlobalView={false}
               />
             ) : (
               <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground p-4">
                 <LayoutPanelLeft className="w-16 h-16 mb-4 opacity-50" />
-                <p className="text-lg mb-2">No chat selected.</p>
-                <p className="text-sm mb-4">Select a chat folder or a cloud storage channel.</p>
-                <div className="flex gap-4">
-                  <Button onClick={pageDialogs.handleOpenChatSelectionDialog}><MessageSquare className="mr-2 h-5 w-5" /> Select Chat Folder</Button>
-                  <Button onClick={pageDialogs.handleOpenCloudStorageSelector} variant="outline"><Cloud className="mr-2 h-5 w-5" /> Select Cloud Storage</Button>
+                <p className="text-lg mb-2">No chat or view selected.</p>
+                <p className="text-sm mb-4">Select a chat folder, a cloud storage channel, or open the Global Drive.</p>
+                <div className="flex gap-4 flex-wrap justify-center">
+                  <Button onClick={handleOpenGlobalDrive}><Globe className="mr-2 h-5 w-5" /> Open Global Drive</Button>
+                  <Button onClick={() => { setIsGlobalDriveActive(false); pageDialogs.handleOpenChatSelectionDialog();}}><MessageSquare className="mr-2 h-5 w-5" /> Select Chat Folder</Button>
+                  <Button onClick={() => { setIsGlobalDriveActive(false); pageDialogs.handleOpenCloudStorageSelector();}} variant="outline"><Cloud className="mr-2 h-5 w-5" /> Select Cloud Storage</Button>
                 </div>
                 {chatListManager.isLoadingDisplayedChats && chatListManager.displayedChats.length === 0 && dialogFiltersManager.activeFilterDetails && (
                   <div className="mt-4 flex items-center"><Loader2 className="animate-spin h-5 w-5 text-primary mr-2" /><span>Loading initial chat list for "{dialogFiltersManager.activeFilterDetails?.title || 'current folder'}"...</span></div>
@@ -357,7 +409,7 @@ export default function Home() {
       <footer ref={footerRef} className="py-3 px-4 sm:px-6 lg:px-8 text-center border-t text-xs"><p className="text-muted-foreground">Telegram Cloudifier &copy; {new Date().getFullYear()}</p></footer>
 
       <ChatSelectionDialog
-        isOpen={pageDialogs.isChatSelectionDialogOpen}
+        isOpen={pageDialogs.isChatSelectionDialogOpen && !isGlobalDriveActive}
         onOpenChange={pageDialogs.setIsChatSelectionDialogOpen}
         viewMode="default"
         dialogFilters={dialogFiltersManager.dialogFilters}
@@ -373,14 +425,14 @@ export default function Home() {
         isLoadingMore={chatListManager.isLoadingDisplayedChats && chatListManager.displayedChats.length > 0}
         hasMore={chatListManager.hasMoreDisplayedChats}
         selectedFolderId={selectedMediaManager.selectedFolder?.id || null}
-        onSelectFolder={(id) => { selectedMediaManager.handleSelectFolderOrChannel(id, 'chat'); pageDialogs.setIsChatSelectionDialogOpen(false);}}
+        onSelectFolder={(id) => { setIsGlobalDriveActive(false); selectedMediaManager.handleSelectFolderOrChannel(id, 'chat'); pageDialogs.setIsChatSelectionDialogOpen(false);}}
         onLoadMore={chatListManager.loadMoreDisplayedChatsInManager}
         onRefresh={dialogFiltersManager.handleRefreshCurrentFilterView}
         currentErrorMessage={chatListManager.currentErrorMessageForChatList}
       />
 
       <ChatSelectionDialog
-        isOpen={pageDialogs.isCloudStorageSelectorOpen}
+        isOpen={pageDialogs.isCloudStorageSelectorOpen && !isGlobalDriveActive}
         onOpenChange={pageDialogs.setIsCloudStorageSelectorOpen}
         viewMode="cloudStorage"
         folders={appCloudChannelsManager.appManagedCloudFolders}
@@ -388,7 +440,7 @@ export default function Home() {
         isLoadingMore={false}
         hasMore={false}
         selectedFolderId={selectedMediaManager.selectedFolder?.isAppManagedCloud ? selectedMediaManager.selectedFolder.id : null}
-        onSelectFolder={(id) => {selectedMediaManager.handleSelectFolderOrChannel(id, 'cloud'); pageDialogs.setIsCloudStorageSelectorOpen(false);}}
+        onSelectFolder={(id) => {setIsGlobalDriveActive(false); selectedMediaManager.handleSelectFolderOrChannel(id, 'cloud'); pageDialogs.setIsCloudStorageSelectorOpen(false);}}
         onLoadMore={() => {}}
         onRefresh={appCloudChannelsManager.fetchAppManagedCloudChannelsList.bind(null, true)}
         onOpenCreateCloudChannelDialog={pageDialogs.handleOpenCreateCloudChannelDialog}
@@ -404,7 +456,7 @@ export default function Home() {
                 pageDialogs.setIsCreateCloudChannelDialogOpen(false);
                 const newCF: CloudFolder = {id: `channel-${result.channelInfo.id}`, name: result.channelInfo.title, isChatFolder:false, inputPeer: { _: 'inputPeerChannel', channel_id: result.channelInfo.id, access_hash: result.channelInfo.access_hash }, files:[], folders:[], isAppManagedCloud: true, cloudConfig: result.initialConfig };
                 appCloudChannelsManager.addCreatedCloudChannelToList(newCF);
-                dialogFiltersManager.fetchDialogFilters(true); // Refresh dialog filters after new channel creation
+                dialogFiltersManager.fetchDialogFilters(true);
             } else { throw new Error("Channel creation did not return expected info."); }
         }}
         isLoading={fileOperationsManager.isProcessingVirtualFolder}
@@ -414,8 +466,8 @@ export default function Home() {
         isOpen={pageDialogs.isCreateVirtualFolderDialogOpen}
         onClose={() => pageDialogs.setIsCreateVirtualFolderDialogOpen(false)}
         onCreate={async (folderName: string) => {
-            if (!selectedMediaManager.selectedFolder || !selectedMediaManager.selectedFolder.inputPeer) {
-                 toast({ title: "Error", description: "No cloud channel selected or inputPeer missing.", variant: "destructive" }); return;
+            if (isGlobalDriveActive || !selectedMediaManager.selectedFolder || !selectedMediaManager.selectedFolder.inputPeer) {
+                 toast({ title: "Error", description: "Operation not valid in Global Drive or no cloud channel selected.", variant: "destructive" }); return;
             }
             fileOperationsManager.setIsProcessingVirtualFolder(true);
             try {
@@ -470,14 +522,14 @@ export default function Home() {
         onResume={downloadManager.handleResumeDownloadOp}
       />
       <UploadDialog
-        isOpen={uploadManager.isUploadDialogOpen}
+        isOpen={uploadManager.isUploadDialogOpen && !isGlobalDriveActive} // Disable upload dialog if global drive is active
         onClose={uploadManager.handleCloseUploadFilesDialog}
         onFilesSelected={uploadManager.handleFilesSelectedForUploadList}
         onUpload={uploadManager.handleStartFileUploads}
         selectedFiles={uploadManager.filesToUpload}
         isLoading={uploadManager.isUploadingFiles}
       />
-      {pageDialogs.managingCloudChannelContext && (
+      {pageDialogs.managingCloudChannelContext && !isGlobalDriveActive && (
         <ManageCloudChannelDialog
           isOpen={pageDialogs.isManageCloudChannelDialogOpen}
           onClose={() => pageDialogs.setIsManageCloudChannelDialogOpen(false)}
@@ -489,6 +541,3 @@ export default function Home() {
     </div>
   );
 }
-    
-
-    

@@ -6,7 +6,7 @@ import type { CloudFile, CloudFolder, CloudChannelConfigV1, CloudChannelConfigEn
 import { ContentFileItem } from "./content-file-item";
 import { ContentFolderItem } from "./content-folder-item";
 import { Button } from "@/components/ui/button";
-import { Search, FolderOpen, Loader2, CalendarDays, XCircle as ClearIcon, UploadCloud, Cloud, FolderPlus, ArrowUpCircle, ChevronRight, FolderUp, ArrowLeftCircle, ClipboardPaste, Settings2 } from "lucide-react";
+import { Search, FolderOpen, Loader2, CalendarDays, XCircle as ClearIcon, UploadCloud, Cloud, FolderPlus, ArrowUpCircle, ChevronRight, FolderUp, ArrowLeftCircle, ClipboardPaste, Settings2, Globe } from "lucide-react"; // Added Globe
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
@@ -38,11 +38,12 @@ interface MainContentViewProps {
   onDeleteVirtualFolder: (folderPath: string, folderName: string, parentInputPeer?: InputPeer) => void;
   selectedFolderInputPeer?: InputPeer | null;
   onCopyFile: (file: CloudFile) => void;
-  onCopyFolderStructure: (folderName: string, folderConfig: CloudChannelConfigEntry) => void;
+  onCopyFolderStructure?: (folderName: string, folderConfig: CloudChannelConfigEntry) => void; // Made optional
   onPasteItem: (targetPath: string) => void;
   clipboardItem: ClipboardItemType;
-  selectedFolderForView: CloudFolder | null; // Pass the full selected folder object
+  selectedFolderForView: CloudFolder | null; 
   onOpenManageCloudChannelDialog: (channel: CloudFolder) => void;
+  isGlobalView?: boolean; // New prop
 }
 
 const TABS_CONFIG = [
@@ -86,6 +87,7 @@ export function MainContentView({
   clipboardItem,
   selectedFolderForView,
   onOpenManageCloudChannelDialog,
+  isGlobalView = false, // Default to false
 }: MainContentViewProps) {
   const [activeTab, setActiveTab] = useState("all");
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
@@ -101,12 +103,11 @@ export function MainContentView({
   }>({ visible: false, x: 0, y: 0, items: [] });
 
   useEffect(() => {
-    if (!isCloudChannel) {
-        setActiveTab("all");
-        setSelectedDate(undefined);
-        setSearchTerm("");
-    }
-  }, [folderName, isCloudChannel]);
+    // Reset filters when folder changes or global view is toggled
+    setActiveTab("all");
+    setSelectedDate(undefined);
+    setSearchTerm("");
+  }, [folderName, isGlobalView, isCloudChannel]);
 
 
   const handleSearchButtonClick = () => {
@@ -117,35 +118,40 @@ export function MainContentView({
     event.preventDefault();
     const clickedOnItem = (event.target as HTMLElement).closest('[data-file-item="true"]') || (event.target as HTMLElement).closest('[data-folder-item="true"]');
     
-    if (clickedOnItem || !isCloudChannel) {
+    if (clickedOnItem || (!isCloudChannel && !isGlobalView)) { // Context menu only for cloud channels or global view
       setBackgroundContextMenu({ visible: false, x: 0, y: 0, items: [] });
       return;
     }
 
-    const menuItems: MenuItemType[] = [
-      {
-        label: "Create New Folder Here",
-        onClick: () => onOpenCreateVirtualFolderDialog(currentVirtualPath),
-        icon: <FolderPlus className="w-3.5 h-3.5" />,
-        disabled: !isCloudChannel,
-      },
-    ];
+    const menuItems: MenuItemType[] = [];
 
-    if (clipboardItem) {
-      menuItems.push({
-        label: `Paste ${clipboardItem.type === 'file' ? `"${clipboardItem.file.name}"` : `"${clipboardItem.folderName}"`}`,
-        onClick: () => onPasteItem(currentVirtualPath),
-        icon: <ClipboardPaste className="w-3.5 h-3.5" />,
-      });
+    if (isCloudChannel && !isGlobalView) { // VFS specific context menu items
+        menuItems.push({
+            label: "Create New Folder Here",
+            onClick: () => onOpenCreateVirtualFolderDialog(currentVirtualPath),
+            icon: <FolderPlus className="w-3.5 h-3.5" />,
+        });
+        if (clipboardItem) {
+          menuItems.push({
+            label: `Paste ${clipboardItem.type === 'file' ? `"${clipboardItem.file.name}"` : `"${clipboardItem.folderName}"`}`,
+            onClick: () => onPasteItem(currentVirtualPath),
+            icon: <ClipboardPaste className="w-3.5 h-3.5" />,
+          });
+        }
+        menuItems.push({
+            label: "Go Up One Level",
+            onClick: () => onNavigateVirtualPath(getParentPath(currentVirtualPath)),
+            icon: <ArrowLeftCircle className="w-3.5 h-3.5" />,
+            disabled: currentVirtualPath === '/',
+        });
     }
+    
+    // Could add global view specific context items here in future if needed
 
-    menuItems.push({
-      label: "Go Up One Level",
-      onClick: () => onNavigateVirtualPath(getParentPath(currentVirtualPath)),
-      icon: <ArrowLeftCircle className="w-3.5 h-3.5" />,
-      disabled: !isCloudChannel || currentVirtualPath === '/',
-    });
-
+    if(menuItems.length === 0) {
+        setBackgroundContextMenu({ visible: false, x: 0, y: 0, items: [] });
+        return;
+    }
 
     setBackgroundContextMenu({
       visible: true,
@@ -161,7 +167,7 @@ export function MainContentView({
 
 
   const vfsItems = useMemo(() => {
-    if (!isCloudChannel || !cloudConfig) return [];
+    if (isGlobalView || !isCloudChannel || !cloudConfig) return [];
 
     const normalizedCurrentPath = normalizePath(currentVirtualPath);
     const folderEntriesFromConfig = getEntriesForPath(cloudConfig, normalizedCurrentPath);
@@ -197,14 +203,16 @@ export function MainContentView({
 
     return [
       ...displayedFolders.sort((a, b) => a.name.localeCompare(b.name)),
-      ...displayedFiles.sort((a, b) => (b.cloudFile.timestamp || 0) - (a.cloudFile.timestamp || 0)), // Files sorted by newest first
+      ...displayedFiles.sort((a, b) => (b.cloudFile.timestamp || 0) - (a.cloudFile.timestamp || 0)), 
     ];
-  }, [isCloudChannel, cloudConfig, files, currentVirtualPath]);
+  }, [isGlobalView, isCloudChannel, cloudConfig, files, currentVirtualPath]);
 
 
-  const regularChatFiles = useMemo(() => {
-    if (isCloudChannel || !files) return [];
-    let processedFiles = files;
+  const mediaFilesToDisplay = useMemo(() => {
+    if (isGlobalView) return files; // For global view, 'files' prop is the global list
+    if (isCloudChannel) return []; // VFS items are handled separately by vfsItems
+    
+    let processedFiles = files; // Regular chat files
     switch (activeTab) {
       case "images":
         processedFiles = files.filter(file => file.type === 'image');
@@ -238,10 +246,10 @@ export function MainContentView({
       );
     }
     return selectedDate ? processedFiles : processedFiles.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-  }, [files, activeTab, selectedDate, isCloudChannel]);
+  }, [files, activeTab, selectedDate, isCloudChannel, isGlobalView]);
 
 
-  if (!folderName) {
+  if (!isGlobalView && !folderName) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-8">
         <FolderOpen className="w-20 h-20 mb-6 opacity-40" />
@@ -251,14 +259,17 @@ export function MainContentView({
     );
   }
 
-  const displayItemsRegular = regularChatFiles;
-  const noResultsForFilter = !isCloudChannel && (activeTab !== "all" || selectedDate || searchTerm) && displayItemsRegular.length === 0 && !isLoading;
-  const noMediaAtAll = !isCloudChannel && activeTab === "all" && !selectedDate && !searchTerm && displayItemsRegular.length === 0 && !isLoading && !hasMore;
+  const displayItems = isGlobalView ? mediaFilesToDisplay : (isCloudChannel ? vfsItems : mediaFilesToDisplay);
+  
+  const noResultsForFilter = !isGlobalView && !isCloudChannel && (activeTab !== "all" || selectedDate || searchTerm) && mediaFilesToDisplay.length === 0 && !isLoading;
+  const noMediaAtAll = !isGlobalView && !isCloudChannel && activeTab === "all" && !selectedDate && !searchTerm && mediaFilesToDisplay.length === 0 && !isLoading && !hasMore;
+  const noGlobalMedia = isGlobalView && mediaFilesToDisplay.length === 0 && !isLoading && !hasMore;
 
   let lastDisplayedDay: Date | null = null;
   let lastDisplayedMonth: Date | null = null;
 
   const renderBreadcrumbs = () => {
+    if (isGlobalView || !isCloudChannel) return null; // No breadcrumbs for global or regular chat view
     const pathSegments = currentVirtualPath.split('/').filter(s => s.length > 0);
     return (
       <div className="flex items-center text-sm text-muted-foreground mb-3 flex-wrap">
@@ -286,16 +297,17 @@ export function MainContentView({
 
   const mainItemsContent = (
     <div className="flex-grow overflow-y-auto space-y-0 pr-1 pb-4">
-      {isCloudChannel ? (
-        vfsItems.length === 0 && !isLoading ? (
+      {displayItems.length === 0 && !isLoading ? (
           <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center py-10 h-full">
             <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
-            <p className="text-lg">This folder is empty.</p>
+            <p className="text-lg">
+                {isGlobalView ? "Global Drive is empty or still loading initial content." : "This folder is empty."}
+            </p>
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-            {vfsItems.map((item, index) => {
-              if (item.type === 'folder') {
+            {displayItems.map((item, index) => {
+              if (isCloudChannel && !isGlobalView && item.type === 'folder') { // VFS Folder
                 const syntheticFolder: CloudFolder = {
                   id: item.name, 
                   name: item.name,
@@ -308,8 +320,8 @@ export function MainContentView({
                     <ContentFolderItem
                       key={`vfs-folder-${item.name}-${index}`}
                       folder={syntheticFolder}
-                      folderConfigEntry={item.entry}
-                      itemCountOverride={item.itemCount}
+                      folderConfigEntry={(item as any).entry} // Cast needed as item type is mixed
+                      itemCountOverride={(item as any).itemCount}
                       style={{ animationDelay: `${index * 30}ms` }}
                       onClick={() => onNavigateVirtualPath(normalizePath(currentVirtualPath + item.name + '/'))}
                       onDelete={() => onDeleteVirtualFolder(normalizePath(currentVirtualPath + item.name + '/'), item.name, selectedFolderInputPeer)}
@@ -318,95 +330,71 @@ export function MainContentView({
                       isCloudChannelContext={true}
                     />
                 );
-              } else if (item.type === 'file') {
-                return (
+              } else { // File item (from VFS, regular chat, or global view)
+                const fileItem = (isCloudChannel && !isGlobalView) ? (item as any).cloudFile as CloudFile : item as CloudFile;
+                if (!fileItem || !fileItem.id) return null; // Skip if not a valid file
+
+                if (!fileItem.timestamp && !isGlobalView && !isCloudChannel) return null; // Regular chat items must have timestamp
+                
+                const fileDate = fileItem.timestamp ? new Date(fileItem.timestamp * 1000) : new Date();
+                let dayHeader = null;
+                let monthHeader = null;
+
+                if (!selectedDate && (!isGlobalView || !isCloudChannel)) { // Date grouping only for non-global, non-VFS, non-date-filtered views
+                  if (!lastDisplayedMonth || !isSameMonth(fileDate, lastDisplayedMonth)) {
+                    monthHeader = (
+                      <div key={`month-${fileItem.id}`} className="col-span-full text-lg font-semibold text-primary py-3 mt-4 mb-2 border-b-2 border-primary/30">
+                        {format(fileDate, "MMMM yyyy")}
+                      </div>
+                    );
+                    lastDisplayedMonth = fileDate;
+                    lastDisplayedDay = null; 
+                  }
+                  if (!lastDisplayedDay || !isSameDay(fileDate, lastDisplayedDay)) {
+                    let dayLabel = isToday(fileDate) ? "Today" : isYesterday(fileDate) ? "Yesterday" : format(fileDate, "eeee, MMMM d");
+                    dayHeader = (
+                      <div key={`day-${fileItem.id}`} className="col-span-full text-sm font-medium text-muted-foreground py-2 mt-2 mb-1 border-b border-border">
+                        {dayLabel}
+                      </div>
+                    );
+                    lastDisplayedDay = fileDate;
+                  }
+                }
+                const itemRenderContent = (
                     <ContentFileItem
-                      key={`vfs-file-${item.cloudFile.id}-${index}`}
-                      file={item.cloudFile}
+                      key={`file-${fileItem.id}-${activeTab}-${selectedDate ? format(selectedDate, "yyyy-MM-dd") : 'all'}-${index}`}
+                      file={fileItem}
                       style={{ animationDelay: `${index * 30}ms` }}
                       onDetailsClick={onFileDetailsClick}
                       onQueueDownloadClick={onQueueDownloadClick}
                       onViewImageClick={onFileViewImageClick}
                       onPlayVideoClick={onFilePlayVideoClick}
-                      isPreparingStream={isPreparingStream && preparingStreamForFileId === item.cloudFile.id}
+                      isPreparingStream={isPreparingStream && preparingStreamForFileId === fileItem.id}
                       preparingStreamForFileId={preparingStreamForFileId}
-                      onDeleteFile={() => onDeleteFile(item.cloudFile)}
+                      onDeleteFile={() => onDeleteFile(fileItem)}
                       onCopyFile={onCopyFile}
                     />
                 );
+                 return (
+                    <React.Fragment key={`fragment-${fileItem.id}`}>
+                      {monthHeader}
+                      {dayHeader}
+                      {itemRenderContent}
+                    </React.Fragment>
+                  );
               }
-              return null;
             })}
           </div>
-        )
-      ) : (
-        displayItemsRegular.length > 0 ? (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-            {displayItemsRegular.map((file, index) => {
-              if (!file.timestamp) return null;
-              const fileDate = new Date(file.timestamp * 1000);
-              let dayHeader = null;
-              let monthHeader = null;
-
-              if (!selectedDate) { // Only show date grouping if no specific date is selected
-                if (!lastDisplayedMonth || !isSameMonth(fileDate, lastDisplayedMonth)) {
-                  monthHeader = (
-                    <div key={`month-${file.id}`} className="col-span-full text-lg font-semibold text-primary py-3 mt-4 mb-2 border-b-2 border-primary/30">
-                      {format(fileDate, "MMMM yyyy")}
-                    </div>
-                  );
-                  lastDisplayedMonth = fileDate;
-                  lastDisplayedDay = null; // Reset day when month changes
-                }
-                if (!lastDisplayedDay || !isSameDay(fileDate, lastDisplayedDay)) {
-                  let dayLabel = isToday(fileDate) ? "Today" : isYesterday(fileDate) ? "Yesterday" : format(fileDate, "eeee, MMMM d");
-                  dayHeader = (
-                    <div key={`day-${file.id}`} className="col-span-full text-sm font-medium text-muted-foreground py-2 mt-2 mb-1 border-b border-border">
-                      {dayLabel}
-                    </div>
-                  );
-                  lastDisplayedDay = fileDate;
-                }
-              }
-              const itemContent = (
-                  <ContentFileItem
-                    key={`${file.id}-${activeTab}-${selectedDate ? format(selectedDate, "yyyy-MM-dd") : 'all'}-${index}`}
-                    file={file}
-                    style={{ animationDelay: `${index * 30}ms` }}
-                    onDetailsClick={onFileDetailsClick}
-                    onQueueDownloadClick={onQueueDownloadClick}
-                    onViewImageClick={onFileViewImageClick}
-                    onPlayVideoClick={onFilePlayVideoClick}
-                    isPreparingStream={isPreparingStream && preparingStreamForFileId === file.id}
-                    preparingStreamForFileId={preparingStreamForFileId}
-                    onDeleteFile={() => onDeleteFile(file)}
-                    onCopyFile={onCopyFile}
-                  />
-              );
-              return (
-                <React.Fragment key={`fragment-${file.id}`}>
-                  {monthHeader}
-                  {dayHeader}
-                  {itemContent}
-                </React.Fragment>
-              );
-            })}
-          </div>
-        ) : (
-           <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center py-10 h-full">
-              <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
-              <p className="text-lg">No media items to display for the current selection.</p>
-           </div>
         )
       )}
 
-      {isLoadingMoreMedia && (isCloudChannel ? vfsItems.length > 0 : displayItemsRegular.length > 0) && (
+      {isLoadingMoreMedia && displayItems.length > 0 && (
         <div className="flex justify-center items-center p-4 mt-4">
           <Loader2 className="animate-spin h-8 w-8 text-primary" />
           <p className="ml-3 text-muted-foreground">Loading more content...</p>
         </div>
       )}
-      {!isLoading && !isLoadingMoreMedia && hasMore && (isCloudChannel ? vfsItems.length > 0 : displayItemsRegular.length > 0) && onLoadMoreMedia && (
+      {!isLoading && !isLoadingMoreMedia && hasMore && displayItems.length > 0 && onLoadMoreMedia && (
         <div className="col-span-full flex justify-center py-4 mt-4">
           <Button onClick={onLoadMoreMedia} disabled={isLoadingMoreMedia} variant="outline">
             {isLoadingMoreMedia && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -414,7 +402,7 @@ export function MainContentView({
           </Button>
         </div>
       )}
-      {!isLoading && !isLoadingMoreMedia && !hasMore && (isCloudChannel ? vfsItems.length > 0 : displayItemsRegular.length > 0) && (
+      {!isLoading && !isLoadingMoreMedia && !hasMore && displayItems.length > 0 && (
         <p className="text-center text-sm text-muted-foreground py-4 mt-4">No more content to load.</p>
       )}
     </div>
@@ -429,14 +417,14 @@ export function MainContentView({
     >
       <div className="flex-shrink-0">
           <h1 className="text-3xl font-bold text-primary mb-1 pb-2 border-b flex items-center">
-              {isCloudChannel ? <Cloud className="w-8 h-8 mr-3 text-primary/80" /> : null}
+              {isGlobalView ? <Globe className="w-8 h-8 mr-3 text-primary/80" /> : (isCloudChannel ? <Cloud className="w-8 h-8 mr-3 text-primary/80" /> : null)}
               {folderName}
           </h1>
-          {isCloudChannel && renderBreadcrumbs()}
+          {renderBreadcrumbs()}
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3 mb-3 items-center flex-wrap flex-shrink-0">
-         {isCloudChannel && selectedFolderForView ? (
+         {isCloudChannel && !isGlobalView && selectedFolderForView ? ( // VFS controls
            <>
              {currentVirtualPath !== '/' && (
                <Button variant="outline" onClick={() => onNavigateVirtualPath(getParentPath(currentVirtualPath))} className="w-full sm:w-auto">
@@ -453,7 +441,7 @@ export function MainContentView({
               <Settings2 className="mr-2 h-4 w-4" /> Manage Channel
             </Button>
            </>
-         ) : (
+         ) : !isGlobalView ? ( // Regular chat controls
             <>
               <Button variant="outline" onClick={handleSearchButtonClick} className="w-full sm:w-auto">
                 <Search className="mr-2 h-4 w-4" /> Search
@@ -478,10 +466,10 @@ export function MainContentView({
                 <UploadCloud className="mr-2 h-4 w-4" /> Upload File
               </Button>
             </>
-         )}
-        {!isCloudChannel && (
+         ) : null }
+        {( !isGlobalView && !isCloudChannel) || isGlobalView ? ( // Tabs for regular chats and global view
           <>
-            <div className="flex-grow"></div>
+            <div className="flex-grow"></div> {/* Spacer */}
             <Tabs defaultValue="all" onValueChange={setActiveTab} value={activeTab} className="w-full sm:w-auto">
               <TabsList className="grid w-full grid-cols-3 sm:grid-cols-none sm:inline-flex h-auto">
                 {TABS_CONFIG.map(tab => (
@@ -492,13 +480,13 @@ export function MainContentView({
               </TabsList>
             </Tabs>
           </>
-        )}
+        ) : null}
       </div>
 
-      {isLoading && (isCloudChannel ? vfsItems.length === 0 : displayItemsRegular.length === 0) ? (
+      {isLoading && displayItems.length === 0 ? (
           <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center h-full">
               <Loader2 className="animate-spin h-12 w-12 text-primary mb-4" />
-              <p className="text-lg">{isCloudChannel ? "Loading cloud storage contents..." : "Loading media..."}</p>
+              <p className="text-lg">{isGlobalView ? "Loading Global Drive content..." : (isCloudChannel ? "Loading cloud storage contents..." : "Loading media...")}</p>
           </div>
       ) : noResultsForFilter ? (
         <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center h-full">
@@ -514,7 +502,12 @@ export function MainContentView({
           <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
           <p className="text-lg">This chat contains no media items.</p>
         </div>
-      ) : mainItemsContent }
+      ) : noGlobalMedia && isGlobalView ? (
+         <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center h-full">
+          <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
+          <p className="text-lg">Global Drive is empty or content is still loading.</p>
+        </div>
+      ): mainItemsContent }
 
       {backgroundContextMenu.visible && (
         <ContextMenu
@@ -528,4 +521,3 @@ export function MainContentView({
     </div>
   );
 }
-
