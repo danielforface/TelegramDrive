@@ -57,8 +57,13 @@ export default function Home() {
     }
 
     toast({ title, description, variant: "destructive", duration: doPageReset ? 10000 : 5000 });
-    if (doPageReset && connectionManagerRef.current) {
-      connectionManagerRef.current.handleReset(error.message !== 'AUTH_RESTART');
+    if (doPageReset) {
+      // Access the current handleReset function via the ref inside the callback
+      // This avoids making handleGlobalApiError dependent on the potentially changing handleReset function reference.
+      const cm = connectionManagerRef.current;
+      if (cm) {
+        cm.handleReset(error.message !== 'AUTH_RESTART');
+      }
     }
   }, [toast]);
 
@@ -99,7 +104,7 @@ export default function Home() {
   const globalDriveManager = useGlobalDriveManager({
     toast,
     handleGlobalApiError,
-    isConnected: false, 
+    isConnected: false,
   });
   const {
     globalMediaItems: gdGlobalMediaItems,
@@ -109,7 +114,7 @@ export default function Home() {
     fetchInitialGlobalMedia: gdFetchInitialGlobalMedia,
     loadMoreGlobalMedia: gdLoadMoreGlobalMedia,
     resetManager: gdResetManager,
-    isScanBatchActive: gdIsScanBatchActive, // Renamed from gdIsFullScanActive
+    isScanBatchActive: gdIsScanBatchActive,
     setGlobalMediaItemsDirectly: gdSetGlobalMediaItemsDirectly,
     setIsConnected: gdmSetIsConnected,
   } = globalDriveManager;
@@ -118,7 +123,7 @@ export default function Home() {
   const globalDriveConfigManager = useGlobalDriveConfigManager({
     toast,
     handleGlobalApiError,
-    isConnected: false, 
+    isConnected: false,
   });
   const {
     customConfig: gdcCustomConfig,
@@ -133,7 +138,7 @@ export default function Home() {
 
 
   const dialogFiltersManager = useDialogFiltersManager({
-    isConnected: false, 
+    isConnected: false,
     toast,
     handleGlobalApiError,
     fetchAndCacheDialogsForListManager: (cacheKeyToFetch, isLoadingMore, folderIdForApiCall, customLimit) =>
@@ -167,7 +172,7 @@ export default function Home() {
 
 
   const chatListManager = useChatListManager({
-    isConnected: false, 
+    isConnected: false,
     activeFilterDetails: dfmActiveFilterDetails, // Pass the state from dialogFiltersManager
     dialogFilters: dfmDialogFilters, // Pass the state from dialogFiltersManager
     toast,
@@ -195,7 +200,7 @@ export default function Home() {
   } = chatListManager;
 
   const appCloudChannelsManager = useAppCloudChannelsManager({
-    isConnected: false, 
+    isConnected: false,
     toast,
     handleGlobalApiError,
   });
@@ -307,9 +312,8 @@ export default function Home() {
     selectedFolder: isGlobalDriveActive ? null : smSelectedFolder,
     currentVirtualPath: smCurrentVirtualPath,
     refreshMediaCallback: () => {
-        if (isGlobalDriveActive && gdIsScanBatchActive) { // Changed from gdIsFullScanActive
-          // Refresh for global drive if scan is active could be complex, might need targeted update
-        } else if (isGlobalDriveActive && !gdIsScanBatchActive) { // Changed from gdIsFullScanActive
+        if (isGlobalDriveActive && gdIsScanBatchActive) {
+        } else if (isGlobalDriveActive && !gdIsScanBatchActive) {
            gdFetchInitialGlobalMedia();
         } else if (smSelectedFolder) {
           smFetchInitialChatMediaForSelected(smSelectedFolder);
@@ -401,21 +405,21 @@ export default function Home() {
 
   useEffect(() => {
     if (isGlobalDriveActive && connManagerIsConnected) {
-      if (!gdIsScanBatchActive) { 
+      if (!gdIsScanBatchActive) {
         gdFetchInitialGlobalMedia();
       }
       if (organizationMode === 'custom' && !gdcCustomConfig && !gdcIsLoadingConfig && !gdcConfigError) {
         gdcLoadOrCreateConfig();
       }
-    } else if (!isGlobalDriveActive) { 
-      if (gdIsScanBatchActive) { 
-        gdResetManager(); 
+    } else if (!isGlobalDriveActive) {
+      if (gdIsScanBatchActive) {
+        gdResetManager();
       }
-      gdcResetConfigState(); 
+      gdcResetConfigState();
     }
   }, [
       isGlobalDriveActive, connManagerIsConnected, organizationMode,
-      gdIsScanBatchActive, gdFetchInitialGlobalMedia, gdResetManager, // Changed from gdIsFullScanActive
+      gdIsScanBatchActive, gdFetchInitialGlobalMedia, gdResetManager,
       gdcCustomConfig, gdcIsLoadingConfig, gdcConfigError, gdcLoadOrCreateConfig, gdcResetConfigState
   ]);
 
@@ -482,9 +486,9 @@ export default function Home() {
         return;
     }
     smResetSelectedMedia();
-    setOrganizationMode('default'); 
-    gdcResetConfigState(); 
-    setIsGlobalDriveActive(true); // This will trigger the useEffect to call gdFetchInitialGlobalMedia
+    setOrganizationMode('default');
+    gdcResetConfigState();
+    setIsGlobalDriveActive(true);
   }, [connManagerIsConnected, toast, smResetSelectedMedia, gdcResetConfigState ]);
 
   const handleSetOrganizationMode = useCallback((mode: OrganizationMode) => {
@@ -574,7 +578,7 @@ export default function Home() {
                 files={gdGlobalMediaItems}
                 isLoading={gdIsLoading && gdGlobalMediaItems.length === 0 && !gdcIsLoadingConfig}
                 isLoadingMoreMedia={(gdIsLoading && gdGlobalMediaItems.length > 0) || gdcIsLoadingConfig}
-                hasMore={gdHasMore || (organizationMode === 'default' && gdIsScanBatchActive)} // Changed from gdIsFullScanActive
+                hasMore={gdHasMore || (organizationMode === 'default' && gdIsScanBatchActive)}
                 onFileDetailsClick={foHandleOpenFileDetails}
                 onQueueDownloadClick={dmHandleQueueDownloadFile}
                 onFileViewImageClick={mpvHandleViewImage}
@@ -602,7 +606,7 @@ export default function Home() {
                 customGlobalDriveConfig={gdcCustomConfig}
                 isLoadingCustomGlobalDriveConfig={gdcIsLoadingConfig}
                 customGlobalDriveConfigError={gdcConfigError}
-                isScanBatchActive={gdIsScanBatchActive} // Changed from isGlobalScanActive
+                isGlobalScanActive={gdIsScanBatchActive}
               />
             ) : smSelectedFolder ? (
               <MainContentView
@@ -799,4 +803,5 @@ export default function Home() {
     </div>
   );
 }
+
 
