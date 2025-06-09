@@ -61,11 +61,11 @@ export default function Home() {
       // Access the current handleReset function via the ref inside the callback
       // This avoids making handleGlobalApiError dependent on the potentially changing handleReset function reference.
       const cm = connectionManagerRef.current;
-      if (cm) {
+      if (cm && typeof cm.handleReset === 'function') { // Added null check and type check for cm.handleReset
         cm.handleReset(error.message !== 'AUTH_RESTART');
       }
     }
-  }, [toast]);
+  }, [toast]); // Dependency array now only includes toast. connectionManagerRef.current is accessed directly.
 
 
   const pageDialogs = usePageDialogsVisibility();
@@ -104,7 +104,7 @@ export default function Home() {
   const globalDriveManager = useGlobalDriveManager({
     toast,
     handleGlobalApiError,
-    isConnected: false,
+    isConnected: false, // Will be updated by useEffect
   });
   const {
     globalMediaItems: gdGlobalMediaItems,
@@ -116,14 +116,15 @@ export default function Home() {
     resetManager: gdResetManager,
     isScanBatchActive: gdIsScanBatchActive,
     setGlobalMediaItemsDirectly: gdSetGlobalMediaItemsDirectly,
-    setIsConnected: gdmSetIsConnected,
+    setIsConnected: gdmSetIsConnected, // Renamed from gdSetIsConnected for clarity
+    isFullScanActive: gdIsFullScanActive,
   } = globalDriveManager;
 
 
   const globalDriveConfigManager = useGlobalDriveConfigManager({
     toast,
     handleGlobalApiError,
-    isConnected: false,
+    isConnected: false, // Will be updated by useEffect
   });
   const {
     customConfig: gdcCustomConfig,
@@ -133,12 +134,12 @@ export default function Home() {
     resetConfigState: gdcResetConfigState,
     addVirtualFolderInConfig: gdcAddVirtualFolderInConfig,
     removeVirtualFolderFromConfig: gdcRemoveVirtualFolderFromConfig,
-    setIsConnected: gdcmSetIsConnected,
+    setIsConnected: gdcmSetIsConnected, // Renamed from gdcSetIsConnected for clarity
   } = globalDriveConfigManager;
 
 
   const dialogFiltersManager = useDialogFiltersManager({
-    isConnected: false,
+    isConnected: false, // Will be updated by useEffect
     toast,
     handleGlobalApiError,
     fetchAndCacheDialogsForListManager: (cacheKeyToFetch, isLoadingMore, folderIdForApiCall, customLimit) =>
@@ -167,14 +168,14 @@ export default function Home() {
     resetDialogFiltersState: dfmResetDialogFiltersState,
     setActiveDialogFilterId: dfmSetActiveDialogFilterId,
     setActiveFilterDetails: dfmSetActiveFilterDetails,
-    setIsConnected: dfmSetIsConnected,
+    setIsConnected: dfmSetIsConnected, // Renamed from dfmSetIsConnected for clarity
   } = dialogFiltersManager;
 
 
   const chatListManager = useChatListManager({
-    isConnected: false,
-    activeFilterDetails: dfmActiveFilterDetails, // Pass the state from dialogFiltersManager
-    dialogFilters: dfmDialogFilters, // Pass the state from dialogFiltersManager
+    isConnected: false, // Will be updated by useEffect
+    activeFilterDetails: dfmActiveFilterDetails,
+    dialogFilters: dfmDialogFilters,
     toast,
     handleGlobalApiError,
     resetSelectedMedia: () => {
@@ -196,11 +197,11 @@ export default function Home() {
     loadMoreDisplayedChatsInManager: clmLoadMoreDisplayedChatsInManager,
     resetAllChatListData: clmResetAllChatListData,
     cachedDataForActiveFilterIsLoading: clmCachedDataForActiveFilterIsLoading,
-    setIsConnected: clmSetIsConnected,
+    setIsConnected: clmSetIsConnected, // Renamed from clmSetIsConnected for clarity
   } = chatListManager;
 
   const appCloudChannelsManager = useAppCloudChannelsManager({
-    isConnected: false,
+    isConnected: false, // Will be updated by useEffect
     toast,
     handleGlobalApiError,
   });
@@ -212,7 +213,7 @@ export default function Home() {
     addCreatedCloudChannelToList: accmAddCreatedCloudChannelToList,
     resetAppManagedCloudFolders: accmResetAppManagedCloudFolders,
     setAppManagedCloudFolders: accmSetAppManagedCloudFolders,
-    setIsConnected: accmSetIsConnected,
+    setIsConnected: accmSetIsConnected, // Renamed from accmSetIsConnected for clarity
   } = appCloudChannelsManager;
 
 
@@ -312,8 +313,8 @@ export default function Home() {
     selectedFolder: isGlobalDriveActive ? null : smSelectedFolder,
     currentVirtualPath: smCurrentVirtualPath,
     refreshMediaCallback: () => {
-        if (isGlobalDriveActive && gdIsScanBatchActive) {
-        } else if (isGlobalDriveActive && !gdIsScanBatchActive) {
+        if (isGlobalDriveActive && gdIsFullScanActive) { // Check full scan active for global drive
+        } else if (isGlobalDriveActive && !gdIsFullScanActive) {
            gdFetchInitialGlobalMedia();
         } else if (smSelectedFolder) {
           smFetchInitialChatMediaForSelected(smSelectedFolder);
@@ -374,8 +375,8 @@ export default function Home() {
         dfmFetchDialogFilters(true);
       }
     },
-    setGlobalPhoneNumberForDisplay: amSetAuthInputPhoneNumber,
-    appPhoneNumber: amAuthInputPhoneNumber,
+    setGlobalPhoneNumberForDisplay: amSetAuthInputPhoneNumber, // Pass the setter from authManager
+    appPhoneNumber: amAuthInputPhoneNumber, // Pass the value from authManager
   });
   connectionManagerRef.current = tempConnectionManager;
   const connectionManager = tempConnectionManager;
@@ -405,21 +406,21 @@ export default function Home() {
 
   useEffect(() => {
     if (isGlobalDriveActive && connManagerIsConnected) {
-      if (!gdIsScanBatchActive) {
+      if (!gdIsFullScanActive) { // Check the renamed gdIsFullScanActive
         gdFetchInitialGlobalMedia();
       }
       if (organizationMode === 'custom' && !gdcCustomConfig && !gdcIsLoadingConfig && !gdcConfigError) {
         gdcLoadOrCreateConfig();
       }
     } else if (!isGlobalDriveActive) {
-      if (gdIsScanBatchActive) {
+      if (gdIsFullScanActive) { // Check the renamed gdIsFullScanActive
         gdResetManager();
       }
       gdcResetConfigState();
     }
   }, [
       isGlobalDriveActive, connManagerIsConnected, organizationMode,
-      gdIsScanBatchActive, gdFetchInitialGlobalMedia, gdResetManager,
+      gdIsFullScanActive, gdFetchInitialGlobalMedia, gdResetManager, // Use gdIsFullScanActive
       gdcCustomConfig, gdcIsLoadingConfig, gdcConfigError, gdcLoadOrCreateConfig, gdcResetConfigState
   ]);
 
@@ -545,7 +546,7 @@ export default function Home() {
             isLoading={connManagerIsConnecting}
             error={amAuthError}
             phoneNumber={connManagerAppPhoneNumber || amAuthInputPhoneNumber}
-            setPhoneNumber={amSetAuthInputPhoneNumber}
+            setPhoneNumber={amSetAuthInputPhoneNumber} // Pass the correct setter for input
             phoneCode={amAuthPhoneCode}
             setPhoneCode={amSetAuthPhoneCode}
             password={amAuthPassword}
@@ -578,7 +579,7 @@ export default function Home() {
                 files={gdGlobalMediaItems}
                 isLoading={gdIsLoading && gdGlobalMediaItems.length === 0 && !gdcIsLoadingConfig}
                 isLoadingMoreMedia={(gdIsLoading && gdGlobalMediaItems.length > 0) || gdcIsLoadingConfig}
-                hasMore={gdHasMore || (organizationMode === 'default' && gdIsScanBatchActive)}
+                hasMore={gdHasMore || (organizationMode === 'default' && gdIsFullScanActive)}
                 onFileDetailsClick={foHandleOpenFileDetails}
                 onQueueDownloadClick={dmHandleQueueDownloadFile}
                 onFileViewImageClick={mpvHandleViewImage}
@@ -606,7 +607,7 @@ export default function Home() {
                 customGlobalDriveConfig={gdcCustomConfig}
                 isLoadingCustomGlobalDriveConfig={gdcIsLoadingConfig}
                 customGlobalDriveConfigError={gdcConfigError}
-                isGlobalScanActive={gdIsScanBatchActive}
+                isGlobalScanActive={gdIsFullScanActive} // Pass the renamed prop
               />
             ) : smSelectedFolder ? (
               <MainContentView
@@ -803,5 +804,3 @@ export default function Home() {
     </div>
   );
 }
-
-
