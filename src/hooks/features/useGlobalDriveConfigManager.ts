@@ -4,11 +4,11 @@
 import { useState, useCallback, useEffect } from 'react';
 import type { GlobalDriveConfigV1, InputPeer, GlobalDriveFolderEntry } from '@/types';
 import * as telegramService from '@/services/telegramService';
+import { GLOBAL_DRIVE_CONFIG_FILENAME } from '@/services/telegramService'; // Import the constant
 import type { useToast } from "@/hooks/use-toast";
 import { normalizePath } from '@/lib/vfsUtils';
 
 
-const GLOBAL_DRIVE_CONFIG_FILENAME = "telegram_cloudifier_global_drive_config_v1.json";
 const GLOBAL_DRIVE_CONFIG_CAPTION_KEY = "app_feature";
 const GLOBAL_DRIVE_CONFIG_CAPTION_VALUE = "telegram_cloudifier_global_drive_config_v1";
 
@@ -23,7 +23,6 @@ interface UseGlobalDriveConfigManagerProps {
   toast: ReturnType<typeof useToast>['toast'];
   handleGlobalApiError: (error: any, title: string, defaultMessage: string, doPageReset?: boolean) => void;
   isConnected: boolean;
-  // setIsConnected?: (isConnected: boolean) => void; // Removed as per previous discussion
 }
 
 export function useGlobalDriveConfigManager({
@@ -119,28 +118,21 @@ export function useGlobalDriveConfigManager({
   }, [isConnectedInternal, selfPeer, toast, handleGlobalApiError, configMessageId]);
 
   const loadOrCreateConfig = useCallback(async () => {
-    // --- GUARD ADDED HERE ---
     if (isLoadingConfig) {
-      return; // Already loading, prevent re-entry
-    }
-    if (customConfig && !configError) {
-      // Config already loaded and no error, no need to re-load unless forced.
-      // For a "force refresh" scenario, a separate function or flag would be needed.
       return;
     }
-    // --- END GUARD ---
+    if (customConfig && !configError) {
+      return;
+    }
 
     if (!isConnectedInternal || !selfPeer) {
       setConfigError("Not connected or self peer not available for loading/creating config.");
-      setIsLoadingConfig(false); // Ensure loading is false if we bail early
+      setIsLoadingConfig(false);
       return;
     }
 
     setIsLoadingConfig(true);
     setConfigError(null);
-    // Do not reset customConfig or configMessageId here if we might bail out due to guards
-    // Only reset if we are truly proceeding with a fresh load/create attempt.
-    // If guards pass, means we are proceeding:
     setCustomConfig(null);
     setConfigMessageId(null);
 
@@ -193,7 +185,7 @@ export function useGlobalDriveConfigManager({
     } finally {
       setIsLoadingConfig(false);
     }
-  }, [isConnectedInternal, selfPeer, toast, handleGlobalApiError, isLoadingConfig, customConfig, configError]); // Added dependencies for guards
+  }, [isConnectedInternal, selfPeer, toast, handleGlobalApiError, isLoadingConfig, customConfig, configError]);
 
   const resetConfigState = useCallback(() => {
     setCustomConfig(null);
@@ -268,6 +260,41 @@ export function useGlobalDriveConfigManager({
     }
   }, [customConfig, updateAndSaveConfig, toast]);
 
+  const handleDownloadCurrentConfig = useCallback(() => {
+    if (!customConfig) {
+      toast({
+        title: "No Configuration Loaded",
+        description: "There is no custom Global Drive configuration currently loaded to download.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const configJson = JSON.stringify(customConfig, null, 2);
+      const blob = new Blob([configJson], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = GLOBAL_DRIVE_CONFIG_FILENAME;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast({
+        title: "Configuration Downloading",
+        description: `${GLOBAL_DRIVE_CONFIG_FILENAME} has started downloading.`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Download Error",
+        description: `Failed to prepare configuration for download: ${error.message}`,
+        variant: "destructive",
+      });
+      handleGlobalApiError(error, "Config Download Error", "Could not download custom configuration.");
+    }
+  }, [customConfig, toast, handleGlobalApiError]);
+
 
   return {
     customConfig,
@@ -280,5 +307,6 @@ export function useGlobalDriveConfigManager({
     removeVirtualFolderFromConfig,
     resetConfigState,
     setIsConnected,
+    handleDownloadCurrentConfig,
   };
 }

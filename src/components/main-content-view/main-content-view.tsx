@@ -8,7 +8,7 @@ import { ContentFolderItem } from "./content-folder-item";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Search, FolderOpen, Loader2, CalendarDays, XCircle as ClearIcon, UploadCloud, Cloud, FolderPlus, ArrowUpCircle, ChevronRight, FolderUp, ArrowLeftCircle, ClipboardPaste, Settings2, Globe, Info as InfoIcon, ListTree, Columns, AlertTriangle, Copy as CopyIcon, PlayCircle } from "lucide-react";
+import { Search, FolderOpen, Loader2, CalendarDays, XCircle as ClearIcon, UploadCloud, Cloud, FolderPlus, ArrowUpCircle, ChevronRight, FolderUp, ArrowLeftCircle, ClipboardPaste, Settings2, Globe, Info as InfoIcon, ListTree, Columns, AlertTriangle, Copy as CopyIcon, PlayCircle, Download } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
@@ -54,7 +54,8 @@ interface MainContentViewProps {
   customGlobalDriveConfig?: GlobalDriveConfigV1 | null;
   isLoadingCustomGlobalDriveConfig?: boolean;
   customGlobalDriveConfigError?: string | null;
-  isScanBatchActive?: boolean; // Changed from isGlobalScanActive to match hook
+  isScanBatchActive?: boolean; 
+  onDownloadCustomConfig?: () => void;
 }
 
 const TABS_CONFIG = [
@@ -105,7 +106,8 @@ export function MainContentView({
   customGlobalDriveConfig,
   isLoadingCustomGlobalDriveConfig,
   customGlobalDriveConfigError,
-  isScanBatchActive, // Changed from isGlobalScanActive
+  isScanBatchActive, 
+  onDownloadCustomConfig,
 }: MainContentViewProps) {
   const [activeTab, setActiveTab] = useState("all");
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
@@ -538,7 +540,6 @@ export function MainContentView({
                 <p className="ml-3 text-muted-foreground">Loading more content...</p>
               </div>
             )}
-            {/* Conditional "Load More" button for non-Global Drive views or Custom Global Drive */}
             {((!isGlobalView || (isGlobalView && organizationMode === 'custom')) &&
               !isLoading && !isLoadingMoreMedia && hasMore && displayItems.length > 0 && onLoadMoreMedia) && (
               <div className="col-span-full flex justify-center py-4 mt-4">
@@ -548,7 +549,7 @@ export function MainContentView({
                 </Button>
               </div>
             )}
-            {(!isGlobalView || organizationMode === 'default') && !isLoading && !isLoadingMoreMedia && !hasMore && displayItems.length > 0 && (
+            {(!isGlobalView || (isGlobalView && organizationMode === 'default' && !isScanBatchActive)) && !isLoading && !isLoadingMoreMedia && !hasMore && displayItems.length > 0 && (
               <p className="text-center text-sm text-muted-foreground py-4 mt-4">No more content to load.</p>
             )}
           </>
@@ -670,6 +671,16 @@ export function MainContentView({
               <Button variant="outline" onClick={() => onOpenCreateVirtualFolderDialog(currentCustomGlobalPath)} className="w-full sm:w-auto" disabled={isLoadingCustomGlobalDriveConfig || !!customGlobalDriveConfigError}>
                 <FolderPlus className="mr-2 h-4 w-4" /> Create Folder Here
               </Button>
+              {onDownloadCustomConfig && (
+                <Button
+                  variant="outline"
+                  onClick={onDownloadCustomConfig}
+                  className="w-full sm:w-auto"
+                  disabled={isLoadingCustomGlobalDriveConfig || !!customGlobalDriveConfigError || !customGlobalDriveConfig}
+                >
+                  <Download className="mr-2 h-4 w-4" /> Download Config
+                </Button>
+              )}
           </div>
       )}
 
@@ -697,4 +708,3 @@ export function MainContentView({
     </div>
   );
 }
-
