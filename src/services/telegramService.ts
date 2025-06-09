@@ -40,6 +40,7 @@ export {
   uploadFile,
   deleteTelegramMessages,
   editMessageCaption,
+  downloadDocumentContent,
   TEN_MB,
   UPLOAD_PART_SIZE,
 } from './telegramFiles';
@@ -69,6 +70,12 @@ export {
   searchUsers,
   inviteUserToChannel,
   getContacts, 
+  // New for global drive config
+  getSelfInputPeer,
+  searchSelfMessagesByCaption,
+  uploadTextAsFileToSelfChat,
+  pinSelfChatMessage,
+  unpinAllSelfChatMessages,
 } from './telegramCloud'; 
 
 // Real-time Updates

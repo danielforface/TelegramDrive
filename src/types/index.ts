@@ -86,7 +86,7 @@ export interface FileDownloadInfo {
 
 // Based on MTProto InputPeer types
 export interface InputPeer {
-    _: string; // e.g., 'inputPeerUser', 'inputPeerChat', 'inputPeerChannel', 'inputPeerEmpty'
+    _: string; // e.g., 'inputPeerUser', 'inputPeerChat', 'inputPeerChannel', 'inputPeerEmpty', 'inputPeerSelf'
     user_id?: string | number;
     chat_id?: string | number;
     channel_id?: string | number;
@@ -312,4 +312,28 @@ export interface UpdatedChannelPhoto {
   photo: any; // Photo type from MTProto
   date: number;
 }
+
+// Configuration for Global Drive custom organization
+export interface GlobalDriveConfigV1 {
+  app_signature: "GLOBAL_DRIVE_CONFIG_V1.0";
+  version: 1;
+  root_entries: {
+    [folderName: string]: GlobalDriveFolderEntry;
+  };
+  // Future: rules for auto-sorting files, file references, etc.
+}
+
+export interface GlobalDriveFolderEntry {
+  type: 'folder';
+  name: string; // Name of the folder
+  created_at: string; // ISO timestamp
+  modified_at: string; // ISO timestamp
+  entries?: { // Sub-folders
+    [subFolderName: string]: GlobalDriveFolderEntry;
+  };
+  // Potentially: file_references?: string[]; // Array of CloudFile IDs
+  // Potentially: rules?: any[]; // Rules for auto-assigning files to this folder
+}
+
+export type OrganizationMode = 'default' | 'custom';
 

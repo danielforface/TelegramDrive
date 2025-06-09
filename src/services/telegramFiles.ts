@@ -128,7 +128,7 @@ export async function getChatMediaHistory(
               dataAiHint: dataAiHint, // Placeholder for AI hint
               telegramMessage: mediaObjectForFile || msg, // Store the full message or media object for details/downloads
               inputPeer: inputPeer, // Store the peer for context
-              caption: msg.message, // Store caption, might contain VFS path
+              caption: msg.message, // Store caption, might contain VFS path or regular text
             });
           }
         }
@@ -476,7 +476,7 @@ export async function uploadFile(
       media: {
         _: 'inputMediaUploadedDocument',
         nosound_video: false, // Adjust if sending video specifically
-        force_file: false, // Let Telegram decide best representation, or true to force as file
+        force_file: true, // Force as file for JSON config
         spoiler: false, // No spoiler by default
         file: inputFilePayload,
         mime_type: fileToUpload.type || 'application/octet-stream',
@@ -536,3 +536,52 @@ export async function editMessageCaption(
     throw error;
   }
 }
+
+export async function downloadDocumentContent(document: any, onProgress?: (progress: number) => void): Promise<string | null> {
+  if (!document || !document.id || !document.access_hash || !document.file_reference || !document.size) {
+    // console.error("Invalid document object for download.");
+    return null;
+  }
+
+  const location = {
+    _: 'inputDocumentFileLocation',
+    id: document.id,
+    access_hash: document.access_hash,
+    file_reference: document.file_reference,
+    thumb_size: '',
+  };
+  const totalSize = Number(document.size);
+  const chunks: Uint8Array[] = [];
+  let downloadedBytes = 0;
+  let currentOffset = 0;
+  const DOWNLOAD_CHUNK_SIZE_INTERNAL = 512 * 1024; // 512KB for internal downloads
+
+  try {
+    while (downloadedBytes < totalSize) {
+      const limit = Math.min(DOWNLOAD_CHUNK_SIZE_INTERNAL, totalSize - downloadedBytes);
+      const response = await downloadFileChunk(location, currentOffset, limit); // No signal here, assumes internal non-cancellable
+      
+      if (response.bytes) {
+        chunks.push(response.bytes);
+        downloadedBytes += response.bytes.length;
+        currentOffset += response.bytes.length;
+        if (onProgress) {
+          onProgress(Math.round((downloadedBytes / totalSize) * 100));
+        }
+      } else if (response.errorType === 'FILE_REFERENCE_EXPIRED') {
+        // Attempt to refresh (simplified, ideally a more robust refresh mechanism is needed)
+        // For simplicity, this example won't implement full refresh within this download.
+        // The caller (e.g., config manager) might need to re-fetch the message with the document.
+        throw new Error("File reference expired during document download.");
+      } else {
+        throw new Error("Failed to download document chunk or unexpected response.");
+      }
+    }
+    const fullBlob = new Blob(chunks);
+    return await fullBlob.text();
+  } catch (error) {
+    // console.error("Error downloading document content:", error);
+    return null;
+  }
+}
+

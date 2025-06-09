@@ -2,9 +2,10 @@
 'use client';
 
 import { telegramApiInstance, sleep } from './telegramAPI';
-import { isUserConnected } from './telegramAuth';
+import { isUserConnected, getUserSessionDetails } from './telegramAuth';
 import { getDialogFilters, transformDialogToCloudFolder, ALL_CHATS_FILTER_ID } from './telegramDialogs';
 import type { InputPeer, CloudChannelConfigV1, CloudChannelType, CloudChannelConfigEntry, CloudFolder, FullChat, UpdatedChannelPhoto } from '@/types';
+import { UPLOAD_PART_SIZE, TEN_MB, uploadFile } from './telegramFiles'; // Import for reusing upload logic if needed
 
 export const CLOUDIFIER_APP_SIGNATURE_V1 = "TELEGRAM_CLOUDIFIER_V1.0";
 export const IDENTIFICATION_MESSAGE_ID = 2;
@@ -14,6 +15,170 @@ export const IDENTIFICATION_MESSAGE_SUFFIX = "... This message ensures the confi
 
 const CLOUDIFIER_MANAGED_FOLDER_ID = 20001;
 const CLOUDIFIER_MANAGED_FOLDER_NAME = "Cloudifier Storage";
+const GLOBAL_DRIVE_CONFIG_FILENAME = "telegram_cloudifier_global_drive_config_v1.json";
+const GLOBAL_DRIVE_CONFIG_CAPTION_KEY = "app_feature";
+const GLOBAL_DRIVE_CONFIG_CAPTION_VALUE = "telegram_cloudifier_global_drive_config_v1";
+
+function generateRandomLong(): string {
+  const buffer = new Uint8Array(8);
+  crypto.getRandomValues(buffer);
+  const view = new DataView(buffer.buffer);
+  return view.getBigInt64(0, true).toString();
+}
+
+export async function getSelfInputPeer(): Promise<InputPeer | null> {
+  if (!(await isUserConnected())) return null;
+  try {
+    // Fetching self user to ensure access_hash is up-to-date if needed,
+    // though 'inputPeerSelf' doesn't require access_hash.
+    const selfUser = await telegramApiInstance.call('users.getUsers', { id: [{ _: 'inputUserSelf' }] });
+    if (selfUser && selfUser.length > 0) {
+      return { _: 'inputPeerSelf' };
+    }
+    return null;
+  } catch (error) {
+    // console.error("Error getting self input peer:", error);
+    return null;
+  }
+}
+
+export async function searchSelfMessagesByCaption(
+  captionKey: string,
+  captionValue: string
+): Promise<any | null> { // Returns the message object if found
+  const selfPeer = await getSelfInputPeer();
+  if (!selfPeer) return null;
+
+  try {
+    // Fetch a reasonable number of recent messages from Saved Messages
+    // Telegram search by caption isn't a direct API feature, so we filter client-side or rely on broad search.
+    // Using messages.search with inputPeerSelf
+    const searchResults = await telegramApiInstance.call('messages.search', {
+      peer: selfPeer,
+      q: '', // Empty query, relying on filter or manual check
+      filter: { _: 'inputMessagesFilterPinned' }, // Check pinned messages first
+      min_date: 0,
+      max_date: 0,
+      offset_id: 0,
+      add_offset: 0,
+      limit: 10, // Check last 10 pinned
+      max_id: 0,
+      min_id: 0,
+      hash: 0,
+    });
+    
+    if (searchResults && searchResults.messages) {
+      for (const message of searchResults.messages) {
+        if (message.message) { // Caption is in message.message for documents
+          try {
+            const parsedCaption = JSON.parse(message.message);
+            if (parsedCaption && parsedCaption[captionKey] === captionValue) {
+              return message; // Found the config message
+            }
+          } catch (e) { /* ignore messages with non-JSON captions */ }
+        }
+      }
+    }
+    // If not found in pinned, could extend to search more messages, but that's less efficient.
+    // For now, relying on it being pinned.
+  } catch (error) {
+    // console.error("Error searching self messages:", error);
+  }
+  return null;
+}
+
+export async function uploadTextAsFileToSelfChat(
+  fileName: string,
+  textContent: string,
+  mimeType: string,
+  captionJson: object
+): Promise<any | null> { // Returns the sent message object
+  const selfPeer = await getSelfInputPeer();
+  if (!selfPeer) throw new Error("Could not get self peer to upload file.");
+
+  const fileData = new TextEncoder().encode(textContent);
+  const blob = new Blob([fileData], { type: mimeType });
+  const file = new File([blob], fileName, { type: mimeType });
+
+  const captionString = JSON.stringify(captionJson);
+
+  // Use the existing uploadFile service
+  try {
+    const sentMessageContainer = await uploadFile(selfPeer, file, (progress) => {
+      // console.log(`Uploading ${fileName} to self chat: ${progress}%`);
+    }, undefined /* no signal */, captionString);
+    
+    // The structure of sentMessageContainer can vary.
+    // Often it's an 'updates' object containing the message.
+    if (sentMessageContainer && (sentMessageContainer._ === 'updates' || sentMessageContainer._ === 'updatesCombined')) {
+        const updatesArray = sentMessageContainer.updates || [];
+        for (const update of updatesArray) {
+            if (update._ === 'updateNewMessage' || update._ === 'updateNewChannelMessage' || update._ === 'updateShortSentMessage') {
+                if (update.message && update.message.media && update.message.media.document && update.message.media.document.attributes) {
+                    const fnAttr = update.message.media.document.attributes.find((a:any) => a._ === 'documentAttributeFilename');
+                    if (fnAttr && fnAttr.file_name === fileName && update.message.message === captionString) {
+                        return update.message;
+                    }
+                }
+            }
+        }
+    } else if (sentMessageContainer && sentMessageContainer.media && sentMessageContainer.media.document) { // Simpler response
+        return sentMessageContainer;
+    }
+    // console.warn("Could not confirm exact sent message object after upload:", sentMessageContainer);
+    // Fallback: try to fetch the last message sent to self chat if specific object not found (less reliable)
+    const history = await telegramApiInstance.call('messages.getHistory', { peer: selfPeer, limit: 1, offset_id: 0, offset_date: 0, add_offset: 0, max_id: 0, min_id: 0, hash: 0 });
+    if (history && history.messages && history.messages.length > 0) {
+        const lastMsg = history.messages[0];
+         if (lastMsg.media && lastMsg.media.document && lastMsg.media.document.attributes) {
+            const fnAttr = lastMsg.media.document.attributes.find((a:any) => a._ === 'documentAttributeFilename');
+            if (fnAttr && fnAttr.file_name === fileName && lastMsg.message === captionString) {
+                return lastMsg;
+            }
+        }
+    }
+    return null; // Or throw error if critical
+  } catch (error) {
+    // console.error(`Error uploading ${fileName} to self chat:`, error);
+    throw error;
+  }
+}
+
+export async function pinSelfChatMessage(messageId: number, silent: boolean = true): Promise<boolean> {
+  const selfPeer = await getSelfInputPeer();
+  if (!selfPeer) return false;
+  try {
+    const result = await telegramApiInstance.call('messages.updatePinnedMessage', {
+      silent: silent,
+      unpin: false, // Explicitly false to pin
+      peer: selfPeer,
+      id: messageId,
+    });
+    return result && (result._ === 'updates' || result._ === 'updatesCombined');
+  } catch (error) {
+    // console.error("Error pinning self chat message:", error);
+    return false;
+  }
+}
+
+export async function unpinAllSelfChatMessages(): Promise<boolean> {
+  const selfPeer = await getSelfInputPeer();
+  if (!selfPeer) return false;
+  try {
+    const result = await telegramApiInstance.call('messages.unpinAllMessages', {
+      peer: selfPeer,
+    });
+    // messages.affectedHistory seems to be the success response
+    return result && result._ === 'messages.affectedHistory';
+  } catch (error) {
+    // console.error("Error unpinning all self chat messages:", error);
+    // It might fail if nothing is pinned, which is fine.
+    if ((error as any).message?.includes('PINNED_DIALOGS_TOO_MUCH') || (error as any).message?.includes('MESSAGE_NOT_MODIFIED')) {
+        return true; // Treat as success if there was nothing to unpin or already unpinned.
+    }
+    return false;
+  }
+}
 
 
 export async function getCloudChannelConfig(channelInputPeer: InputPeer): Promise<CloudChannelConfigV1 | null> {
@@ -689,3 +854,6 @@ export async function getContacts(): Promise<any[]> {
   }
 }
     
+// Constants for Global Drive Config File
+export { GLOBAL_DRIVE_CONFIG_FILENAME, GLOBAL_DRIVE_CONFIG_CAPTION_KEY, GLOBAL_DRIVE_CONFIG_CAPTION_VALUE };
+
