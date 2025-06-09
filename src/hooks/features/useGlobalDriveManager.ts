@@ -26,7 +26,7 @@ interface DialogProcessInfo {
 export function useGlobalDriveManager({
   toast,
   handleGlobalApiError,
-  isConnected,
+  isConnected: initialIsConnected, // Renamed prop for clarity
 }: UseGlobalDriveManagerProps) {
   const [globalMediaItems, setGlobalMediaItems] = useState<CloudFile[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -35,7 +35,7 @@ export function useGlobalDriveManager({
 
   const allDialogsCacheRef = useRef<CloudFolder[]>([]);
   const dialogsProcessQueueRef = useRef<DialogProcessInfo[]>([]);
-  const processedDialogIdsRef = useRef<Set<string>>(new Set()); // To avoid re-processing a dialog unless for "load more" from it
+  const processedDialogIdsRef = useRef<Set<string>>(new Set());
   const dialogMediaOffsetCacheRef = useRef<Map<string, { offsetId: number, hasMore: boolean }>>(new Map());
 
   const [isInitialScanComplete, setIsInitialScanComplete] = useState(false);
@@ -43,6 +43,17 @@ export function useGlobalDriveManager({
   const [currentDialogsOffsetId, setCurrentDialogsOffsetId] = useState(0);
   const [currentDialogsOffsetPeer, setCurrentDialogsOffsetPeer] = useState<any>({ _: 'inputPeerEmpty' });
   const [hasMoreDialogsToFetch, setHasMoreDialogsToFetch] = useState(true);
+
+  const [isConnectedInternal, setIsConnectedInternal] = useState(initialIsConnected);
+
+  useEffect(() => {
+    setIsConnectedInternal(initialIsConnected);
+  }, [initialIsConnected]);
+
+  const setIsConnected = useCallback((connected: boolean) => {
+    setIsConnectedInternal(connected);
+  }, []);
+
 
   const resetManager = useCallback(() => {
     setGlobalMediaItems([]);
@@ -61,11 +72,11 @@ export function useGlobalDriveManager({
   }, []);
 
   const fetchAndQueueDialogs = useCallback(async (isLoadMoreDialogs: boolean = false) => {
-    if (!isConnected || (!isLoadMoreDialogs && allDialogsCacheRef.current.length > 0) || (isLoadMoreDialogs && !hasMoreDialogsToFetch)) {
-      if (!hasMoreDialogsToFetch && isLoadMoreDialogs) setStatusMessage("All dialogs scanned.");
-      return false; // Don't re-fetch if already have dialogs unless loading more
+    if (!isConnectedInternal || (!isLoadMoreDialogs && allDialogsCacheRef.current.length > 0) || (isLoadMoreDialogs && !hasMoreDialogsToFetch)) {
+      if (!hasMoreDialogsToFetch && isLoadMoreDialogs) setStatusMessage("All dialogs scanned. No more to fetch.");
+      return false;
     }
-    setStatusMessage(isLoadMoreDialogs ? "Fetching more dialogs..." : "Fetching dialog list...");
+    setStatusMessage(isLoadMoreDialogs ? `Fetching more dialogs... (${allDialogsCacheRef.current.length} dialogs found so far)` : "Fetching initial dialog list for Global Drive...");
     setIsLoading(true);
     try {
       const response = await telegramService.getTelegramChats(
@@ -91,52 +102,51 @@ export function useGlobalDriveManager({
       setCurrentDialogsOffsetPeer(response.nextOffsetPeer);
       
       if (!response.hasMore) {
-        setStatusMessage("All dialogs fetched. Starting media scan...");
+        setStatusMessage(allDialogsCacheRef.current.length > 0 ? `All ${allDialogsCacheRef.current.length} dialogs fetched. Starting media scan...` : "No dialogs found.");
       } else {
-        setStatusMessage(`Fetched ${allDialogsCacheRef.current.length} dialogs. More dialogs to fetch...`);
+        setStatusMessage(`Fetched ${allDialogsCacheRef.current.length} dialogs. More available...`);
       }
-      return true; // Indicates dialogs were fetched or queue was populated
+      return true;
     } catch (error) {
       handleGlobalApiError(error, "Error Fetching Dialogs for Global Drive", "Could not load dialog list.");
-      setHasMoreDialogsToFetch(false); // Stop trying to fetch more dialogs on error
+      setHasMoreDialogsToFetch(false);
+      setStatusMessage("Error fetching dialogs. Scan cannot continue.");
       return false;
     } finally {
-       if (!isLoadMoreDialogs) setIsLoading(false); // Only set loading false for initial dialog fetch phase
+       // setIsLoading(false); // isLoading is managed by the main loop now
     }
-  }, [isConnected, handleGlobalApiError, currentDialogsOffsetDate, currentDialogsOffsetId, currentDialogsOffsetPeer, hasMoreDialogsToFetch]);
+  }, [isConnectedInternal, handleGlobalApiError, currentDialogsOffsetDate, currentDialogsOffsetId, currentDialogsOffsetPeer, hasMoreDialogsToFetch]);
 
 
   const processMediaFetchLoop = useCallback(async () => {
-    if (!isConnected || isLoading) return;
+    if (!isConnectedInternal || isLoading) return;
     setIsLoading(true);
 
     let itemsFetchedInThisRun = 0;
-    const BATCH_SIZE_GLOBAL_MEDIA = 3; // How many dialogs to process media for in one go
+    const BATCH_SIZE_GLOBAL_MEDIA = 3;
 
     while (itemsFetchedInThisRun < BATCH_SIZE_GLOBAL_MEDIA) {
         if (dialogsProcessQueueRef.current.length === 0) {
             if (hasMoreDialogsToFetch) {
-                setStatusMessage("Fetching next batch of dialogs...");
+                setStatusMessage(`Fetching next batch of dialogs... (${allDialogsCacheRef.current.length} found so far)`);
                 const gotMoreDialogs = await fetchAndQueueDialogs(true);
-                if (!gotMoreDialogs && !hasMoreDialogsToFetch) { // No more dialogs and fetch didn't yield any
-                    break; // Break inner loop
+                if (!gotMoreDialogs && !hasMoreDialogsToFetch) {
+                    break;
                 }
-                if(dialogsProcessQueueRef.current.length === 0 && !hasMoreDialogsToFetch) break; // Still no dialogs, break
-                // If dialogs were fetched, the loop will continue
+                if(dialogsProcessQueueRef.current.length === 0 && !hasMoreDialogsToFetch) break;
             } else {
-                // No more dialogs in queue and no more dialogs to fetch from server
                 break; 
             }
         }
 
         const currentProcessInfo = dialogsProcessQueueRef.current.shift();
         if (!currentProcessInfo || !currentProcessInfo.dialog.inputPeer || !currentProcessInfo.hasMoreMedia) {
-            if(currentProcessInfo) currentProcessInfo.isFullyScanned = true; // Mark as scanned if no peer or no more media
+            if(currentProcessInfo) currentProcessInfo.isFullyScanned = true;
             continue;
         }
         
         const { dialog, mediaOffsetId: currentMediaOffset } = currentProcessInfo;
-        setStatusMessage(`Scanning media in: ${dialog.name}...`);
+        setStatusMessage(`Scanning media in: ${dialog.name}... (${dialogsProcessQueueRef.current.length} chats remaining in queue)`);
 
         try {
             const mediaResponse = await telegramService.getChatMediaHistory(
@@ -156,77 +166,64 @@ export function useGlobalDriveManager({
             currentProcessInfo.hasMoreMedia = mediaResponse.hasMore;
 
             if (mediaResponse.hasMore) {
-                dialogsProcessQueueRef.current.push(currentProcessInfo); // Re-queue if dialog has more media
+                dialogsProcessQueueRef.current.push(currentProcessInfo);
             } else {
-                currentProcessInfo.isFullyScanned = true; // Mark as fully scanned for this dialog
+                currentProcessInfo.isFullyScanned = true;
             }
             itemsFetchedInThisRun++;
 
         } catch (error) {
             handleGlobalApiError(error, `Error Fetching Media for ${dialog.name}`, `Could not load media from ${dialog.name}.`);
-            currentProcessInfo.hasMoreMedia = false; // Stop trying for this dialog on error
+            currentProcessInfo.hasMoreMedia = false;
             currentProcessInfo.isFullyScanned = true;
         }
-    } // End of while loop
+    }
 
     if (dialogsProcessQueueRef.current.length === 0 && !hasMoreDialogsToFetch) {
       setHasMore(false);
-      setStatusMessage("Global Drive scan complete. All accessible media loaded.");
+      setStatusMessage(globalMediaItems.length > 0 ? "Global Drive scan complete. All accessible media loaded." : "Global Drive scan complete. No media items found.");
       if(!isInitialScanComplete) setIsInitialScanComplete(true);
     } else {
-      setHasMore(true); // Still more to process or fetch
-      if(!isInitialScanComplete && itemsFetchedInThisRun === 0 && allDialogsCacheRef.current.length > 0){
-         // This case means we have dialogs, but the first batch processing yielded no media from them (empty chats)
-         // If there are more dialogs to fetch, it'll try. If not, it will eventually set hasMore to false.
-      }
-      if(!isInitialScanComplete && allDialogsCacheRef.current.length > 0) setIsInitialScanComplete(true); // Mark initial scan as done after first pass
-       setStatusMessage(dialogsProcessQueueRef.current.length > 0 ? `More media to scan. In queue: ${dialogsProcessQueueRef.current.length} dialogs.` : (hasMoreDialogsToFetch ? "Ready to fetch more dialogs." : "Processing final media batches..."));
+      setHasMore(true);
+      if(!isInitialScanComplete && allDialogsCacheRef.current.length > 0) setIsInitialScanComplete(true);
+      setStatusMessage(
+        dialogsProcessQueueRef.current.length > 0 
+          ? `More media to scan. In queue: ${dialogsProcessQueueRef.current.length} dialogs.` 
+          : (hasMoreDialogsToFetch 
+              ? `Ready to fetch more dialogs. (${allDialogsCacheRef.current.length} found)`
+              : "Processing final media batches...")
+      );
     }
     setIsLoading(false);
 
-  }, [isConnected, isLoading, handleGlobalApiError, fetchAndQueueDialogs, isInitialScanComplete, hasMoreDialogsToFetch]);
+  }, [isConnectedInternal, isLoading, handleGlobalApiError, fetchAndQueueDialogs, isInitialScanComplete, hasMoreDialogsToFetch, globalMediaItems.length]);
 
 
   const fetchInitialGlobalMedia = useCallback(async () => {
-    if (!isConnected) {
+    if (!isConnectedInternal) {
       setStatusMessage("Not connected. Cannot start Global Drive scan.");
       setIsLoading(false);
       return;
     }
-    resetManager(); // Clear previous state before starting
+    resetManager();
     setIsLoading(true);
     setStatusMessage("Fetching initial dialog list for Global Drive...");
 
     const dialogsFetched = await fetchAndQueueDialogs(false);
     if (dialogsFetched && dialogsProcessQueueRef.current.length > 0) {
-        processMediaFetchLoop(); // Start the media fetching loop
+        processMediaFetchLoop();
     } else if (!dialogsFetched && !hasMoreDialogsToFetch) {
-        // This means fetchAndQueueDialogs returned false (e.g. error or no dialogs at all)
-        // AND there are no more dialogs to fetch.
         setHasMore(false);
-        setStatusMessage("No dialogs found or could not fetch dialog list.");
+        setStatusMessage(allDialogsCacheRef.current.length === 0 ? "No dialogs found to scan." : "All dialogs fetched, but queue is empty. Check processing logic.");
         setIsLoading(false);
-    } else {
-        // Dialogs might still be fetching or an error occurred.
-        // fetchAndQueueDialogs's finally block would have set isLoading to false if it completed without queuing.
-        // If it queued items, processMediaFetchLoop will handle isLoading.
     }
-  }, [isConnected, resetManager, fetchAndQueueDialogs, processMediaFetchLoop]);
+  }, [isConnectedInternal, resetManager, fetchAndQueueDialogs, processMediaFetchLoop, hasMoreDialogsToFetch]);
 
 
   const loadMoreGlobalMedia = useCallback(() => {
     if (isLoading || !hasMore) return;
     processMediaFetchLoop();
   }, [isLoading, hasMore, processMediaFetchLoop]);
-
-  // Effect to start initial fetch when isConnected changes to true
-  useEffect(() => {
-    if (isConnected && !isInitialScanComplete && allDialogsCacheRef.current.length === 0 && dialogsProcessQueueRef.current.length === 0) {
-      // This condition ensures it only auto-starts if not already scanned and no dialogs are loaded/queued
-      // fetchInitialGlobalMedia(); // This will be triggered by page.tsx via onOpenGlobalDrive
-    }
-  }, [isConnected, isInitialScanComplete /*, fetchInitialGlobalMedia */]);
-
 
   return {
     globalMediaItems,
@@ -236,6 +233,9 @@ export function useGlobalDriveManager({
     fetchInitialGlobalMedia,
     loadMoreGlobalMedia,
     resetManager,
+    setIsConnected, // Expose the setter
+    setGlobalMediaItemsDirectly: setGlobalMediaItems, // For file operations if needed
   };
 }
 
+    
