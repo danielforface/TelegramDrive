@@ -208,10 +208,9 @@ export function MainContentView({
 
 
   const mediaFilesToDisplay = useMemo(() => {
-    let processedFiles = files; // Start with all files passed to the component
+    let processedFiles = files; 
 
-    // Apply tab filtering for regular chats OR global view
-    if (!isCloudChannel || isGlobalView) { // Apply if not a VFS cloud channel, OR if it's global view
+    if (!isCloudChannel || isGlobalView) { 
         switch (activeTab) {
           case "images":
             processedFiles = files.filter(file => file.type === 'image');
@@ -230,20 +229,17 @@ export function MainContentView({
             break;
           case "other":
             processedFiles = files.filter(file =>
-              file.type === 'document' && // Assuming 'other' means non-specific documents
+              file.type === 'document' && 
               !DOCUMENT_EXTENSIONS.some(ext => file.name.toLowerCase().endsWith(ext))
             );
             break;
           case "all":
           default:
-            // No type filtering, use all files
             break;
         }
     }
-    // Note: If isCloudChannel AND !isGlobalView, `processedFiles` remains `files` as VFS items are handled differently.
-
+    
     if (selectedDate) {
-      // Date filtering applies *after* tab filtering, or directly to `files` if no tab filtering
       processedFiles = processedFiles.filter(file =>
         file.timestamp && isSameDay(new Date(file.timestamp * 1000), selectedDate)
       );
@@ -313,7 +309,7 @@ export function MainContentView({
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
               {displayItems.map((item, index) => {
-                if (isCloudChannel && !isGlobalView && item.type === 'folder') { // VFS Folder rendering
+                if (isCloudChannel && !isGlobalView && item.type === 'folder') { 
                   const syntheticFolder: CloudFolder = {
                     id: item.name,
                     name: item.name,
@@ -336,7 +332,7 @@ export function MainContentView({
                         isCloudChannelContext={true}
                       />
                   );
-                } else { // File rendering (applies to Global View and regular chat files)
+                } else { 
                   const fileItem = (isCloudChannel && !isGlobalView) ? (item as any).cloudFile as CloudFile : item as CloudFile;
                   if (!fileItem || !fileItem.id) return null;
 
@@ -346,7 +342,7 @@ export function MainContentView({
                   let dayHeader = null;
                   let monthHeader = null;
 
-                  if (!selectedDate && (!isGlobalView && !isCloudChannel)) { // Date grouping only for non-global, non-VFS, non-date-filtered views
+                  if (!selectedDate && (!isGlobalView && !isCloudChannel)) { 
                     if (!lastDisplayedMonth || !isSameMonth(fileDate, lastDisplayedMonth)) {
                       monthHeader = (
                         <div key={`month-${fileItem.id}`} className="col-span-full text-lg font-semibold text-primary py-3 mt-4 mb-2 border-b-2 border-primary/30">
@@ -439,7 +435,7 @@ export function MainContentView({
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3 mb-3 items-center flex-wrap flex-shrink-0">
-         {isCloudChannel && !isGlobalView ? ( // VFS Cloud Channel specific controls
+         {isCloudChannel && !isGlobalView ? ( 
            <>
              {currentVirtualPath !== '/' && (
                <Button variant="outline" onClick={() => onNavigateVirtualPath(getParentPath(currentVirtualPath))} className="w-full sm:w-auto">
@@ -456,7 +452,7 @@ export function MainContentView({
               <Settings2 className="mr-2 h-4 w-4" /> Manage Channel
             </Button>}
            </>
-         ) : (!isCloudChannel || isGlobalView) ? ( // Regular chat or Global Drive controls
+         ) : (!isCloudChannel || isGlobalView) ? ( 
             <>
               <Button variant="outline" onClick={handleSearchButtonClick} className="w-full sm:w-auto">
                 <Search className="mr-2 h-4 w-4" /> Search
@@ -482,7 +478,7 @@ export function MainContentView({
               </Button>}
             </>
          ) : null }
-        {(!isCloudChannel || isGlobalView) ? ( // Show tabs for regular chats and Global Drive
+        {(!isCloudChannel || isGlobalView) ? ( 
           <>
             <div className="flex-grow"></div> {}
             <Tabs defaultValue="all" onValueChange={setActiveTab} value={activeTab} className="w-full sm:w-auto">
@@ -512,7 +508,16 @@ export function MainContentView({
             No media items found for the current filter
             {activeTab !== "all" ? ` in "${TABS_CONFIG.find(t=>t.value === activeTab)?.label}"` : ""}
             {selectedDate ? ` on ${format(selectedDate, "PPP")}` : ""}.
+            {hasMore && onLoadMoreMedia && (
+              <span className="block text-base mt-2">Try loading more to see if items appear in this category.</span>
+            )}
           </p>
+          {hasMore && onLoadMoreMedia && (
+            <Button onClick={onLoadMoreMedia} disabled={isLoadingMoreMedia || isLoading} variant="outline" className="mt-4">
+              {(isLoadingMoreMedia || isLoading) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Load More
+            </Button>
+          )}
         </div>
       ) : noMediaAtAll ? (
          <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center h-full">
