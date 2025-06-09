@@ -19,7 +19,7 @@ const defaultAllChatsFilter: DialogFilter = {
 
 interface UseDialogFiltersManagerProps {
   isConnected: boolean;
-  setIsConnected?: (isConnected: boolean) => void;
+  setIsConnected?: (isConnected: boolean) => void; // Optional: Only used if hook needs to inform parent of its internal changes
   toast: ReturnType<typeof useToast>['toast'];
   handleGlobalApiError: (error: any, title: string, defaultMessage: string, doPageReset?: boolean) => void;
   setChatsDataCacheForFilter: (filterId: number, data: { folders: CloudFolder[], pagination: GetChatsPaginatedResponse, isLoading: boolean, error?: string | null }) => void;
@@ -36,7 +36,7 @@ const INITIAL_SPECIFIC_FOLDER_CHATS_LOAD_LIMIT = 20;
 
 export function useDialogFiltersManager({
   isConnected: initialIsConnected,
-  setIsConnected: setExternalIsConnected,
+  // setIsConnected: setExternalIsConnected, // This prop is removed if not used to set parent's state
   toast,
   handleGlobalApiError,
   fetchAndCacheDialogsForListManager,
@@ -56,14 +56,14 @@ export function useDialogFiltersManager({
 
   const setIsConnected = useCallback((connected: boolean) => {
     setIsConnectedInternal(connected);
-    if (setExternalIsConnected) {
-      setExternalIsConnected(connected);
-    }
-  }, [setExternalIsConnected]);
+    // If this hook needs to inform its parent about connection changes (e.g., if parent holds 'isConnected'),
+    // then call setExternalIsConnected(connected) here.
+    // For page.tsx, it's usually the parent (connectionManager) informing this hook.
+  }, [/* remove setIsConnectedInternal if it's only a useState setter */]);
 
-  // Stable setters for page.tsx to use
-  const setActiveDialogFilterId = useCallback(setActiveDialogFilterIdInternal, []);
-  const setActiveFilterDetails = useCallback(setActiveFilterDetailsInternal, []);
+
+  const setActiveDialogFilterId = useCallback(setActiveDialogFilterIdInternal, [setActiveDialogFilterIdInternal]);
+  const setActiveFilterDetails = useCallback(setActiveFilterDetailsInternal, [setActiveFilterDetailsInternal]);
 
 
   const fetchDialogFilters = useCallback(async (forceRefresh = false) => {
@@ -104,21 +104,19 @@ export function useDialogFiltersManager({
       });
 
       const finalFilters = processedFilters.length > 0 ? processedFilters : [defaultAllChatsFilter];
-      setDialogFilters(finalFilters); // This causes a re-render
+      setDialogFilters(finalFilters); 
       setHasFetchedDialogFiltersOnce(true);
 
-      // Ensure activeDialogFilterId is valid after filters are fetched/updated
-      const currentActiveIdBeforeUpdate = activeDialogFilterId; // Use the state variable
+      const currentActiveIdBeforeUpdate = activeDialogFilterId; 
       const currentActiveStillExists = finalFilters.some(f => f.id === currentActiveIdBeforeUpdate);
 
       if (!currentActiveStillExists && finalFilters.length > 0) {
         const newActiveIdToSet = finalFilters.find(f => f.id === ALL_CHATS_FILTER_ID) ? ALL_CHATS_FILTER_ID : finalFilters[0].id;
-        setActiveDialogFilterIdInternal(newActiveIdToSet); // Update internal state
+        setActiveDialogFilterIdInternal(newActiveIdToSet); 
       } else if (finalFilters.length === 0) {
-        setActiveDialogFilterIdInternal(ALL_CHATS_FILTER_ID); // Update internal state
+        setActiveDialogFilterIdInternal(ALL_CHATS_FILTER_ID); 
       }
-      // The page.tsx useEffect will derive activeFilterDetails based on the possibly updated activeDialogFilterId and new dialogFilters.
-
+      
       if (forceRefresh || finalFilters.length > 0) {
         await fetchAndCacheDialogsForListManager(ALL_CHATS_FILTER_ID, false, undefined, INITIAL_MASTER_CHATS_LOAD_LIMIT);
         for (const filter of finalFilters) {
@@ -131,21 +129,19 @@ export function useDialogFiltersManager({
     } catch (error: any) {
       handleGlobalApiError(error, "Error Fetching Folders", "Could not load your chat folders.");
       setDialogFilters([defaultAllChatsFilter]);
-      setActiveDialogFilterIdInternal(ALL_CHATS_FILTER_ID); // Update internal state
-      // setActiveFilterDetailsInternal(defaultAllChatsFilter); // Page.tsx derives this
+      setActiveDialogFilterIdInternal(ALL_CHATS_FILTER_ID); 
       setHasFetchedDialogFiltersOnce(false);
     } finally {
       setIsLoadingDialogFilters(false);
     }
   }, [
       isConnectedInternal, handleGlobalApiError, hasFetchedDialogFiltersOnce, dialogFilters.length, isReorderingFolders,
-      fetchAndCacheDialogsForListManager, activeDialogFilterId, // Include activeDialogFilterId as it's read
+      fetchAndCacheDialogsForListManager, activeDialogFilterId, 
   ]);
 
   const handleSelectDialogFilter = useCallback((filterId: number) => {
     if (isReorderingFolders) return;
-    setActiveDialogFilterIdInternal(filterId); // Update internal state
-    // activeFilterDetails will be derived by page.tsx based on this new ID.
+    setActiveDialogFilterIdInternal(filterId); 
     setLastFetchedFilterIdForChatListManager(null);
   }, [isReorderingFolders, setLastFetchedFilterIdForChatListManager]);
 
@@ -199,7 +195,7 @@ export function useDialogFiltersManager({
   }, [toast, handleGlobalApiError]);
 
   const handleRefreshCurrentFilterView = useCallback(() => {
-     if (activeFilterDetails) { // Use the internal state for the toast
+     if (activeFilterDetails) { 
         toast({ title: `Refreshing "${activeFilterDetails.title}"...`});
         setLastFetchedFilterIdForChatListManager(null);
     }
@@ -216,11 +212,11 @@ export function useDialogFiltersManager({
 
   return {
     dialogFilters,
-    setDialogFilters, // This setter might not be needed externally if fetchDialogFilters is robust
-    activeDialogFilterId, // Return the state variable
-    activeFilterDetails,  // Return the state variable
-    setActiveDialogFilterId, // Return the stable setter for page.tsx (though page.tsx shouldn't call it directly)
-    setActiveFilterDetails,  // Return the stable setter for page.tsx
+    setDialogFilters, 
+    activeDialogFilterId, 
+    activeFilterDetails,  
+    setActiveDialogFilterId, 
+    setActiveFilterDetails,  
     isLoadingDialogFilters,
     setIsLoadingDialogFilters,
     hasFetchedDialogFiltersOnce,

@@ -8,15 +8,14 @@ import type { useToast } from "@/hooks/use-toast";
 
 interface UseAppCloudChannelsManagerProps {
   isConnected: boolean;
-  setIsConnected?: (isConnected: boolean) => void; // Optional prop
+  setIsConnected?: (isConnected: boolean) => void; 
   toast: ReturnType<typeof useToast>['toast'];
   handleGlobalApiError: (error: any, title: string, defaultMessage: string, doPageReset?: boolean) => void;
-  // onCloudChannelListChange?: () => void; // Removed: Parent will decide when to refresh dialog filters
 }
 
 export function useAppCloudChannelsManager({
   isConnected: initialIsConnected,
-  setIsConnected: setExternalIsConnected,
+  // setIsConnected: setExternalIsConnected, // Removed if not used by parent
   toast,
   handleGlobalApiError,
 }: UseAppCloudChannelsManagerProps) {
@@ -30,10 +29,9 @@ export function useAppCloudChannelsManager({
 
   const setIsConnected = useCallback((connected: boolean) => {
     setIsConnectedInternal(connected);
-    if (setExternalIsConnected) {
-      setExternalIsConnected(connected);
-    }
-  }, [setExternalIsConnected]);
+    // If this hook needs to inform its parent about connection changes
+    // call setExternalIsConnected(connected) here.
+  }, [/* remove setIsConnectedInternal if only a useState setter */]);
 
   const fetchAppManagedCloudChannelsList = useCallback(async (forceRefresh = false) => {
     if (!isConnectedInternal && !forceRefresh) {
@@ -47,7 +45,6 @@ export function useAppCloudChannelsManager({
     try {
       const channels = await telegramService.fetchAndVerifyManagedCloudChannels();
       setAppManagedCloudFolders(channels.sort((a, b) => a.name.localeCompare(b.name)));
-      // Removed onCloudChannelListChange call here; parent handles dialog filter refresh separately
     } catch (error: any) {
       handleGlobalApiError(error, "Error Fetching Cloud Channels", "Could not load app-managed cloud channels.");
       setAppManagedCloudFolders([]); 
@@ -71,13 +68,12 @@ export function useAppCloudChannelsManager({
         return [...prevFolders, newlyVerifiedFolder].sort((a, b) => a.name.localeCompare(b.name));
       } else {
         const oldFolder = prevFolders.find(f => f.id === newlyVerifiedFolder.id);
-        // Check if the content actually changed to avoid unnecessary state updates / downstream effects
         if (JSON.stringify(oldFolder) !== JSON.stringify(newlyVerifiedFolder)) {
             listActuallyChanged = true;
             return prevFolders.map(f => f.id === newlyVerifiedFolder.id ? newlyVerifiedFolder : f)
                               .sort((a, b) => a.name.localeCompare(b.name));
         }
-        return prevFolders; // No change
+        return prevFolders; 
       }
     });
     return listActuallyChanged;
@@ -90,7 +86,6 @@ export function useAppCloudChannelsManager({
         if (exists) return prevFolders.map(f => f.id === newCloudFolder.id ? newCloudFolder : f).sort((a,b) => a.name.localeCompare(b.name));
         return [...prevFolders, newCloudFolder].sort((a,b) => a.name.localeCompare(b.name));
     });
-    // Removed onCloudChannelListChange call
   }, []);
 
 
@@ -108,7 +103,7 @@ export function useAppCloudChannelsManager({
     handleNewCloudChannelVerifiedAndUpdateList,
     addCreatedCloudChannelToList,
     resetAppManagedCloudFolders,
-    setIsConnected, // Expose setter
+    setIsConnected, 
   };
 }
 

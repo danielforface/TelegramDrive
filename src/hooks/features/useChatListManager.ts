@@ -30,7 +30,7 @@ const INITIAL_SPECIFIC_FOLDER_CHATS_LOAD_LIMIT = 20;
 
 interface UseChatListManagerProps {
   isConnected: boolean;
-  setIsConnected?: (isConnected: boolean) => void; // Optional prop
+  setIsConnected?: (isConnected: boolean) => void; 
   activeFilterDetails: DialogFilter | null; 
   toast: ReturnType<typeof useToast>['toast'];
   handleGlobalApiError: (error: any, title: string, defaultMessage: string, doPageReset?: boolean) => void;
@@ -41,11 +41,11 @@ interface UseChatListManagerProps {
 
 export function useChatListManager({
   isConnected: initialIsConnected,
-  setIsConnected: setExternalIsConnected,
-  activeFilterDetails,
+  // setIsConnected: setExternalIsConnected, // Removed if not used by parent
+  activeFilterDetails: initialActiveFilterDetails, // Prop for initial value
   toast,
   handleGlobalApiError,
-  dialogFilters,
+  dialogFilters: initialDialogFilters, // Prop for initial value
   resetSelectedMedia,
   setClipboardItem,
 }: UseChatListManagerProps) {
@@ -60,16 +60,29 @@ export function useChatListManager({
   const [lastFetchedFilterIdForChatList, setLastFetchedFilterIdForChatList] = useState<number | null>(null);
   const [isConnectedInternal, setIsConnectedInternal] = useState(initialIsConnected);
 
+  // State for props that page.tsx will update via useEffect
+  const [activeFilterDetailsState, setActiveFilterDetailsState] = useState<DialogFilter | null>(initialActiveFilterDetails);
+  const [dialogFiltersState, setDialogFiltersState] = useState<DialogFilter[]>(initialDialogFilters);
+
+  // Effect to update internal state when props change
+  useEffect(() => {
+    setActiveFilterDetailsState(initialActiveFilterDetails);
+  }, [initialActiveFilterDetails]);
+
+  useEffect(() => {
+    setDialogFiltersState(initialDialogFilters);
+  }, [initialDialogFilters]);
+
+
   useEffect(() => {
     setIsConnectedInternal(initialIsConnected);
   }, [initialIsConnected]);
 
   const setIsConnected = useCallback((connected: boolean) => {
     setIsConnectedInternal(connected);
-    if (setExternalIsConnected) {
-      setExternalIsConnected(connected);
-    }
-  }, [setExternalIsConnected]);
+    // If this hook needs to inform its parent about connection changes
+    // call setExternalIsConnected(connected) here.
+  }, [/* remove setIsConnectedInternal if only a useState setter */]);
 
   const peerToKey = useCallback((peer: any): string | null => {
     if (!peer) return null;
@@ -156,7 +169,7 @@ export function useChatListManager({
     } catch (error: any) {
       let errorMsg = error.message || "Failed to load chats.";
       let errorTypeForCache = 'GENERAL_ERROR';
-      const currentFilterTitle = dialogFilters.find(f => f.id === folderIdForApiCall)?.title || (folderIdForApiCall === undefined ? 'All Chats' : `Folder ID ${folderIdForApiCall}`);
+      const currentFilterTitle = dialogFiltersState.find(f => f.id === folderIdForApiCall)?.title || (folderIdForApiCall === undefined ? 'All Chats' : `Folder ID ${folderIdForApiCall}`);
 
       if (error.message?.includes('FOLDER_ID_INVALID') && folderIdForApiCall !== undefined) {
         errorMsg = `Folder "${currentFilterTitle}" (ID: ${folderIdForApiCall}) is invalid. Will attempt to show matching chats from 'All Chats' if applicable.`;
@@ -180,15 +193,15 @@ export function useChatListManager({
         setMasterChatListPaginationForFiltering(prev => ({ ...prev, hasMore: false }));
       }
     }
-  }, [chatDataCache, handleGlobalApiError, toast, masterChatListForFiltering, dialogFilters]);
+  }, [chatDataCache, handleGlobalApiError, toast, masterChatListForFiltering, dialogFiltersState]);
 
 
   const fetchDataForActiveFilterWrapper = useCallback((isLoadingMore: boolean) => {
-    if (!isConnectedInternal || !activeFilterDetails) {
+    if (!isConnectedInternal || !activeFilterDetailsState) {
        return;
     }
-    const currentFilterId = activeFilterDetails.id;
-    const filterType = activeFilterDetails._;
+    const currentFilterId = activeFilterDetailsState.id;
+    const filterType = activeFilterDetailsState._;
 
     if (filterType === 'dialogFilterDefault') {
       fetchAndCacheDialogsForList(ALL_CHATS_FILTER_ID, isLoadingMore);
@@ -197,16 +210,16 @@ export function useChatListManager({
     } else if (filterType === 'dialogFilterChatlist') {
       fetchAndCacheDialogsForList(ALL_CHATS_FILTER_ID, isLoadingMore);
     }
-  }, [isConnectedInternal, activeFilterDetails, fetchAndCacheDialogsForList]);
+  }, [isConnectedInternal, activeFilterDetailsState, fetchAndCacheDialogsForList]);
 
   useEffect(() => {
-    if (!isConnectedInternal || !activeFilterDetails) return;
+    if (!isConnectedInternal || !activeFilterDetailsState) return;
 
-    const filterIdToFetch = activeFilterDetails.id;
+    const filterIdToFetch = activeFilterDetailsState.id;
     const isNewFilter = lastFetchedFilterIdForChatList !== filterIdToFetch;
     if (isNewFilter) setCurrentErrorMessageForChatList(null);
 
-    const filterType = activeFilterDetails._;
+    const filterType = activeFilterDetailsState._;
     let isCurrentFilterListEmptyAndNeedsLoad = false;
 
     const cachedEntryForCurrent = chatDataCache.get(filterIdToFetch);
@@ -236,20 +249,20 @@ export function useChatListManager({
         fetchDataForActiveFilterWrapper(false); 
     }
   }, [
-      isConnectedInternal, activeFilterDetails, lastFetchedFilterIdForChatList,
+      isConnectedInternal, activeFilterDetailsState, lastFetchedFilterIdForChatList,
       chatDataCache, masterChatListPaginationForFiltering.hasMore,
       fetchDataForActiveFilterWrapper, resetSelectedMedia, setClipboardItem
   ]);
 
   useEffect(() => {
-    if (!isConnectedInternal || !activeFilterDetails) {
+    if (!isConnectedInternal || !activeFilterDetailsState) {
       setIsLoadingDisplayedChats(false); 
       setDisplayedChats([]);
       return;
     }
 
-    const currentFilterId = activeFilterDetails.id;
-    const filterType = activeFilterDetails._;
+    const currentFilterId = activeFilterDetailsState.id;
+    const filterType = activeFilterDetailsState._;
     const cachedEntryForCurrentFilter = chatDataCache.get(currentFilterId);
     const cachedEntryForAllChats = chatDataCache.get(ALL_CHATS_FILTER_ID);
 
@@ -272,7 +285,7 @@ export function useChatListManager({
       }
     } else if (filterType === 'dialogFilter') {
       if (cachedEntryForCurrentFilter?.error === 'FOLDER_ID_INVALID_FALLBACK') {
-        setCurrentErrorMessageForChatList(`"${activeFilterDetails.title}" couldn't be loaded directly. Showing matching chats from 'All Chats'. Some older chats might not appear until 'All Chats' is loaded further.`);
+        setCurrentErrorMessageForChatList(`"${activeFilterDetailsState.title}" couldn't be loaded directly. Showing matching chats from 'All Chats'. Some older chats might not appear until 'All Chats' is loaded further.`);
         const masterCacheIsEmptyOrStale = !cachedEntryForAllChats || (cachedEntryForAllChats.folders.length === 0 && cachedEntryForAllChats.pagination.hasMore);
         const masterCacheIsNotLoading = !cachedEntryForAllChats?.isLoading;
 
@@ -284,16 +297,16 @@ export function useChatListManager({
         }
 
         if (cachedEntryForAllChats) {
-            const includePeerKeys = new Set((activeFilterDetails.include_peers || []).map(peerToKey).filter(Boolean) as string[]);
-            const pinnedPeerKeys = new Set((activeFilterDetails.pinned_peers || []).map(peerToKey).filter(Boolean) as string[]);
+            const includePeerKeys = new Set((activeFilterDetailsState.include_peers || []).map(peerToKey).filter(Boolean) as string[]);
+            const pinnedPeerKeys = new Set((activeFilterDetailsState.pinned_peers || []).map(peerToKey).filter(Boolean) as string[]);
 
             const filtered = (cachedEntryForAllChats.folders || []).filter(chat => {
                 const chatKey = peerToKey(chat.inputPeer);
                 return chatKey && (includePeerKeys.has(chatKey) || pinnedPeerKeys.has(chatKey));
             });
             const pinned = filtered.filter(chat => { const key = peerToKey(chat.inputPeer); return key && pinnedPeerKeys.has(key); })
-                                 .sort((a,b) => (activeFilterDetails.pinned_peers?.findIndex(p => peerToKey(p) === peerToKey(a.inputPeer)) ?? 0) -
-                                                 (activeFilterDetails.pinned_peers?.findIndex(p => peerToKey(p) === peerToKey(b.inputPeer)) ?? 0));
+                                 .sort((a,b) => (activeFilterDetailsState.pinned_peers?.findIndex(p => peerToKey(p) === peerToKey(a.inputPeer)) ?? 0) -
+                                                 (activeFilterDetailsState.pinned_peers?.findIndex(p => peerToKey(p) === peerToKey(b.inputPeer)) ?? 0));
             const nonPinned = filtered.filter(chat => { const key = peerToKey(chat.inputPeer); return key && includePeerKeys.has(key) && !pinnedPeerKeys.has(key); });
             setDisplayedChats([...pinned, ...nonPinned]);
             setHasMoreDisplayedChats(cachedEntryForAllChats.pagination.hasMore); 
@@ -307,7 +320,7 @@ export function useChatListManager({
         setDisplayedChats(cachedEntryForCurrentFilter.folders);
         setHasMoreDisplayedChats(cachedEntryForCurrentFilter.pagination.hasMore);
         if (cachedEntryForCurrentFilter.error && cachedEntryForCurrentFilter.error !== 'FOLDER_ID_INVALID_FALLBACK') {
-          setCurrentErrorMessageForChatList(`Error for "${activeFilterDetails.title}": ${cachedEntryForCurrentFilter.error}`);
+          setCurrentErrorMessageForChatList(`Error for "${activeFilterDetailsState.title}": ${cachedEntryForCurrentFilter.error}`);
         }
         setIsLoadingDisplayedChats(cachedEntryForCurrentFilter.isLoading);
       } else { 
@@ -328,15 +341,15 @@ export function useChatListManager({
         }
 
       if (cachedEntryForAllChats) {
-          const includePeerKeys = new Set((activeFilterDetails.include_peers || []).map(peerToKey).filter(Boolean) as string[]);
-          const pinnedPeerKeys = new Set((activeFilterDetails.pinned_peers || []).map(peerToKey).filter(Boolean) as string[]);
+          const includePeerKeys = new Set((activeFilterDetailsState.include_peers || []).map(peerToKey).filter(Boolean) as string[]);
+          const pinnedPeerKeys = new Set((activeFilterDetailsState.pinned_peers || []).map(peerToKey).filter(Boolean) as string[]);
           const filtered = (cachedEntryForAllChats.folders || []).filter(chat => {
               const chatKey = peerToKey(chat.inputPeer);
               return chatKey && (includePeerKeys.has(chatKey) || pinnedPeerKeys.has(chatKey));
           });
           const pinned = filtered.filter(chat => { const key = peerToKey(chat.inputPeer); return key && pinnedPeerKeys.has(key); })
-                               .sort((a,b) => (activeFilterDetails.pinned_peers?.findIndex(p => peerToKey(p) === peerToKey(a.inputPeer)) ?? 0) -
-                                               (activeFilterDetails.pinned_peers?.findIndex(p => peerToKey(p) === peerToKey(b.inputPeer)) ?? 0));
+                               .sort((a,b) => (activeFilterDetailsState.pinned_peers?.findIndex(p => peerToKey(p) === peerToKey(a.inputPeer)) ?? 0) -
+                                               (activeFilterDetailsState.pinned_peers?.findIndex(p => peerToKey(p) === peerToKey(b.inputPeer)) ?? 0));
           const nonPinned = filtered.filter(chat => { const key = peerToKey(chat.inputPeer); return key && includePeerKeys.has(key) && !pinnedPeerKeys.has(key); });
           setDisplayedChats([...pinned, ...nonPinned]);
           setHasMoreDisplayedChats(cachedEntryForAllChats.pagination.hasMore);
@@ -348,15 +361,15 @@ export function useChatListManager({
       }
     }
   }, [
-      isConnectedInternal, activeFilterDetails, chatDataCache, peerToKey,
+      isConnectedInternal, activeFilterDetailsState, chatDataCache, peerToKey,
       lastFetchedFilterIdForChatList, fetchAndCacheDialogsForList
   ]);
 
   const loadMoreDisplayedChatsInManager = useCallback(async () => {
-    if (!activeFilterDetails || isLoadingDisplayedChats) return;
+    if (!activeFilterDetailsState || isLoadingDisplayedChats) return;
 
-    const filterType = activeFilterDetails._;
-    const currentFilterId = activeFilterDetails.id;
+    const filterType = activeFilterDetailsState._;
+    const currentFilterId = activeFilterDetailsState.id;
     const cachedEntry = chatDataCache.get(currentFilterId); 
     const masterCacheEntry = chatDataCache.get(ALL_CHATS_FILTER_ID); 
 
@@ -377,7 +390,7 @@ export function useChatListManager({
         fetchAndCacheDialogsForList(ALL_CHATS_FILTER_ID, true);
       }
     }
-  }, [activeFilterDetails, isLoadingDisplayedChats, chatDataCache, fetchDataForActiveFilterWrapper, fetchAndCacheDialogsForList]);
+  }, [activeFilterDetailsState, isLoadingDisplayedChats, chatDataCache, fetchDataForActiveFilterWrapper, fetchAndCacheDialogsForList]);
 
   const resetAllChatListData = useCallback(() => {
     setChatDataCache(new Map());
@@ -451,7 +464,10 @@ export function useChatListManager({
         }
         return cachedEntry?.isLoading || false;
     },
-    setIsConnected, // Expose setter
+    setIsConnected, 
+    // Expose setters for props if page.tsx needs to update them directly (though usually done via prop changes)
+    activeFilterDetails: activeFilterDetailsState, // Expose the state value
+    dialogFilters: dialogFiltersState, // Expose the state value
   };
 }
 
