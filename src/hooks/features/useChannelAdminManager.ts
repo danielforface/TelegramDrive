@@ -95,10 +95,11 @@ export function useChannelAdminManager({
     console.log("[AdminManager_FetchChannelDetails] Fetching details for:", channelToFetch.name);
     setIsLoadingChannelDetails(true);
     try {
-      const fullInfo = await telegramService.getChannelFullInfo(channelToFetch.inputPeer);
-      if (fullInfo) {
-        setChannelDetails(fullInfo);
-        onChannelDetailsUpdatedAppLevel({ ...channelToFetch, fullChannelInfo: fullInfo });
+      const fullInfoFromApi = await telegramService.getChannelFullInfo(channelToFetch.inputPeer);
+      console.log("[AdminManager_FetchChannelDetails] API Result for getChannelFullInfo:", fullInfoFromApi);
+      if (fullInfoFromApi) {
+        setChannelDetails(fullInfoFromApi);
+        onChannelDetailsUpdatedAppLevel({ ...channelToFetch, fullChannelInfo: fullInfoFromApi });
       } else {
         setChannelDetails(null);
         throw new Error("No channel details returned from API.");
@@ -154,7 +155,11 @@ export function useChannelAdminManager({
       setFullMutualContactList(contactsData || []);
       setDisplayedContactList((contactsData || []).slice(0, INITIAL_CONTACTS_DISPLAY_LIMIT));
       setCanLoadMoreContacts((contactsData || []).length > INITIAL_CONTACTS_DISPLAY_LIMIT);
-      console.log(`[AdminManager_FetchContacts] Contacts fetched and set. Full count: ${(contactsData || []).length}, Displayed: ${displayedContactList.length}, CanLoadMore: ${canLoadMoreContacts}`);
+      // Use a functional update for the log to capture the state *after* it's set
+      setDisplayedContactList(currentDisplayed => {
+        console.log(`[AdminManager_FetchContacts] Contacts fetched and set. Full count: ${(contactsData || []).length}, Displayed: ${currentDisplayed.length}, CanLoadMore: ${(contactsData || []).length > currentDisplayed.length}`);
+        return currentDisplayed;
+      });
       setHasFetchedContactsOnce(true);
     } catch (error: any) {
       handleGlobalApiError(error, "Error Fetching Contacts", "Could not load your contact list.");
@@ -165,7 +170,7 @@ export function useChannelAdminManager({
     } finally {
       setIsLoadingContacts(false);
     }
-  }, [handleGlobalApiError, isLoadingContacts, displayedContactList.length, canLoadMoreContacts]); // Dependencies for fetchContacts
+  }, [handleGlobalApiError, isLoadingContacts, setFullMutualContactList, setDisplayedContactList, setCanLoadMoreContacts, setHasFetchedContactsOnce]);
 
 
   const loadMoreContacts = useCallback(() => {
@@ -480,10 +485,11 @@ export function useChannelAdminManager({
     hasMoreParticipants,
     fetchParticipants: (peer: InputPeer) => fetchParticipants(peer, participantOffset),
     
-    displayedContactList, // Use this for rendering
+    fullMutualContactList, // Expose for potential direct use if needed elsewhere, though dialog uses displayedContactList
+    displayedContactList, 
     isLoadingContacts,
     canLoadMoreContacts,
-    loadMoreContacts, // Function to load more contacts
+    loadMoreContacts, 
 
     memberSearchTerm,
     setMemberSearchTerm,
