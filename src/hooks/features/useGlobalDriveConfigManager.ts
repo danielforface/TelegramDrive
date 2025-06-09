@@ -1,4 +1,5 @@
 
+
 "use client";
 
 import { useState, useCallback, useEffect } from 'react';
@@ -15,12 +16,8 @@ const GLOBAL_DRIVE_CONFIG_CAPTION_VALUE = "telegram_cloudifier_global_drive_conf
 const DEFAULT_GLOBAL_DRIVE_CONFIG: GlobalDriveConfigV1 = {
   app_signature: "GLOBAL_DRIVE_CONFIG_V1.0",
   version: 1,
-  last_updated_timestamp_utc: new Date().toISOString(),
-  root_entries: {
-    "My Photos": { type: "folder", name: "My Photos", created_at: new Date().toISOString(), modified_at: new Date().toISOString(), entries: {} },
-    "Important Videos": { type: "folder", name: "Important Videos", created_at: new Date().toISOString(), modified_at: new Date().toISOString(), entries: {} },
-    "Shared Documents": { type: "folder", name: "Shared Documents", created_at: new Date().toISOString(), modified_at: new Date().toISOString(), entries: {} },
-  }
+  last_updated_timestamp_utc: new Date().toISOString(), // Will be set fresh on creation
+  root_entries: {} // Starts empty
 };
 
 interface UseGlobalDriveConfigManagerProps {
@@ -58,8 +55,12 @@ export function useGlobalDriveConfigManager({
   useEffect(() => {
     const fetchSelfPeer = async () => {
       if (isConnectedInternal && !selfPeer) {
-        const peer = await telegramService.getSelfInputPeer();
-        setSelfPeer(peer);
+        try {
+          const peer = await telegramService.getSelfInputPeer();
+          setSelfPeer(peer);
+        } catch (e) {
+          setConfigError("Failed to get self peer for config management.");
+        }
       }
     };
     fetchSelfPeer();
@@ -100,7 +101,6 @@ export function useGlobalDriveConfigManager({
       }
 
       if (configMessageId && configMessageId !== newConfigMsgId) {
-        // Ensure selfPeer is not null before attempting deletion
         if (selfPeer) {
             await telegramService.deleteTelegramMessages(selfPeer, [configMessageId]);
         } else {
@@ -124,7 +124,8 @@ export function useGlobalDriveConfigManager({
 
   const loadOrCreateConfig = useCallback(async () => {
     if (!isConnectedInternal || !selfPeer) {
-      setConfigError("Not connected or self peer not available.");
+      setConfigError("Not connected or self peer not available for loading/creating config.");
+      setIsLoadingConfig(false); // Ensure loading is false if we can't proceed
       return;
     }
 
@@ -168,7 +169,7 @@ export function useGlobalDriveConfigManager({
 
       toast({ title: "Custom Config", description: `Creating default configuration file "${GLOBAL_DRIVE_CONFIG_FILENAME}"...`});
       const defaultConfigWithTimestamp = {
-          ...DEFAULT_GLOBAL_DRIVE_CONFIG,
+          ...DEFAULT_GLOBAL_DRIVE_CONFIG, // This now has empty root_entries
           last_updated_timestamp_utc: new Date().toISOString(),
       };
       const defaultConfigJson = JSON.stringify(defaultConfigWithTimestamp, null, 2);
@@ -255,8 +256,6 @@ export function useGlobalDriveConfigManager({
     const newConfig = JSON.parse(JSON.stringify(customConfig)) as GlobalDriveConfigV1; // Deep copy
     let parentEntries = newConfig.root_entries;
 
-    // folderPath is the path *to* the folder to be deleted.
-    // folderName is the name of the folder to delete *within* folderPath.
     const segments = normalizePath(folderPath).split('/').filter(s => s); 
 
     for (const segment of segments) {
@@ -287,6 +286,7 @@ export function useGlobalDriveConfigManager({
     addVirtualFolderInConfig,
     removeVirtualFolderFromConfig,
     resetConfigState,
-    setIsConnected, // Expose setter
+    setIsConnected,
   };
 }
+

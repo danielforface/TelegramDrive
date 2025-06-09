@@ -320,8 +320,7 @@ export interface GlobalDriveConfigV1 {
   root_entries: {
     [folderName: string]: GlobalDriveFolderEntry;
   };
-  last_updated_timestamp_utc?: string; // Added for tracking updates
-  // Future: rules for auto-sorting files, file references, etc.
+  last_updated_timestamp_utc: string;
 }
 
 export interface GlobalDriveFolderEntry {
@@ -350,4 +349,3 @@ export interface GlobalDriveFileReference {
 
 export type OrganizationMode = 'default' | 'custom';
 
-```
