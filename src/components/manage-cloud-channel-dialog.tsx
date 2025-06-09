@@ -61,24 +61,25 @@ export function ManageCloudChannelDialog({
 
   useEffect(() => {
     if (isOpen) {
+      // Prioritize adminManager.channelDetails if available (it's more up-to-date after fetches/saves)
       if (adminManager.channelDetails) {
         setLocalEditableTitle(adminManager.channelDetails.title || "");
         setLocalEditableDescription(adminManager.channelDetails.about || "");
         setLocalEditableUsername(adminManager.channelDetails.username || "");
         setCurrentPhotoPreview(adminManager.channelDetails.chat_photo?.photo_big?.local?.path || null);
-      } else if (selectedManagingChannel) {
+      } else if (selectedManagingChannel) { // Fallback to prop for initial display before hook loads
         setLocalEditableTitle(selectedManagingChannel.name || "");
         setLocalEditableDescription(selectedManagingChannel.fullChannelInfo?.about || "");
         setLocalEditableUsername(selectedManagingChannel.fullChannelInfo?.username || "");
         setCurrentPhotoPreview(selectedManagingChannel.fullChannelInfo?.chat_photo?.photo_big?.local?.path || null);
-      } else {
+      } else { // Reset if no channel data
         setLocalEditableTitle("");
         setLocalEditableDescription("");
         setLocalEditableUsername("");
         setCurrentPhotoPreview(null);
       }
-      setSelectedPhotoFile(null);
-      if(fileInputRef.current) fileInputRef.current.value = "";
+      setSelectedPhotoFile(null); // Always reset file selection
+      if(fileInputRef.current) fileInputRef.current.value = ""; // Clear file input
     }
   }, [isOpen, adminManager.channelDetails, selectedManagingChannel]);
 
@@ -214,7 +215,8 @@ export function ManageCloudChannelDialog({
             <span className="text-xs text-muted-foreground block truncate">@{user.username || `ID: ${user.id}`}</span>
           </div>
         </div>
-        {user.contact && user.mutual_contact && <UserCheck className="h-4 w-4 text-green-500 mr-2 flex-shrink-0" title="Mutual Contact"/>}
+        {/* Assuming user object from getContacts now correctly reflects mutual_contact based on service layer change */}
+        {user.mutual_contact && <UserCheck className="h-4 w-4 text-green-500 mr-2 flex-shrink-0" title="Mutual Contact"/>}
         <Button
           size="sm"
           variant="outline"
@@ -397,7 +399,7 @@ export function ManageCloudChannelDialog({
                   </div>
                 </div>
 
-                { (adminManager.isLoadingContacts && !adminManager.memberSearchTerm.trim()) && (
+                { (adminManager.isLoadingContacts && !adminManager.memberSearchTerm.trim() && adminManager.displayedContactList.length === 0) && (
                    <div className="text-sm text-muted-foreground flex items-center justify-center py-4"><Loader2 className="mr-2 h-4 w-4 animate-spin"/>Loading mutual contacts...</div>
                 )}
                 { (adminManager.isSearchingMembers && adminManager.memberSearchTerm.trim()) && (

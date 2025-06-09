@@ -512,6 +512,7 @@ export async function updateChannelPhotoService(channelInputPeer: InputPeer, pho
         });
 
         if (result && (result._ === 'updates' || result._ === 'updatesCombined')) {
+            // Try to find the updated channel photo in result.chats
             if (result.chats && Array.isArray(result.chats)) {
                 const updatedChannelEntity = result.chats.find(
                     (c: any) => c._ === 'channel' && String(c.id) === String(channelInputPeer.channel_id)
@@ -520,6 +521,7 @@ export async function updateChannelPhotoService(channelInputPeer: InputPeer, pho
                     return { photo: updatedChannelEntity.photo, date: result.date || Math.floor(Date.now() / 1000) };
                 }
             }
+            // Fallback to looking for updateChannelPhoto in result.updates
             if (result.updates && Array.isArray(result.updates)) {
                 for (const singleUpdate of result.updates) {
                     if (singleUpdate._ === 'updateChannelPhoto' && String(singleUpdate.channel_id) === String(channelInputPeer.channel_id)) {
@@ -528,12 +530,14 @@ export async function updateChannelPhotoService(channelInputPeer: InputPeer, pho
                 }
             }
         } else if (result && result._ === 'updateShort' && result.update) {
+            // Handle simpler update types if the API ever returns them for this
             const singleUpdate = result.update;
              if (singleUpdate._ === 'updateChannelPhoto' && String(singleUpdate.channel_id) === String(channelInputPeer.channel_id)) {
                 return { photo: singleUpdate.photo, date: result.date };
             }
         }
-        return null;
+        // console.warn("Could not extract updated photo from channels.editPhoto response:", JSON.stringify(result, null, 2));
+        return null; // Photo might have updated but wasn't easily extractable from this response structure
     } catch (error: any) {
         throw error;
     }
@@ -668,9 +672,7 @@ export async function getContacts(): Promise<any[]> {
             console.warn(`[TelegramCloud_GetContacts] User ID ${contact.user_id} from contacts not found in users array.`);
             return null;
           }
-          // Check the mutual_contact flag on the User object itself, or on the Contact object
-          // The schema indicates 'mutual:Bool' on Contact object, and 'mutual_contact:flags.12?true' on User object
-          // Prefer the flag on the User object if available, otherwise the Contact object's flag.
+          // Prefer the 'mutual_contact' flag on the User object, fallback to 'mutual' on Contact.
           const isMutual = userDetail.mutual_contact === true || contact.mutual === true;
           return isMutual ? userDetail : null;
         })
