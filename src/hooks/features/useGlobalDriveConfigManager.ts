@@ -4,7 +4,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import type { GlobalDriveConfigV1, InputPeer, GlobalDriveFolderEntry } from '@/types';
 import * as telegramService from '@/services/telegramService';
-import { GLOBAL_DRIVE_CONFIG_FILENAME } from '@/services/telegramCloud'; // Import the constant directly
+import { GLOBAL_DRIVE_CONFIG_FILENAME } from '@/services/telegramCloud'; // Import the constant
 import type { useToast } from "@/hooks/use-toast";
 import { normalizePath } from '@/lib/vfsUtils';
 
@@ -15,7 +15,7 @@ const GLOBAL_DRIVE_CONFIG_CAPTION_VALUE = "telegram_cloudifier_global_drive_conf
 const DEFAULT_GLOBAL_DRIVE_CONFIG: GlobalDriveConfigV1 = {
   app_signature: "GLOBAL_DRIVE_CONFIG_V1.0",
   version: 1,
-  last_updated_timestamp_utc: "",
+  last_updated_timestamp_utc: "", // Will be set on creation/update
   root_entries: {}
 };
 
@@ -118,12 +118,10 @@ export function useGlobalDriveConfigManager({
   }, [isConnectedInternal, selfPeer, toast, handleGlobalApiError, configMessageId]);
 
   const loadOrCreateConfig = useCallback(async () => {
-    if (isLoadingConfig) {
-      return;
-    }
-    if (customConfig && !configError) {
-      return;
-    }
+    if (isLoadingConfig) return;
+    // Do not return early if customConfig exists but there's an error; allow retry/re-load.
+    if (customConfig && !configError && !isLoadingConfig) return;
+
 
     if (!isConnectedInternal || !selfPeer) {
       setConfigError("Not connected or self peer not available for loading/creating config.");
@@ -132,10 +130,10 @@ export function useGlobalDriveConfigManager({
     }
 
     setIsLoadingConfig(true);
-    setConfigError(null);
-    setCustomConfig(null);
-    setConfigMessageId(null);
-
+    setConfigError(null); // Clear previous errors before attempting to load
+    // Do not setCustomConfig(null) here if there's an existing config,
+    // to avoid flicker if loading fails and then user fixes it.
+    // If loading fails, we'll set configError.
 
     try {
       toast({ title: "Custom Config", description: "Searching for your Global Drive configuration in Saved Messages..."});
@@ -146,46 +144,63 @@ export function useGlobalDriveConfigManager({
 
       if (existingConfigMessage && existingConfigMessage.media && existingConfigMessage.media._ === 'messageMediaDocument') {
         const document = existingConfigMessage.media.document;
-        toast({ title: "Custom Config", description: `Found existing config file: ${document.attributes.find((a:any) => a._ === 'documentAttributeFilename')?.file_name}. Downloading...`});
+        const configFilename = document.attributes.find((a:any) => a._ === 'documentAttributeFilename')?.file_name || "config file";
+        toast({ title: "Custom Config", description: `Found existing config file: "${configFilename}". Downloading...`});
 
         const jsonContent = await telegramService.downloadDocumentContent(document);
         if (jsonContent) {
           try {
             const parsedConfig = JSON.parse(jsonContent) as GlobalDriveConfigV1;
-            if (parsedConfig.app_signature === "GLOBAL_DRIVE_CONFIG_V1.0") {
+            if (parsedConfig.app_signature === DEFAULT_GLOBAL_DRIVE_CONFIG.app_signature) { // Use signature from constant
               setCustomConfig(parsedConfig);
               setConfigMessageId(existingConfigMessage.id);
-              toast({ title: "Custom Config Loaded", description: "Successfully loaded your custom Global Drive organization." });
-              setIsLoadingConfig(false);
-              return;
+              setConfigError(null); // Clear any previous error
+              toast({ title: "Custom Config Loaded", description: `Successfully loaded custom organization from "${configFilename}".` });
             } else {
-              toast({ title: "Config Invalid", description: "Found config file, but signature is invalid. A new one will be created if you make changes.", variant: "default" });
+              const errMsg = `Found "${configFilename}", but its app_signature is invalid. Please check the file or create a new config by adding a folder.`;
+              setConfigError(errMsg);
+              setCustomConfig(null); // Ensure no invalid config is used
+              toast({ title: "Config Invalid", description: errMsg, variant: "destructive", duration: 10000 });
             }
           } catch (parseError) {
-            toast({ title: "Config Corrupted", description: "Could not parse existing config file. A new one will be created if you make changes.", variant: "destructive" });
+            const errMsg = `Could not parse "${configFilename}". It might be corrupted. Please check the file or create a new config.`;
+            setConfigError(errMsg);
+            setCustomConfig(null);
+            toast({ title: "Config Corrupted", description: errMsg, variant: "destructive", duration: 10000 });
           }
         } else {
-            toast({ title: "Config Download Failed", description: "Could not download content of existing config file. A new one will be created if you make changes.", variant: "destructive" });
+          const errMsg = `Could not download content of "${configFilename}". Check network or file access, or create a new config.`;
+          setConfigError(errMsg);
+          setCustomConfig(null);
+          toast({ title: "Config Download Failed", description: errMsg, variant: "destructive", duration: 10000 });
         }
+        // Whether successful or failed in loading existing, we stop here.
+        setIsLoadingConfig(false);
+        return;
       } else {
-         toast({ title: "Custom Config", description: "No existing configuration found. A new one will be created if you add custom folders."});
+         // No existing config message found. Safe to proceed to set a default one for new creation.
+         toast({ title: "Custom Config", description: "No existing configuration file found. A new one will be created if you add custom folders."});
+         const initialEmptyConfig: GlobalDriveConfigV1 = {
+           ...DEFAULT_GLOBAL_DRIVE_CONFIG,
+           last_updated_timestamp_utc: new Date().toISOString(),
+         };
+         setCustomConfig(initialEmptyConfig);
+         setConfigError(null); // No error if we're setting a default for a non-existent config
+         setConfigMessageId(null); // No message ID for a new, unsaved config
       }
-
-      const initialEmptyConfig: GlobalDriveConfigV1 = {
-        ...DEFAULT_GLOBAL_DRIVE_CONFIG,
-        last_updated_timestamp_utc: new Date().toISOString(),
-      };
-      setCustomConfig(initialEmptyConfig);
-
     } catch (error: any) {
-      setConfigError(error.message || "An unknown error occurred while managing custom config.");
+      // Error during searchSelfMessagesByCaption or other unexpected issues
+      const errMsg = error.message || "An unknown error occurred while managing custom config.";
+      setConfigError(errMsg);
       handleGlobalApiError(error, "Custom Config Error", "Failed to load or prepare custom Global Drive configuration.");
       setCustomConfig(null);
       setConfigMessageId(null);
     } finally {
       setIsLoadingConfig(false);
     }
-  }, [isConnectedInternal, selfPeer, toast, handleGlobalApiError, isLoadingConfig, customConfig, configError]);
+  }, [
+    isConnectedInternal, selfPeer, toast, handleGlobalApiError, isLoadingConfig, customConfig, configError // Added customConfig & configError
+  ]);
 
   const resetConfigState = useCallback(() => {
     setCustomConfig(null);
@@ -196,13 +211,15 @@ export function useGlobalDriveConfigManager({
 
   const addVirtualFolderInConfig = useCallback(async (parentPath: string, folderName: string) => {
     let currentConfig = customConfig;
-    if (!currentConfig) {
+    if (!currentConfig || configError) { // Also check for configError here
       currentConfig = {
         ...DEFAULT_GLOBAL_DRIVE_CONFIG,
         last_updated_timestamp_utc: new Date().toISOString(),
       };
-      toast({ title: "Initializing Config", description: "Creating initial custom drive configuration file."});
+      toast({ title: "Initializing Config", description: "Creating initial custom drive configuration file as none was loaded or previous was in error."});
+      setConfigError(null); // Clear error when user takes action to create
     }
+
 
     const newConfig = JSON.parse(JSON.stringify(currentConfig)) as GlobalDriveConfigV1;
     let currentEntries = newConfig.root_entries;
@@ -231,13 +248,18 @@ export function useGlobalDriveConfigManager({
       entries: {},
     };
     await updateAndSaveConfig(newConfig);
-  }, [customConfig, updateAndSaveConfig, toast]);
+  }, [customConfig, updateAndSaveConfig, toast, configError]);
 
   const removeVirtualFolderFromConfig = useCallback(async (folderPath: string, folderName: string) => {
     if (!customConfig) {
       toast({ title: "Error", description: "No custom config loaded to remove folder from.", variant: "destructive" });
       return;
     }
+     if (configError && customConfig.app_signature !== DEFAULT_GLOBAL_DRIVE_CONFIG.app_signature) {
+      toast({ title: "Error", description: "Current configuration is in an error state or invalid. Cannot modify.", variant: "destructive" });
+      return;
+    }
+
     const newConfig = JSON.parse(JSON.stringify(customConfig)) as GlobalDriveConfigV1;
     let parentEntries = newConfig.root_entries;
 
@@ -258,7 +280,7 @@ export function useGlobalDriveConfigManager({
     } else {
       toast({ title: "Error", description: `Folder "${folderName}" not found in its parent path "${folderPath}" for deletion.`, variant: "destructive" });
     }
-  }, [customConfig, updateAndSaveConfig, toast]);
+  }, [customConfig, updateAndSaveConfig, toast, configError]);
 
   const handleDownloadCurrentConfig = useCallback(() => {
     if (!customConfig) {
@@ -269,6 +291,15 @@ export function useGlobalDriveConfigManager({
       });
       return;
     }
+    if (configError && customConfig.app_signature !== DEFAULT_GLOBAL_DRIVE_CONFIG.app_signature) {
+       toast({
+        title: "Cannot Download Invalid Config",
+        description: "The currently loaded configuration has errors or is invalid. Please resolve issues or create a new one.",
+        variant: "destructive",
+      });
+      return;
+    }
+
 
     try {
       const configJson = JSON.stringify(customConfig, null, 2);
@@ -293,7 +324,7 @@ export function useGlobalDriveConfigManager({
       });
       handleGlobalApiError(error, "Config Download Error", "Could not download custom configuration.");
     }
-  }, [customConfig, toast, handleGlobalApiError]);
+  }, [customConfig, toast, handleGlobalApiError, configError]);
 
 
   return {
@@ -310,3 +341,6 @@ export function useGlobalDriveConfigManager({
     handleDownloadCurrentConfig,
   };
 }
+
+
+    
