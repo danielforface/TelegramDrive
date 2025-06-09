@@ -320,6 +320,7 @@ export interface GlobalDriveConfigV1 {
   root_entries: {
     [folderName: string]: GlobalDriveFolderEntry;
   };
+  last_updated_timestamp_utc?: string; // Added for tracking updates
   // Future: rules for auto-sorting files, file references, etc.
 }
 
@@ -328,12 +329,25 @@ export interface GlobalDriveFolderEntry {
   name: string; // Name of the folder
   created_at: string; // ISO timestamp
   modified_at: string; // ISO timestamp
-  entries?: { // Sub-folders
-    [subFolderName: string]: GlobalDriveFolderEntry;
+  entries: { // Sub-folders or file references; changed from optional to required for folders
+    [subFolderNameOrFileId: string]: GlobalDriveFolderEntry | GlobalDriveFileReference;
   };
-  // Potentially: file_references?: string[]; // Array of CloudFile IDs
-  // Potentially: rules?: any[]; // Rules for auto-assigning files to this folder
 }
+
+export interface GlobalDriveFileReference {
+  type: 'file_ref'; // Indicates this is a reference to a file
+  original_message_id: string; // ID of the message in its original chat
+  original_chat_id: string; // ID of the chat where the file originates (user_id, chat_id, or channel_id)
+  original_chat_peer_type: 'user' | 'chat' | 'channel'; // Type of the original chat peer
+  added_at: string; // ISO timestamp when this reference was added to the custom drive
+  // We can store a minimal set of file metadata here for quick display,
+  // but the full CloudFile object would still be fetched from its original source for details/download.
+  name_at_add_time: string;
+  file_type_at_add_time: CloudFile['type'];
+  size_at_add_time?: string;
+}
+
 
 export type OrganizationMode = 'default' | 'custom';
 
+```

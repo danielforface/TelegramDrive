@@ -1,4 +1,5 @@
 
+
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
@@ -15,7 +16,7 @@ import { CreateCloudChannelDialog } from "@/components/create-cloud-channel-dial
 import { CreateVirtualFolderDialog } from "@/components/create-virtual-folder-dialog";
 import { DeleteItemConfirmationDialog } from "@/components/delete-item-confirmation-dialog";
 import { ManageCloudChannelDialog } from "@/components/manage-cloud-channel-dialog";
-import type { CloudFolder, DialogFilter, CloudChannelType, CloudChannelConfigV1, CloudFile, OrganizationMode, GlobalDriveConfigV1 } from "@/types";
+import type { CloudFolder, DialogFilter, CloudChannelType, CloudFile, OrganizationMode, GlobalDriveConfigV1 } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Loader2, LayoutPanelLeft, MessageSquare, Cloud, Globe } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -74,13 +75,13 @@ export default function Home() {
   const globalDriveManager = useGlobalDriveManager({
     toast,
     handleGlobalApiError,
-    isConnected: false, // Will be updated by connectionManager effect
+    isConnected: false,
   });
-  
+
   const globalDriveConfigManager = useGlobalDriveConfigManager({
     toast,
     handleGlobalApiError,
-    isConnected: false, // Will be updated by connectionManager effect
+    isConnected: false,
   });
 
 
@@ -134,7 +135,7 @@ export default function Home() {
     selectedFolder: isGlobalDriveActive ? null : selectedMediaManager.selectedFolder,
     currentVirtualPath: isGlobalDriveActive ? "/" : selectedMediaManager.currentVirtualPath,
     currentChatMedia: isGlobalDriveActive ? globalDriveManager.globalMediaItems : selectedMediaManager.currentChatMedia,
-    setCurrentChatMedia: isGlobalDriveActive ? globalDriveManager.setGlobalMediaItemsDirectly : selectedMediaManager.setCurrentChatMedia, // Allow global drive to set its media directly
+    setCurrentChatMedia: isGlobalDriveActive ? globalDriveManager.setGlobalMediaItemsDirectly : selectedMediaManager.setCurrentChatMedia,
     updateSelectedFolderConfig: selectedMediaManager.updateSelectedFolderConfig,
     setAppManagedCloudFoldersState: appCloudChannelsManager.setAppManagedCloudFolders,
     fetchInitialChatMediaForSelectedManager: selectedMediaManager.fetchInitialChatMediaForSelected,
@@ -150,10 +151,8 @@ export default function Home() {
     refreshMediaCallback: () => {
         if (isGlobalDriveActive && globalDriveManager.isFullScanActive) {
           // Refresh for global drive if scan is active could be complex, might need targeted update
-          // For now, no specific refresh, user might need to wait for scan to pick it up or re-scan
         } else if (isGlobalDriveActive && !globalDriveManager.isFullScanActive) {
-          // If scan isn't active, a manual re-trigger might be needed or re-activation of global drive
-           globalDriveManager.fetchInitialGlobalMedia(); // Example: re-trigger full scan
+           globalDriveManager.fetchInitialGlobalMedia();
         } else if (selectedMediaManager.selectedFolder) {
           selectedMediaManager.fetchInitialChatMediaForSelected(selectedMediaManager.selectedFolder);
         }
@@ -214,7 +213,7 @@ export default function Home() {
     dialogFiltersManager.setIsConnected(isConnected);
     chatListManager.setIsConnected(isConnected);
     appCloudChannelsManager.setIsConnected(isConnected);
-    globalDriveManager.setIsConnected(isConnected); 
+    globalDriveManager.setIsConnected(isConnected);
     globalDriveConfigManager.setIsConnected(isConnected);
   }, [connectionManager.isConnected, dialogFiltersManager, chatListManager, appCloudChannelsManager, globalDriveManager, globalDriveConfigManager]);
 
@@ -291,18 +290,37 @@ export default function Home() {
         return;
     }
     setIsGlobalDriveActive(true);
-    selectedMediaManager.resetSelectedMedia(); 
-    globalDriveManager.fetchInitialGlobalMedia(); 
-    setOrganizationMode('default'); // Default to standard organization initially
-    globalDriveConfigManager.resetConfigState(); // Reset any previous custom config state
-    toast({ title: "Global Drive Activated", description: "Loading all accessible media. This may take a while..."});
+    selectedMediaManager.resetSelectedMedia();
+    globalDriveManager.fetchInitialGlobalMedia();
+    setOrganizationMode('default');
+    globalDriveConfigManager.resetConfigState();
+    toast({ title: "Global Drive Activated", description: "Scanning all accessible media. This may take a while..."});
   };
-  
+
   const handleSetOrganizationMode = (mode: OrganizationMode) => {
     setOrganizationMode(mode);
-    if (mode === 'custom' && isGlobalDriveActive) {
-      // Logic to load/handle custom config will be in useEffect based on mode and isGlobalDriveActive
+    if (mode === 'custom' && isGlobalDriveActive && !globalDriveConfigManager.customConfig) {
+      globalDriveConfigManager.loadOrCreateConfig(); // Ensure config is loaded if switching to custom
     }
+  };
+
+  const handleCreateGlobalVirtualFolder = async (folderName: string) => {
+    if (organizationMode !== 'custom' || !globalDriveConfigManager.customConfig) {
+      toast({ title: "Error", description: "Custom organization mode not active or config not loaded.", variant: "destructive" });
+      return;
+    }
+    await globalDriveConfigManager.addVirtualFolderInConfig(pageDialogs.virtualFolderParentPath, folderName);
+    pageDialogs.setIsCreateVirtualFolderDialogOpen(false);
+  };
+
+  const handleDeleteGlobalVirtualFolder = async () => {
+     if (organizationMode !== 'custom' || !globalDriveConfigManager.customConfig || !fileOperationsManager.itemToDelete || fileOperationsManager.itemToDelete.type !== 'virtualFolder') {
+      toast({ title: "Error", description: "Invalid state for deleting global virtual folder.", variant: "destructive" });
+      return;
+    }
+    const { path, name } = fileOperationsManager.itemToDelete;
+    await globalDriveConfigManager.removeVirtualFolderFromConfig(path, name);
+    fileOperationsManager.setIsDeleteItemDialogOpen(false);
   };
 
 
@@ -369,7 +387,7 @@ export default function Home() {
                 files={globalDriveManager.globalMediaItems}
                 isLoading={globalDriveManager.isLoading && globalDriveManager.globalMediaItems.length === 0 && !globalDriveConfigManager.isLoadingConfig}
                 isLoadingMoreMedia={(globalDriveManager.isLoading && globalDriveManager.globalMediaItems.length > 0) || globalDriveConfigManager.isLoadingConfig}
-                hasMore={globalDriveManager.hasMore || organizationMode === 'default'} // Keep "load more" if default and scan isn't finished
+                hasMore={globalDriveManager.hasMore || (organizationMode === 'default' && globalDriveManager.isFullScanActive)}
                 onFileDetailsClick={fileOperationsManager.handleOpenFileDetails}
                 onQueueDownloadClick={downloadManager.handleQueueDownloadFile}
                 onFileViewImageClick={mediaPreviewManager.handleViewImage}
@@ -377,13 +395,13 @@ export default function Home() {
                 onOpenUploadDialog={() => toast({title: "Upload Not Available", description: "Uploads are not supported in Global Drive view."})}
                 isPreparingStream={mediaPreviewManager.isPreparingVideoStream}
                 preparingStreamForFileId={mediaPreviewManager.preparingVideoStreamForFileId}
-                onLoadMoreMedia={globalDriveManager.loadMoreGlobalMedia} // This might be less used if auto-scan is effective
+                onLoadMoreMedia={globalDriveManager.loadMoreGlobalMedia}
                 isCloudChannel={false}
-                currentVirtualPath="/"
-                onNavigateVirtualPath={() => {}} // No VFS nav in default global
-                onOpenCreateVirtualFolderDialog={() => {}} // No VFS creation in default global
-                onDeleteFile={(file) => fileOperationsManager.handleRequestDeleteItem('file', file, file.inputPeer)}
-                onDeleteVirtualFolder={() => {}}
+                currentVirtualPath={"/"} // For default global, path is always root
+                onNavigateVirtualPath={() => {}}
+                onOpenCreateVirtualFolderDialog={(path) => pageDialogs.handleOpenCreateVirtualFolderDialog(path)}
+                onDeleteFile={(file) => fileOperationsManager.handleRequestDeleteItem('file', file, file.inputPeer)} // Deletion in global might be complex
+                onDeleteVirtualFolder={(path, name) => fileOperationsManager.handleRequestDeleteItem('virtualFolder', {path, name}, undefined)}
                 selectedFolderInputPeer={null}
                 onCopyFile={fileOperationsManager.handleCopyFileOp}
                 onPasteItem={() => {}}
@@ -428,8 +446,8 @@ export default function Home() {
                 selectedFolderForView={selectedMediaManager.selectedFolder}
                 onOpenManageCloudChannelDialog={pageDialogs.handleOpenManageCloudChannelDialog}
                 isGlobalView={false}
-                organizationMode="default" // Specific chats always use default organization
-                onSetOrganizationMode={() => {}} // No mode switch for specific chats
+                organizationMode="default"
+                onSetOrganizationMode={() => {}}
               />
             ) : (
               <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground p-4">
@@ -515,30 +533,33 @@ export default function Home() {
         isOpen={pageDialogs.isCreateVirtualFolderDialogOpen}
         onClose={() => pageDialogs.setIsCreateVirtualFolderDialogOpen(false)}
         onCreate={async (folderName: string) => {
-            if (isGlobalDriveActive || !selectedMediaManager.selectedFolder || !selectedMediaManager.selectedFolder.inputPeer) {
-                 toast({ title: "Error", description: "Operation not valid in Global Drive or no cloud channel selected.", variant: "destructive" }); return;
+            if (isGlobalDriveActive && organizationMode === 'custom') {
+                await handleCreateGlobalVirtualFolder(folderName); // Uses pageDialogs.virtualFolderParentPath implicitly
+            } else if (!isGlobalDriveActive && selectedMediaManager.selectedFolder?.inputPeer) {
+                fileOperationsManager.setIsProcessingVirtualFolder(true);
+                try {
+                    const updatedConfig = await telegramService.addVirtualFolderToCloudChannel(selectedMediaManager.selectedFolder.inputPeer, pageDialogs.virtualFolderParentPath, folderName);
+                    if (updatedConfig) {
+                        selectedMediaManager.updateSelectedFolderConfig(updatedConfig);
+                        appCloudChannelsManager.setAppManagedCloudFoldersState(prev => prev.map(cf => cf.id === selectedMediaManager.selectedFolder?.id ? {...cf, cloudConfig: updatedConfig} : cf));
+                        toast({ title: "Virtual Folder Created", description: `Folder "${folderName}" created.`});
+                        pageDialogs.setIsCreateVirtualFolderDialogOpen(false);
+                    } else { toast({ title: "Creation Failed", variant: "destructive" }); }
+                } catch (e:any) { handleGlobalApiError(e, "Error Creating Folder", e.message); }
+                finally { fileOperationsManager.setIsProcessingVirtualFolder(false); }
+            } else {
+                toast({ title: "Error", description: "Operation not valid in this context.", variant: "destructive" });
             }
-            fileOperationsManager.setIsProcessingVirtualFolder(true);
-            try {
-                const updatedConfig = await telegramService.addVirtualFolderToCloudChannel(selectedMediaManager.selectedFolder.inputPeer, pageDialogs.virtualFolderParentPath, folderName);
-                if (updatedConfig) {
-                    selectedMediaManager.updateSelectedFolderConfig(updatedConfig);
-                    appCloudChannelsManager.setAppManagedCloudFoldersState(prev => prev.map(cf => cf.id === selectedMediaManager.selectedFolder?.id ? {...cf, cloudConfig: updatedConfig} : cf));
-                    toast({ title: "Virtual Folder Created", description: `Folder "${folderName}" created.`});
-                    pageDialogs.setIsCreateVirtualFolderDialogOpen(false);
-                } else { toast({ title: "Creation Failed", variant: "destructive" }); }
-            } catch (e:any) { handleGlobalApiError(e, "Error Creating Folder", e.message); }
-            finally { fileOperationsManager.setIsProcessingVirtualFolder(false); }
         }}
-        isLoading={fileOperationsManager.isProcessingVirtualFolder}
+        isLoading={fileOperationsManager.isProcessingVirtualFolder || (isGlobalDriveActive && organizationMode === 'custom' && globalDriveConfigManager.isLoadingConfig)}
         parentPath={pageDialogs.virtualFolderParentPath}
       />
 
       <DeleteItemConfirmationDialog
         isOpen={fileOperationsManager.isDeleteItemDialogOpen}
         onClose={() => fileOperationsManager.handleCancelDeletion()}
-        onConfirm={fileOperationsManager.handleConfirmDeletion}
-        isLoading={fileOperationsManager.isProcessingDeletion}
+        onConfirm={isGlobalDriveActive && organizationMode === 'custom' ? handleDeleteGlobalVirtualFolder : fileOperationsManager.handleConfirmDeletion}
+        isLoading={fileOperationsManager.isProcessingDeletion || (isGlobalDriveActive && organizationMode === 'custom' && globalDriveConfigManager.isLoadingConfig)}
         itemName={fileOperationsManager.itemToDelete?.type === 'file' ? fileOperationsManager.itemToDelete.file.name : fileOperationsManager.itemToDelete?.name || "item"}
         itemType={fileOperationsManager.itemToDelete?.type || "item"}
       />
@@ -590,4 +611,3 @@ export default function Home() {
     </div>
   );
 }
-
