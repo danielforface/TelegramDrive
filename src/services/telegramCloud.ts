@@ -101,8 +101,7 @@ export async function searchSelfMessagesByCaption(
       }
     }
 
-    // 2. If not in pinned, check recent general history (e.g., last 100 messages)
-    // We specifically look for documents, as the config is a JSON file.
+    // 2. If not in pinned, check recent general history for documents
     const historyResults = await telegramApiInstance.call('messages.search', {
       peer: selfPeer,
       q: '', // General search
@@ -864,3 +863,5 @@ export async function getContacts(): Promise<any[]> {
   }
 }
 
+
+    
