@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
@@ -401,17 +400,17 @@ export default function Home() {
 
   useEffect(() => {
     if (isGlobalDriveActive && connManagerIsConnected) {
-      if (!gdIsFullScanActive) {
+      if (!gdIsFullScanActive) { // Start scan if Global Drive becomes active and not already scanning
         gdFetchInitialGlobalMedia();
       }
       if (organizationMode === 'custom' && !gdcCustomConfig && !gdcIsLoadingConfig && !gdcConfigError) {
         gdcLoadOrCreateConfig();
       }
-    } else if (!isGlobalDriveActive) {
-      if (gdIsFullScanActive) {
-        gdResetManager();
+    } else if (!isGlobalDriveActive) { // Global Drive deactivated
+      if (gdIsFullScanActive) { // Stop scan if it was active
+        gdResetManager(); // This will also set isFullScanActive to false
       }
-      gdcResetConfigState();
+      gdcResetConfigState(); // Reset custom config related state
     }
   }, [
       isGlobalDriveActive, connManagerIsConnected, organizationMode,
@@ -482,9 +481,10 @@ export default function Home() {
         return;
     }
     smResetSelectedMedia();
-    setOrganizationMode('default');
-    gdcResetConfigState();
+    setOrganizationMode('default'); // Default to 'default' when opening
+    gdcResetConfigState(); // Reset custom config state
     setIsGlobalDriveActive(true);
+    // gdFetchInitialGlobalMedia() will now be called by the useEffect watching isGlobalDriveActive
   }, [connManagerIsConnected, toast, smResetSelectedMedia, gdcResetConfigState ]);
 
   const handleSetOrganizationMode = useCallback((mode: OrganizationMode) => {
@@ -602,6 +602,7 @@ export default function Home() {
                 customGlobalDriveConfig={gdcCustomConfig}
                 isLoadingCustomGlobalDriveConfig={gdcIsLoadingConfig}
                 customGlobalDriveConfigError={gdcConfigError}
+                isGlobalScanActive={gdIsFullScanActive}
               />
             ) : smSelectedFolder ? (
               <MainContentView

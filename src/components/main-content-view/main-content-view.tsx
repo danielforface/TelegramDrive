@@ -1,4 +1,3 @@
-
 "use client";
 
 import * as React from "react";
@@ -8,7 +7,7 @@ import { ContentFolderItem } from "./content-folder-item";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Search, FolderOpen, Loader2, CalendarDays, XCircle as ClearIcon, UploadCloud, Cloud, FolderPlus, ArrowUpCircle, ChevronRight, FolderUp, ArrowLeftCircle, ClipboardPaste, Settings2, Globe, Info as InfoIcon, ListTree, Columns, AlertTriangle, Copy as CopyIcon } from "lucide-react";
+import { Search, FolderOpen, Loader2, CalendarDays, XCircle as ClearIcon, UploadCloud, Cloud, FolderPlus, ArrowUpCircle, ChevronRight, FolderUp, ArrowLeftCircle, ClipboardPaste, Settings2, Globe, Info as InfoIcon, ListTree, Columns, AlertTriangle, Copy as CopyIcon, PlayCircle } from "lucide-react"; // Added PlayCircle
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
@@ -54,6 +53,7 @@ interface MainContentViewProps {
   customGlobalDriveConfig?: GlobalDriveConfigV1 | null;
   isLoadingCustomGlobalDriveConfig?: boolean;
   customGlobalDriveConfigError?: string | null;
+  isGlobalScanActive?: boolean; // New prop to know if scan is running
 }
 
 const TABS_CONFIG = [
@@ -104,6 +104,7 @@ export function MainContentView({
   customGlobalDriveConfig,
   isLoadingCustomGlobalDriveConfig,
   customGlobalDriveConfigError,
+  isGlobalScanActive, // Consuming the new prop
 }: MainContentViewProps) {
   const [activeTab, setActiveTab] = useState("all");
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
@@ -140,7 +141,6 @@ export function MainContentView({
     event.preventDefault();
     const clickedOnItem = (event.target as HTMLElement).closest('[data-file-item="true"]') || (event.target as HTMLElement).closest('[data-folder-item="true"]');
 
-    // If clicked on an item, or if it's a default global view (no background VFS actions), hide menu.
     if (clickedOnItem || (isGlobalView && organizationMode === 'default')) {
       setBackgroundContextMenu({ visible: false, x: 0, y: 0, items: [] });
       return;
@@ -155,7 +155,7 @@ export function MainContentView({
             onClick: () => onOpenCreateVirtualFolderDialog(pathForContextMenu),
             icon: <FolderPlus className="w-3.5 h-3.5" />,
         });
-        if (isCloudChannel && !isGlobalView && clipboardItem) { // Paste currently only for VFS channels
+        if (isCloudChannel && !isGlobalView && clipboardItem) {
           menuItems.push({
             label: `Paste ${clipboardItem.type === 'file' ? `"${clipboardItem.file.name}"` : `"${clipboardItem.folderName}"`}`,
             onClick: () => onPasteItem(pathForContextMenu),
@@ -262,6 +262,8 @@ export function MainContentView({
     Object.entries(currentEntries).forEach(([name, entry]) => {
         if (entry.type === 'folder') {
             const subFolderCount = Object.values(entry.entries || {}).filter(e => e.type === 'folder').length;
+            // For custom global drive, itemCount currently only reflects subfolders.
+            // File references are not yet counted here for simplicity.
             displayedCustomFolders.push({ type: 'folder', name, entry, itemCount: subFolderCount });
         }
     });
@@ -270,9 +272,8 @@ export function MainContentView({
 
 
   const mediaFilesToDisplay = useMemo(() => {
-    let processedFiles = files; // 'files' prop is globalMediaItems when in global view
+    let processedFiles = files;
 
-    // Apply tab filtering if in default organization mode (regular chat or default global)
     if (organizationMode === 'default' && (!isCloudChannel || isGlobalView)) {
         switch (activeTab) {
           case "images":
@@ -298,12 +299,10 @@ export function MainContentView({
             break;
           case "all":
           default:
-            // No type filtering needed for "all"
             break;
         }
     }
 
-    // Apply date filtering if a date is selected
     if (selectedDate) {
       processedFiles = processedFiles.filter(file =>
         file.timestamp && isSameDay(new Date(file.timestamp * 1000), selectedDate)
@@ -421,7 +420,7 @@ export function MainContentView({
                         onClick={() => setCurrentCustomGlobalPath(syntheticFolder.vfsPath!)}
                         onDelete={() => onDeleteVirtualFolder(normalizePath(currentCustomGlobalPath), folderItem.name)}
                         onCreateFolderInside={() => onOpenCreateVirtualFolderDialog(normalizePath(currentCustomGlobalPath + folderItem.name + '/'))}
-                        isCloudChannelContext={true} // Enables context menu for custom global folders
+                        isCloudChannelContext={true}
                       />
                     );
                   }
@@ -436,7 +435,7 @@ export function MainContentView({
                 <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center py-10 h-full">
                   <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
                   <p className="text-lg">
-                      {isGlobalView && organizationMode === 'default' && globalStatusMessage && !(globalStatusMessage || "").toLowerCase().includes("complete") && !(globalStatusMessage || "").toLowerCase().includes("idle") ? "Global Drive is initializing or loading content." :
+                      {isGlobalView && organizationMode === 'default' && globalStatusMessage && !(globalStatusMessage || "").toLowerCase().includes("complete") && !(globalStatusMessage || "").toLowerCase().includes("idle") && !(globalStatusMessage || "").toLowerCase().includes("paused") ? "Global Drive is initializing or loading content." :
                        (noResultsForFilter ? "No media items found for the current filter." :
                        (noGlobalMediaDefaultOrg ? "Global Drive is empty or content is still loading." :
                        (isCloudChannel ? "This folder is empty." :
@@ -447,9 +446,6 @@ export function MainContentView({
                    {(noResultsForFilter || noGlobalMediaDefaultOrg) && hasMore && onLoadMoreMedia && (
                      <>
                       <p className="text-base mt-2">Try loading more to see if items appear {noResultsForFilter ? "in this category" : ""}.</p>
-                      <Button onClick={onLoadMoreMedia} disabled={isLoadingMoreMedia || isLoading} variant="outline" className="mt-4">
-                        {(isLoadingMoreMedia || isLoading) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Load More
-                      </Button>
                      </>
                    )}
                 </div>
@@ -543,7 +539,15 @@ export function MainContentView({
                 <p className="ml-3 text-muted-foreground">Loading more content...</p>
               </div>
             )}
-            {(!isGlobalView || organizationMode === 'default') && !isLoading && !isLoadingMoreMedia && hasMore && displayItems.length > 0 && onLoadMoreMedia && (
+            {isGlobalView && organizationMode === 'default' && !isGlobalScanActive && hasMore && onLoadMoreMedia && (
+              <div className="col-span-full flex justify-center py-4 mt-4">
+                  <Button onClick={onLoadMoreMedia} disabled={isLoading || isLoadingMoreMedia} variant="outline">
+                      {(isLoading || isLoadingMoreMedia) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      Resume Full Scan
+                  </Button>
+              </div>
+            )}
+            {(!isGlobalView || organizationMode === 'default') && !isLoading && !isLoadingMoreMedia && hasMore && displayItems.length > 0 && onLoadMoreMedia && !isGlobalScanActive && !(isGlobalView && organizationMode === 'default') && (
               <div className="col-span-full flex justify-center py-4 mt-4">
                 <Button onClick={onLoadMoreMedia} disabled={isLoadingMoreMedia || isLoading} variant="outline">
                   {(isLoadingMoreMedia || isLoading) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -589,8 +593,13 @@ export function MainContentView({
             )}
             {isGlobalView && organizationMode === 'default' && globalStatusMessage && (
               <div className="text-xs text-muted-foreground flex items-center bg-secondary px-3 py-1.5 rounded-full">
-                {(isLoading || isLoadingCustomGlobalDriveConfig) ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <InfoIcon className="h-4 w-4 mr-2 text-primary/70" />}
+                {(isLoading || isLoadingCustomGlobalDriveConfig || isGlobalScanActive) ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <InfoIcon className="h-4 w-4 mr-2 text-primary/70" />}
                 <span>{globalStatusMessage}</span>
+                {!isGlobalScanActive && hasMore && onLoadMoreMedia && (
+                    <Button onClick={onLoadMoreMedia} variant="ghost" size="sm" className="ml-2 h-auto p-0 text-xs hover:bg-primary/10">
+                       <PlayCircle className="mr-1 h-3 w-3"/> Resume Scan
+                    </Button>
+                )}
               </div>
             )}
           </div>
@@ -599,7 +608,7 @@ export function MainContentView({
 
       {organizationMode === 'default' && (
         <div className="flex flex-col sm:flex-row gap-3 mb-3 items-center flex-wrap flex-shrink-0">
-          {isCloudChannel && !isGlobalView ? ( // VFS Cloud Channel controls
+          {isCloudChannel && !isGlobalView ? (
             <>
               {currentVirtualPath !== '/' && (
                 <Button variant="outline" onClick={() => onNavigateVirtualPath(getParentPath(currentVirtualPath))} className="w-full sm:w-auto">
@@ -616,7 +625,7 @@ export function MainContentView({
                 <Settings2 className="mr-2 h-4 w-4" /> Manage Channel
               </Button>}
             </>
-          ) : ( // Default Chat or Default Global Drive controls
+          ) : (
               <>
                 <Button variant="outline" onClick={handleSearchButtonClick} className="w-full sm:w-auto">
                   <Search className="mr-2 h-4 w-4" /> Search
@@ -642,7 +651,7 @@ export function MainContentView({
                 </Button>}
               </>
           )}
-          {(!isCloudChannel || isGlobalView) && organizationMode === 'default' && ( // Tabs for Default Chat or Default Global
+          {(!isCloudChannel || isGlobalView) && organizationMode === 'default' && (
             <>
               <div className="flex-grow"></div> {}
               <Tabs defaultValue="all" onValueChange={setActiveTab} value={activeTab} className="w-full sm:w-auto">
