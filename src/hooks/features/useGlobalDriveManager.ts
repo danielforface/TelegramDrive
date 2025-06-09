@@ -2,7 +2,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from 'react';
-import type { CloudFile, CloudFolder, MediaHistoryResponse, InputPeer } from '@/types';
+import type { CloudFile, CloudFolder, InputPeer } from '@/types';
 import * as telegramService from '@/services/telegramService';
 import type { useToast } from "@/hooks/use-toast";
 
@@ -11,7 +11,7 @@ const GLOBAL_DRIVE_MEDIA_PER_DIALOG_INITIAL_FETCH_LIMIT = 100;
 const GLOBAL_DRIVE_MEDIA_PER_DIALOG_SUBSEQUENT_LIMIT = 50;
 
 const INITIAL_GLOBAL_SCAN_FETCH_TARGET = 1000;
-const INCREMENTAL_GLOBAL_SCAN_FETCH_TARGET = 200; // Smaller batches for incremental resume
+const INCREMENTAL_GLOBAL_SCAN_FETCH_TARGET = 200;
 
 interface UseGlobalDriveManagerProps {
   toast: ReturnType<typeof useToast>['toast'];
@@ -32,7 +32,7 @@ const MAX_DIALOG_PROCESS_ATTEMPTS = 3;
 export function useGlobalDriveManager({
   toast,
   handleGlobalApiError,
-  isConnected: initialIsConnected,
+  isConnected: propIsConnected,
 }: UseGlobalDriveManagerProps) {
   const [globalMediaItems, setGlobalMediaItems] = useState<CloudFile[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -51,7 +51,7 @@ export function useGlobalDriveManager({
   const isInitialScanPhaseRef = useRef(true);
   const fetchedItemsInCurrentBatchRef = useRef(0);
 
-  const [isConnectedInternal, setIsConnectedInternal] = useState(initialIsConnected);
+  const [isConnectedInternal, setIsConnectedInternal] = useState(propIsConnected);
   const scanIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const processedDialogsCountRef = useRef(0);
 
@@ -60,8 +60,8 @@ export function useGlobalDriveManager({
   }, [setIsConnectedInternal]);
 
   useEffect(() => {
-    setIsConnectedInternal(initialIsConnected);
-  }, [initialIsConnected]);
+    setIsConnectedInternal(propIsConnected);
+  }, [propIsConnected]);
 
   const resetManager = useCallback((resetStatusMsg = true) => {
     setGlobalMediaItems([]);
@@ -91,8 +91,11 @@ export function useGlobalDriveManager({
       setStatusMessage("Cannot fetch dialogs: Disconnected.");
       return false;
     }
-    if (!hasMoreDialogsToFetch) {
-      setStatusMessage(`All ${allDialogsCacheRef.current.length} dialogs previously fetched. Processing media...`);
+    if (!hasMoreDialogsToFetch && dialogsProcessQueueRef.current.length === 0) {
+      setStatusMessage(`All ${allDialogsCacheRef.current.length} dialogs processed. No new dialogs to fetch.`);
+      return false;
+    }
+    if (!hasMoreDialogsToFetch && dialogsProcessQueueRef.current.length > 0) {
       return false;
     }
 
@@ -140,10 +143,20 @@ export function useGlobalDriveManager({
       setStatusMessage("Error fetching dialogs. Scan may be incomplete.");
       return false;
     }
-  }, [isConnectedInternal, handleGlobalApiError, currentDialogsOffsetDate, currentDialogsOffsetId, currentDialogsOffsetPeer, hasMoreDialogsToFetch, setStatusMessage]);
+  }, [
+    isConnectedInternal, handleGlobalApiError,
+    currentDialogsOffsetDate, currentDialogsOffsetId, currentDialogsOffsetPeer, hasMoreDialogsToFetch,
+    setStatusMessage, setHasMoreDialogsToFetch,
+    setCurrentDialogsOffsetDate, setCurrentDialogsOffsetId, setCurrentDialogsOffsetPeer
+  ]);
 
   const processNextBatch = useCallback(async () => {
+    // Direct state reads for conditions, setters for updates
     if (isLoading || !isScanBatchActive || !isConnectedInternal) {
+      if (!isScanBatchActive && scanIntervalRef.current) {
+        clearInterval(scanIntervalRef.current);
+        scanIntervalRef.current = null;
+      }
       return;
     }
     setIsLoading(true);
@@ -160,9 +173,10 @@ export function useGlobalDriveManager({
         return;
       }
 
+      let didFetchNewDialogsThisCycle = false;
       if (dialogsProcessQueueRef.current.length === 0 && hasMoreDialogsToFetch) {
-        const fetchedNewDialogs = await fetchAndQueueDialogs();
-        if (!fetchedNewDialogs && dialogsProcessQueueRef.current.length === 0 && !hasMoreDialogsToFetch) {
+        didFetchNewDialogsThisCycle = await fetchAndQueueDialogs();
+        if (!didFetchNewDialogsThisCycle && dialogsProcessQueueRef.current.length === 0 && !hasMoreDialogsToFetch) {
             setHasMore(false);
             setIsScanBatchActive(false);
             const finalStatus = globalMediaItems.length > 0
@@ -173,8 +187,6 @@ export function useGlobalDriveManager({
             return;
         }
       }
-
-      let overallMoreToFetch = hasMore;
 
       if (dialogsProcessQueueRef.current.length > 0) {
         const processInfo = dialogsProcessQueueRef.current.shift();
@@ -236,25 +248,26 @@ export function useGlobalDriveManager({
             processInfo.isFullyScanned = true;
             if (!allDialogsCacheRef.current.find(d => d.id === processInfo.dialog.id)?.isFullyScannedForGlobalDrive) {
                 processedDialogsCountRef.current += 1;
-                const dialogInCache = allDialogsCacheRef.current.find(d => d.id === processInfo.dialog.id);
-                if (dialogInCache) (dialogInCache as any).isFullyScannedForGlobalDrive = true;
+                 const dialogInCache = allDialogsCacheRef.current.find(d => d.id === processInfo.dialog.id);
+                 if (dialogInCache) (dialogInCache as any).isFullyScannedForGlobalDrive = true;
             }
         }
       }
 
       const anyDialogInQueueHasMoreMedia = dialogsProcessQueueRef.current.some(info => info.hasMoreMedia && !info.isFullyScanned);
-      overallMoreToFetch = hasMoreDialogsToFetch || anyDialogInQueueHasMoreMedia;
-      setHasMore(overallMoreToFetch);
+      const newOverallHasMoreState = hasMoreDialogsToFetch || anyDialogInQueueHasMoreMedia;
+      setHasMore(newOverallHasMoreState);
 
-      if (fetchedItemsInCurrentBatchRef.current >= currentBatchTargetLimit && overallMoreToFetch) {
+      if ((fetchedItemsInCurrentBatchRef.current >= currentBatchTargetLimit && newOverallHasMoreState) || (!newOverallHasMoreState && dialogsProcessQueueRef.current.length === 0 && !hasMoreDialogsToFetch) ) {
         setIsScanBatchActive(false);
-        setStatusMessage(`Batch complete (${fetchedItemsInCurrentBatchRef.current} items). ${globalMediaItems.length} total. ${dialogsProcessQueueRef.current.length} dialogs pending. Resume to load next.`);
-      } else if (!overallMoreToFetch) {
-        setIsScanBatchActive(false);
-        const finalStatus = globalMediaItems.length > 0
-          ? `Global Drive scan complete. ${processedDialogsCountRef.current} dialogs processed. Found ${globalMediaItems.length} items.`
-          : `Global Drive scan complete. ${processedDialogsCountRef.current} dialogs processed. No media items found.`;
-        setStatusMessage(finalStatus);
+        if (newOverallHasMoreState) {
+          setStatusMessage(`Batch complete (${fetchedItemsInCurrentBatchRef.current} items). ${globalMediaItems.length} total. ${dialogsProcessQueueRef.current.length} dialogs pending. Resume to load next.`);
+        } else {
+          const finalStatus = globalMediaItems.length > 0
+            ? `Global Drive scan complete. ${processedDialogsCountRef.current} dialogs processed. Found ${globalMediaItems.length} items.`
+            : `Global Drive scan complete. ${processedDialogsCountRef.current} dialogs processed. No media items found.`;
+          setStatusMessage(finalStatus);
+        }
       } else if (isScanBatchActive) {
         const activeDialogsInQueue = dialogsProcessQueueRef.current.length;
         const totalKnownDialogs = allDialogsCacheRef.current.length;
@@ -265,58 +278,60 @@ export function useGlobalDriveManager({
     } catch (e: any) {
       setStatusMessage(`An unexpected error occurred during scan: ${e.message}`);
       setIsScanBatchActive(false);
+      handleGlobalApiError(e, "Global Scan Error", "A critical error stopped the scan.");
     } finally {
       setIsLoading(false);
     }
   }, [
-    isLoading, isScanBatchActive, isConnectedInternal, fetchAndQueueDialogs, handleGlobalApiError,
-    globalMediaItems.length, hasMore, hasMoreDialogsToFetch,
-    setHasMore, setIsLoading, setIsScanBatchActive, setStatusMessage,
+    // Dependencies for useCallback: only include props, stable setters, and other stable callbacks.
+    // State values read inside are from closure.
+    fetchAndQueueDialogs, handleGlobalApiError,
+    setGlobalMediaItems, setHasMore, setIsLoading, setIsScanBatchActive, setStatusMessage,
+    // Primitive state values that define the function's logic if it were to be re-created
+    isLoading, isScanBatchActive, isConnectedInternal, hasMoreDialogsToFetch, hasMore, globalMediaItems.length
   ]);
-
-
- useEffect(() => {
-    if (!initialIsConnected && isScanBatchActive) {
-      setIsScanBatchActive(false);
-      if (scanIntervalRef.current) clearInterval(scanIntervalRef.current);
-      setStatusMessage("Global Drive scan paused: Disconnected.");
-      setIsLoading(false);
-    } else if (!initialIsConnected && globalMediaItems.length === 0 && !isLoading) {
-      setStatusMessage("Global Drive: Disconnected. Connect and open to scan.");
-    }
-  }, [initialIsConnected, isScanBatchActive, globalMediaItems.length, isLoading, setStatusMessage, setIsScanBatchActive, setIsLoading]);
-
 
   useEffect(() => {
     if (isScanBatchActive && isConnectedInternal) {
-      if (!isLoading) {
-        processNextBatch();
-      }
       if (scanIntervalRef.current) clearInterval(scanIntervalRef.current);
-      scanIntervalRef.current = setInterval(async () => {
+
+      const runScanStep = async () => {
+        // Read latest isLoading from state directly, not from closure of useEffect
         if (!isLoading && isScanBatchActive && isConnectedInternal) {
           await processNextBatch();
-        } else if (!isScanBatchActive || !isConnectedInternal) {
-          if (scanIntervalRef.current) clearInterval(scanIntervalRef.current);
         }
-      }, 1000);
+      };
+      
+      runScanStep(); // Run immediately
+      scanIntervalRef.current = setInterval(runScanStep, 750);
     } else {
       if (scanIntervalRef.current) {
         clearInterval(scanIntervalRef.current);
         scanIntervalRef.current = null;
       }
-      if (isLoading) {
+       if (isLoading && !isScanBatchActive) {
           setIsLoading(false);
       }
     }
     return () => {
       if (scanIntervalRef.current) clearInterval(scanIntervalRef.current);
     };
-  }, [isScanBatchActive, isConnectedInternal, isLoading, processNextBatch]);
+  }, [isScanBatchActive, isConnectedInternal, processNextBatch, isLoading]); // isLoading added to potentially restart interval
+
+
+  useEffect(() => {
+    if (!propIsConnected && isScanBatchActive) {
+      setIsScanBatchActive(false);
+      setStatusMessage("Global Drive scan paused: Disconnected.");
+      setIsLoading(false);
+    } else if (!propIsConnected && globalMediaItems.length === 0 && !isLoading) {
+      setStatusMessage("Global Drive: Disconnected. Connect and open to scan.");
+    }
+  }, [propIsConnected, isScanBatchActive, globalMediaItems.length, isLoading, setStatusMessage, setIsScanBatchActive, setIsLoading]);
 
   const fetchInitialGlobalMedia = useCallback(() => {
-    setIsConnectedInternal(initialIsConnected);
-    if (!initialIsConnected) {
+    // Read current isConnectedInternal directly
+    if (!isConnectedInternal) {
       setStatusMessage("Not connected. Cannot start Global Drive scan.");
       return;
     }
@@ -325,35 +340,34 @@ export function useGlobalDriveManager({
     isInitialScanPhaseRef.current = true;
     fetchedItemsInCurrentBatchRef.current = 0;
     setIsScanBatchActive(true);
-  }, [initialIsConnected, resetManager, setStatusMessage, setIsScanBatchActive]);
-
+  }, [isConnectedInternal, resetManager, setStatusMessage, setIsScanBatchActive]);
 
   const loadMoreGlobalMedia = useCallback(() => {
-    setIsConnectedInternal(initialIsConnected);
-
+    // Read current states directly
     if (!isConnectedInternal) {
-      toast({ title: "Not Connected", description: "Cannot load more, not connected to Telegram.", variant: "default" });
+      toast({ title: "Not Connected", description: "Cannot load more, not connected to Telegram.", variant: "default"});
       return;
     }
     if (isLoading || isScanBatchActive) {
-      toast({ title: "Scan Active", description: "Global Drive scan is already running or loading.", variant: "default" });
       return;
     }
 
     if (hasMore) {
-      setStatusMessage("Loading next batch of media...");
+      setStatusMessage("Resuming scan, loading next batch of media...");
       isInitialScanPhaseRef.current = false;
       fetchedItemsInCurrentBatchRef.current = 0;
       setIsScanBatchActive(true);
     } else {
-      toast({ title: "All Loaded", description: "All accessible media has been loaded.", variant: "default" });
       const finalStatus = globalMediaItems.length > 0
         ? `Global Drive scan complete. ${processedDialogsCountRef.current} dialogs processed. Found ${globalMediaItems.length} items.`
         : `Global Drive scan complete. ${processedDialogsCountRef.current} dialogs processed. No media items found.`;
       setStatusMessage(finalStatus);
     }
-  }, [initialIsConnected, isConnectedInternal, isLoading, isScanBatchActive, hasMore, toast, globalMediaItems.length, setIsScanBatchActive, setStatusMessage]);
-
+  }, [
+    isConnectedInternal, isLoading, isScanBatchActive, hasMore, toast,
+    globalMediaItems.length, // Read from state
+    setIsScanBatchActive, setStatusMessage // Stable setters
+  ]);
 
   return {
     globalMediaItems,
@@ -365,7 +379,7 @@ export function useGlobalDriveManager({
     resetManager,
     setIsConnected,
     setGlobalMediaItemsDirectly: setGlobalMediaItems,
-    isScanBatchActive,
+    isScanBatchActive: isScanBatchActive,
   };
 }
-
+    
