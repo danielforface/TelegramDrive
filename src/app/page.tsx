@@ -75,13 +75,13 @@ export default function Home() {
   const globalDriveManager = useGlobalDriveManager({
     toast,
     handleGlobalApiError,
-    isConnected: false,
+    isConnected: false, // Initial state, will be updated by useEffect
   });
 
   const globalDriveConfigManager = useGlobalDriveConfigManager({
     toast,
     handleGlobalApiError,
-    isConnected: false,
+    isConnected: false, // Initial state, will be updated by useEffect
   });
 
 
@@ -105,8 +105,8 @@ export default function Home() {
     dialogFilters: dialogFiltersManager.dialogFilters,
     resetSelectedMedia: () => {
       selectedMediaManager?.resetSelectedMedia();
-      if (isGlobalDriveActive) {
-          setIsGlobalDriveActive(false);
+      if (isGlobalDriveActive) { // This check is important
+          setIsGlobalDriveActive(false); // Deactivate global drive if a chat is selected
           globalDriveManager.resetManager();
           globalDriveConfigManager.resetConfigState();
           setOrganizationMode('default');
@@ -168,8 +168,8 @@ export default function Home() {
     }
   }, [
       isGlobalDriveActive,
-      appCloudChannelsManager.setAppManagedCloudFolders,
-      selectedMediaManager.setSelectedFolder,
+      appCloudChannelsManager.setAppManagedCloudFolders, // Added missing dependency
+      selectedMediaManager.setSelectedFolder, // Added missing dependency
       selectedMediaManager.selectedFolder?.id
     ]);
 
@@ -221,6 +221,17 @@ export default function Home() {
     connectionManager.checkExistingConnection();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Effect to handle Global Drive activation based on state
+  useEffect(() => {
+    if (isGlobalDriveActive && connectionManager.isConnected) {
+      globalDriveManager.fetchInitialGlobalMedia();
+    } else if (!isGlobalDriveActive && globalDriveManager.isFullScanActive) {
+      // If global drive is deactivated while a scan was active, reset its manager
+      globalDriveManager.resetManager();
+    }
+  }, [isGlobalDriveActive, connectionManager.isConnected, globalDriveManager]);
+
 
   useEffect(() => {
     if (dialogFiltersManager.isLoadingDialogFilters) return;
@@ -289,12 +300,12 @@ export default function Home() {
         toast({ title: "Not Connected", description: "Please connect to Telegram first.", variant: "default"});
         return;
     }
-    setIsGlobalDriveActive(true);
-    selectedMediaManager.resetSelectedMedia();
-    globalDriveManager.fetchInitialGlobalMedia();
-    setOrganizationMode('default');
-    globalDriveConfigManager.resetConfigState();
-    toast({ title: "Global Drive Activated", description: "Scanning all accessible media. This may take a while..."});
+    selectedMediaManager.resetSelectedMedia(); // Important to reset any specific chat selection
+    // No need to call globalDriveManager.resetManager() here; fetchInitialGlobalMedia will do it.
+    setOrganizationMode('default'); // Default to 'default' organization when opening
+    globalDriveConfigManager.resetConfigState(); // Reset custom config state
+    setIsGlobalDriveActive(true); // This will trigger the useEffect to call fetchInitialGlobalMedia
+    // The toast for activation is handled by the globalDriveManager status message.
   };
 
   const handleSetOrganizationMode = (mode: OrganizationMode) => {
@@ -374,8 +385,8 @@ export default function Home() {
         isConnected={connectionManager.isConnected}
         onDisconnect={() => performFullReset(true)}
         onOpenDownloadManager={downloadManager.handleOpenDownloadManagerSheet}
-        onOpenChatSelectionDialog={() => { setIsGlobalDriveActive(false); globalDriveManager.resetManager(); globalDriveConfigManager.resetConfigState(); setOrganizationMode('default'); pageDialogs.handleOpenChatSelectionDialog(); }}
-        onOpenCloudStorageSelector={() => { setIsGlobalDriveActive(false); globalDriveManager.resetManager(); globalDriveConfigManager.resetConfigState(); setOrganizationMode('default'); pageDialogs.handleOpenCloudStorageSelector(); }}
+        onOpenChatSelectionDialog={() => { setIsGlobalDriveActive(false); pageDialogs.handleOpenChatSelectionDialog(); }}
+        onOpenCloudStorageSelector={() => { setIsGlobalDriveActive(false); pageDialogs.handleOpenCloudStorageSelector(); }}
         onOpenGlobalDrive={handleOpenGlobalDrive}
       />
       <div className="flex-1 flex overflow-hidden min-h-0">
@@ -397,8 +408,8 @@ export default function Home() {
                 preparingStreamForFileId={mediaPreviewManager.preparingVideoStreamForFileId}
                 onLoadMoreMedia={globalDriveManager.loadMoreGlobalMedia}
                 isCloudChannel={false}
-                currentVirtualPath={"/"} // For default global, path is always root
-                onNavigateVirtualPath={() => {}}
+                currentVirtualPath={organizationMode === 'custom' ? pageDialogs.virtualFolderParentPath : "/"} // Reflects custom path for VFS dialogs
+                onNavigateVirtualPath={(path) => { if (organizationMode === 'custom') pageDialogs.setVirtualFolderParentPath(path); else {/* no-op for default global */} }}
                 onOpenCreateVirtualFolderDialog={(path) => pageDialogs.handleOpenCreateVirtualFolderDialog(path)}
                 onDeleteFile={(file) => fileOperationsManager.handleRequestDeleteItem('file', file, file.inputPeer)} // Deletion in global might be complex
                 onDeleteVirtualFolder={(path, name) => fileOperationsManager.handleRequestDeleteItem('virtualFolder', {path, name}, undefined)}
@@ -446,8 +457,8 @@ export default function Home() {
                 selectedFolderForView={selectedMediaManager.selectedFolder}
                 onOpenManageCloudChannelDialog={pageDialogs.handleOpenManageCloudChannelDialog}
                 isGlobalView={false}
-                organizationMode="default"
-                onSetOrganizationMode={() => {}}
+                organizationMode="default" // Regular chats are always default org
+                onSetOrganizationMode={() => {}} // No-op for regular chats
               />
             ) : (
               <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground p-4">
@@ -456,8 +467,8 @@ export default function Home() {
                 <p className="text-sm mb-4">Select a chat folder, a cloud storage channel, or open the Global Drive.</p>
                 <div className="flex gap-4 flex-wrap justify-center">
                   <Button onClick={handleOpenGlobalDrive}><Globe className="mr-2 h-5 w-5" /> Open Global Drive</Button>
-                  <Button onClick={() => { setIsGlobalDriveActive(false); globalDriveManager.resetManager(); globalDriveConfigManager.resetConfigState(); setOrganizationMode('default'); pageDialogs.handleOpenChatSelectionDialog();}}><MessageSquare className="mr-2 h-5 w-5" /> Select Chat Folder</Button>
-                  <Button onClick={() => { setIsGlobalDriveActive(false); globalDriveManager.resetManager(); globalDriveConfigManager.resetConfigState(); setOrganizationMode('default'); pageDialogs.handleOpenCloudStorageSelector();}} variant="outline"><Cloud className="mr-2 h-5 w-5" /> Select Cloud Storage</Button>
+                  <Button onClick={() => { setIsGlobalDriveActive(false); pageDialogs.handleOpenChatSelectionDialog();}}><MessageSquare className="mr-2 h-5 w-5" /> Select Chat Folder</Button>
+                  <Button onClick={() => { setIsGlobalDriveActive(false); pageDialogs.handleOpenCloudStorageSelector();}} variant="outline"><Cloud className="mr-2 h-5 w-5" /> Select Cloud Storage</Button>
                 </div>
                 {chatListManager.isLoadingDisplayedChats && chatListManager.displayedChats.length === 0 && dialogFiltersManager.activeFilterDetails && (
                   <div className="mt-4 flex items-center"><Loader2 className="animate-spin h-5 w-5 text-primary mr-2" /><span>Loading initial chat list for "{dialogFiltersManager.activeFilterDetails?.title || 'current folder'}"...</span></div>
@@ -492,7 +503,7 @@ export default function Home() {
         isLoadingMore={chatListManager.isLoadingDisplayedChats && chatListManager.displayedChats.length > 0}
         hasMore={chatListManager.hasMoreDisplayedChats}
         selectedFolderId={selectedMediaManager.selectedFolder?.id || null}
-        onSelectFolder={(id) => { setIsGlobalDriveActive(false); globalDriveManager.resetManager(); globalDriveConfigManager.resetConfigState(); setOrganizationMode('default'); selectedMediaManager.handleSelectFolderOrChannel(id, 'chat'); pageDialogs.setIsChatSelectionDialogOpen(false);}}
+        onSelectFolder={(id) => { setIsGlobalDriveActive(false); selectedMediaManager.handleSelectFolderOrChannel(id, 'chat'); pageDialogs.setIsChatSelectionDialogOpen(false);}}
         onLoadMore={chatListManager.loadMoreDisplayedChatsInManager}
         onRefresh={dialogFiltersManager.handleRefreshCurrentFilterView}
         currentErrorMessage={chatListManager.currentErrorMessageForChatList}
@@ -507,7 +518,7 @@ export default function Home() {
         isLoadingMore={false}
         hasMore={false}
         selectedFolderId={selectedMediaManager.selectedFolder?.isAppManagedCloud ? selectedMediaManager.selectedFolder.id : null}
-        onSelectFolder={(id) => {setIsGlobalDriveActive(false); globalDriveManager.resetManager(); globalDriveConfigManager.resetConfigState(); setOrganizationMode('default'); selectedMediaManager.handleSelectFolderOrChannel(id, 'cloud'); pageDialogs.setIsCloudStorageSelectorOpen(false);}}
+        onSelectFolder={(id) => {setIsGlobalDriveActive(false); selectedMediaManager.handleSelectFolderOrChannel(id, 'cloud'); pageDialogs.setIsCloudStorageSelectorOpen(false);}}
         onLoadMore={() => {}}
         onRefresh={appCloudChannelsManager.fetchAppManagedCloudChannelsList.bind(null, true)}
         onOpenCreateCloudChannelDialog={pageDialogs.handleOpenCreateCloudChannelDialog}

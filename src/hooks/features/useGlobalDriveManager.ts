@@ -7,14 +7,14 @@ import * as telegramService from '@/services/telegramService';
 import type { useToast } from "@/hooks/use-toast";
 
 const GLOBAL_DRIVE_DIALOG_FETCH_LIMIT = 50;
-const GLOBAL_DRIVE_MEDIA_PER_DIALOG_INITIAL_FETCH_LIMIT = 100; // Increased
-const GLOBAL_DRIVE_MEDIA_PER_DIALOG_SUBSEQUENT_LIMIT = 50;  // Increased
+const GLOBAL_DRIVE_MEDIA_PER_DIALOG_INITIAL_FETCH_LIMIT = 100; 
+const GLOBAL_DRIVE_MEDIA_PER_DIALOG_SUBSEQUENT_LIMIT = 50;  
 
 
 interface UseGlobalDriveManagerProps {
   toast: ReturnType<typeof useToast>['toast'];
   handleGlobalApiError: (error: any, title: string, defaultMessage: string, doPageReset?: boolean) => void;
-  isConnected: boolean;
+  isConnected: boolean; // This is the prop from page.tsx
 }
 
 interface DialogProcessInfo {
@@ -30,11 +30,11 @@ const MAX_DIALOG_PROCESS_ATTEMPTS = 3;
 export function useGlobalDriveManager({
   toast,
   handleGlobalApiError,
-  isConnected: initialIsConnected,
+  isConnected: initialIsConnected, // Prop from page.tsx
 }: UseGlobalDriveManagerProps) {
   const [globalMediaItems, setGlobalMediaItems] = useState<CloudFile[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
+  const [hasMore, setHasMore] = useState(true); // Overall "more to scan" flag
   const [statusMessage, setStatusMessage] = useState<string | null>("Global Drive: Idle. Open to start scanning.");
 
   const allDialogsCacheRef = useRef<CloudFolder[]>([]);
@@ -50,63 +50,46 @@ export function useGlobalDriveManager({
   const scanIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const processedDialogsCountRef = useRef(0);
 
-
+  // Effect to sync the `isConnected` prop to internal state
   useEffect(() => {
-    const oldIsConnected = isConnectedInternal;
     setIsConnectedInternal(initialIsConnected);
+  }, [initialIsConnected]);
 
-    if (!initialIsConnected && oldIsConnected) { // Transitioning from connected to disconnected
-      if (isFullScanActive) {
-        setIsFullScanActive(false); // Stop the scan
-        if (scanIntervalRef.current) {
-          clearInterval(scanIntervalRef.current);
-          scanIntervalRef.current = null;
-        }
-        setStatusMessage("Global Drive scan paused: Disconnected.");
-        setIsLoading(false); // Ensure loading state is reset
-      } else if (globalMediaItems.length === 0 && !isLoading) {
-        // If idle, empty, and not loading, then show disconnected status
-        setStatusMessage("Global Drive: Disconnected. Connect and open to scan.");
-      }
-    }
-  }, [initialIsConnected, isFullScanActive, globalMediaItems.length, isLoading, isConnectedInternal]);
-
-
+  // Exposed setIsConnected for page.tsx to call (though prop sync is primary)
   const setIsConnected = useCallback((connected: boolean) => {
-    // This function is now primarily for page.tsx to update the prop,
-    // the useEffect above handles internal state logic.
-    // setIsConnectedInternal(connected); // Handled by useEffect watching initialIsConnected
+    setIsConnectedInternal(connected);
   }, []);
 
 
   const resetManager = useCallback(() => {
     setGlobalMediaItems([]);
-    // setIsLoading(false); // isLoading is managed by processNextBatch
     setHasMore(true);
-    setStatusMessage("Initializing Global Drive..."); // Will be quickly overridden if scan starts
+    // setStatusMessage("Initializing Global Drive..."); // fetchInitialGlobalMedia will set "Starting..."
     allDialogsCacheRef.current = [];
     dialogsProcessQueueRef.current = [];
     setCurrentDialogsOffsetDate(0);
     setCurrentDialogsOffsetId(0);
     setCurrentDialogsOffsetPeer({ _: 'inputPeerEmpty' });
     setHasMoreDialogsToFetch(true);
-    setIsFullScanActive(false);
+    if (isFullScanActive) setIsFullScanActive(false); // Stop active scan if reset is called
     if (scanIntervalRef.current) {
       clearInterval(scanIntervalRef.current);
       scanIntervalRef.current = null;
     }
     processedDialogsCountRef.current = 0;
-  }, []);
+    if (isLoading) setIsLoading(false); // Ensure loading is reset
+  }, [isFullScanActive, isLoading]);
 
   const fetchAndQueueDialogs = useCallback(async () => {
-    if (!isConnectedInternal || !hasMoreDialogsToFetch) {
-      if (!hasMoreDialogsToFetch && allDialogsCacheRef.current.length > 0) {
+    if (!isConnectedInternal) {
+      setStatusMessage("Cannot fetch dialogs: Disconnected.");
+      return false;
+    }
+    if (!hasMoreDialogsToFetch) {
+      if (allDialogsCacheRef.current.length > 0) {
         setStatusMessage(`All ${allDialogsCacheRef.current.length} dialogs fetched. Continuing media scan...`);
-      } else if (!hasMoreDialogsToFetch && allDialogsCacheRef.current.length === 0){
+      } else {
         setStatusMessage("No dialogs found to scan.");
-      }
-      else if (!isConnectedInternal) {
-        setStatusMessage("Cannot fetch dialogs: Disconnected.");
       }
       return false;
     }
@@ -147,7 +130,7 @@ export function useGlobalDriveManager({
       return true;
     } catch (error) {
       handleGlobalApiError(error, "Error Fetching Dialogs for Global Drive", "Could not load dialog list.");
-      setHasMoreDialogsToFetch(false);
+      setHasMoreDialogsToFetch(false); // Stop trying to fetch dialogs on error
       setStatusMessage("Error fetching dialogs. Scan may be incomplete.");
       return false;
     }
@@ -156,19 +139,21 @@ export function useGlobalDriveManager({
 
   const processNextBatch = useCallback(async () => {
     if (!isFullScanActive || !isConnectedInternal) {
-        if (isLoading) setIsLoading(false); // Ensure isLoading is false if scan is not active
+        if (isLoading) setIsLoading(false); 
         return;
     }
-    if (isLoading) return; // Prevent re-entrancy
+    if (isLoading) return; 
 
     setIsLoading(true);
 
     try {
         if (dialogsProcessQueueRef.current.length > 0) {
-          const processInfo = dialogsProcessQueueRef.current.shift(); // Take from the front
+          const processInfo = dialogsProcessQueueRef.current.shift(); 
           if (processInfo && processInfo.dialog.inputPeer && processInfo.hasMoreMedia && (processInfo.attemptCount || 0) < MAX_DIALOG_PROCESS_ATTEMPTS) {
             const currentDialogName = processInfo.dialog.name;
-            setStatusMessage(`Scanning media in: ${currentDialogName}... (Dialogs Queued: ${dialogsProcessQueueRef.current.length}/${allDialogsCacheRef.current.length}, More Dialogs From Server: ${hasMoreDialogsToFetch})`);
+            const dialogsInQueueCount = dialogsProcessQueueRef.current.length;
+            const totalDialogsFetched = allDialogsCacheRef.current.length;
+            setStatusMessage(`Scanning media in: ${currentDialogName}... (Dialogs Queued: ${dialogsInQueueCount}/${totalDialogsFetched}, More Server Dialogs: ${hasMoreDialogsToFetch})`);
             
             try {
               const mediaLimitForThisDialog = processInfo.mediaOffsetId === 0
@@ -178,7 +163,7 @@ export function useGlobalDriveManager({
                 processInfo.dialog.inputPeer,
                 mediaLimitForThisDialog,
                 processInfo.mediaOffsetId,
-                false // isCloudChannelFetch is false for default global drive
+                false 
               );
 
               if (mediaResponse.files.length > 0) {
@@ -193,25 +178,25 @@ export function useGlobalDriveManager({
               processInfo.hasMoreMedia = mediaResponse.hasMore;
 
               if (mediaResponse.hasMore) {
-                processInfo.attemptCount = 0;
-                dialogsProcessQueueRef.current.push(processInfo); // Re-queue if more media
+                processInfo.attemptCount = 0; // Reset attempt count on successful fetch
+                dialogsProcessQueueRef.current.push(processInfo); 
               } else {
                 processInfo.isFullyScanned = true;
                 processedDialogsCountRef.current += 1;
               }
             } catch (error: any) {
               handleGlobalApiError(error, `Error Fetching Media for ${processInfo.dialog.name}`, `Skipping ${processInfo.dialog.name} after error: ${error.message}`);
-              processInfo.hasMoreMedia = false;
-              processInfo.isFullyScanned = true; // Mark as scanned on error for this dialog
+              processInfo.hasMoreMedia = false; 
+              processInfo.isFullyScanned = true; 
               processInfo.attemptCount = (processInfo.attemptCount || 0) + 1;
               if (processInfo.attemptCount < MAX_DIALOG_PROCESS_ATTEMPTS && !error.message?.includes('AUTH_RESTART')) {
-                 dialogsProcessQueueRef.current.unshift(processInfo); // Re-queue for another attempt if not auth error (retry at start)
+                 dialogsProcessQueueRef.current.unshift(processInfo); 
               } else {
-                processedDialogsCountRef.current += 1; // Count as processed after max attempts or auth error
+                processedDialogsCountRef.current += 1; 
               }
             }
           } else if (processInfo && processInfo.attemptCount && processInfo.attemptCount >= MAX_DIALOG_PROCESS_ATTEMPTS) {
-            processInfo.isFullyScanned = true;
+            processInfo.isFullyScanned = true; // Mark as fully scanned after max attempts
             processedDialogsCountRef.current += 1;
           } else if (processInfo && !processInfo.hasMoreMedia && !processInfo.isFullyScanned) {
             processInfo.isFullyScanned = true;
@@ -220,7 +205,7 @@ export function useGlobalDriveManager({
         }
 
         if (dialogsProcessQueueRef.current.length === 0 && hasMoreDialogsToFetch) {
-          await fetchAndQueueDialogs();
+          await fetchAndQueueDialogs(); // Fetch more dialogs if queue is empty but more exist
         }
 
         const stillMoreDialogsToFetchOverall = hasMoreDialogsToFetch;
@@ -229,65 +214,69 @@ export function useGlobalDriveManager({
         setHasMore(newOverallHasMoreState);
 
         if (!newOverallHasMoreState) {
-          setIsFullScanActive(false);
-          setStatusMessage(globalMediaItems.length > 0
+          setIsFullScanActive(false); // Stop scan if truly no more work
+          const finalStatus = globalMediaItems.length > 0
             ? `Global Drive scan complete. ${processedDialogsCountRef.current} dialogs processed. Found ${globalMediaItems.length} items.`
-            : `Global Drive scan complete. ${processedDialogsCountRef.current} dialogs processed. No media items found.`
-          );
-        } else if (isFullScanActive) {
+            : `Global Drive scan complete. ${processedDialogsCountRef.current} dialogs processed. No media items found.`;
+          setStatusMessage(finalStatus);
+        } else if (isFullScanActive) { // Update status if scan is still ongoing
           const activeDialogsInQueue = dialogsProcessQueueRef.current.filter(info => info.hasMoreMedia && !info.isFullyScanned).length;
           const currentDialogName = dialogsProcessQueueRef.current[0]?.dialog.name || "next available";
-          setStatusMessage(`Scanning media in: ${currentDialogName}... (Dialogs Queued: ${activeDialogsInQueue}/${allDialogsCacheRef.current.length}, More Dialogs From Server: ${hasMoreDialogsToFetch})`);
+          setStatusMessage(`Scanning media in: ${currentDialogName}... (Dialogs Queued: ${activeDialogsInQueue}/${allDialogsCacheRef.current.length}, More Server Dialogs: ${hasMoreDialogsToFetch})`);
         }
-    } catch (e) {
-        // console.error("Error in processNextBatch main try block:", e);
-        setStatusMessage("An unexpected error occurred during scan.");
-        setIsFullScanActive(false); // Stop scan on unexpected error
+    } catch (e: any) {
+        setStatusMessage(`An unexpected error occurred during scan: ${e.message}`);
+        setIsFullScanActive(false); 
     } finally {
         setIsLoading(false);
     }
   }, [
       isFullScanActive, isLoading, isConnectedInternal,
       fetchAndQueueDialogs, handleGlobalApiError,
-      hasMoreDialogsToFetch, globalMediaItems.length // Added globalMediaItems.length for status message
+      hasMoreDialogsToFetch, globalMediaItems.length 
   ]);
 
+  // Effect to manage the scan interval and connection state changes
   useEffect(() => {
     if (isFullScanActive && isConnectedInternal) {
-      if (!isLoading) { // Immediately process if not already loading
+      if (!isLoading) { // Start processing immediately if not already
         processNextBatch();
       }
       if (scanIntervalRef.current) clearInterval(scanIntervalRef.current);
       scanIntervalRef.current = setInterval(async () => {
-        if (!isLoading) { // Only process if not already loading
+        if (!isLoading) { 
             await processNextBatch();
         }
-      }, 1000); // Interval for processing batches
-    } else {
+      }, 1000); 
+    } else { 
       if (scanIntervalRef.current) {
         clearInterval(scanIntervalRef.current);
         scanIntervalRef.current = null;
       }
-      if (!isFullScanActive && isLoading) { // If scan is stopped but still loading, reset loading
-          setIsLoading(false);
+
+      if (isFullScanActive && !isConnectedInternal) {
+        setStatusMessage("Global Drive scan paused: Disconnected.");
+        setIsFullScanActive(false); 
+        if (isLoading) setIsLoading(false); 
+      } else if (!isFullScanActive && !isConnectedInternal && globalMediaItems.length === 0 && !isLoading) {
+        setStatusMessage("Global Drive: Disconnected. Connect and open to scan.");
       }
     }
     return () => {
       if (scanIntervalRef.current) clearInterval(scanIntervalRef.current);
     };
-  }, [isFullScanActive, isConnectedInternal, processNextBatch, isLoading]);
+  }, [isFullScanActive, isConnectedInternal, processNextBatch, isLoading, globalMediaItems.length]);
 
 
-  const fetchInitialGlobalMedia = useCallback(async () => {
+  const fetchInitialGlobalMedia = useCallback(() => { 
     if (!isConnectedInternal) {
-      setStatusMessage("Not connected. Cannot start Global Drive scan.");
-      // setIsLoading(false); // isLoading is managed by processNextBatch
-      setIsFullScanActive(false);
+      setStatusMessage("Cannot start Global Drive scan: Not connected.");
+      // setIsFullScanActive(false); // This would be redundant if already false.
       return;
     }
     setStatusMessage("Starting Global Drive scan...");
-    resetManager(); // This sets its own initializing message, then...
-    setIsFullScanActive(true); // This will trigger the useEffect to start the interval and processNextBatch
+    resetManager(); 
+    setIsFullScanActive(true); 
   }, [isConnectedInternal, resetManager]);
 
 
@@ -302,14 +291,12 @@ export function useGlobalDriveManager({
     }
     if (!isFullScanActive && hasMore) {
       setStatusMessage("Resuming Global Drive scan...");
-      setIsFullScanActive(true);
+      setIsFullScanActive(true); // This will trigger the useEffect to start/resume scan
       toast({ title: "Resuming Global Scan...", description: "Continuing to fetch all media."});
     } else if (!hasMore) {
       toast({ title: "All Loaded", description: "All accessible media has been loaded.", variant: "default"});
     } else if (isFullScanActive) {
       toast({ title: "Scan Active", description: "Global Drive scan is already running.", variant: "default"});
-      // Optionally, trigger an immediate batch process if desired, though interval should pick it up
-      // processNextBatch();
     }
   }, [isFullScanActive, hasMore, isConnectedInternal, isLoading, toast]);
 
@@ -321,7 +308,7 @@ export function useGlobalDriveManager({
     fetchInitialGlobalMedia,
     loadMoreGlobalMedia,
     resetManager,
-    setIsConnected, // This is mostly for page.tsx to update the prop
+    setIsConnected,
     setGlobalMediaItemsDirectly: setGlobalMediaItems,
     isFullScanActive,
   };
