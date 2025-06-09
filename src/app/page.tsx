@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
@@ -98,7 +99,7 @@ export default function Home() {
   const globalDriveManager = useGlobalDriveManager({
     toast,
     handleGlobalApiError,
-    isConnected: false, // Initialized by useEffect
+    isConnected: false, 
   });
   const {
     globalMediaItems: gdGlobalMediaItems,
@@ -108,7 +109,7 @@ export default function Home() {
     fetchInitialGlobalMedia: gdFetchInitialGlobalMedia,
     loadMoreGlobalMedia: gdLoadMoreGlobalMedia,
     resetManager: gdResetManager,
-    isFullScanActive: gdIsFullScanActive,
+    isScanBatchActive: gdIsScanBatchActive, // Renamed from gdIsFullScanActive
     setGlobalMediaItemsDirectly: gdSetGlobalMediaItemsDirectly,
     setIsConnected: gdmSetIsConnected,
   } = globalDriveManager;
@@ -117,7 +118,7 @@ export default function Home() {
   const globalDriveConfigManager = useGlobalDriveConfigManager({
     toast,
     handleGlobalApiError,
-    isConnected: false, // Initialized by useEffect
+    isConnected: false, 
   });
   const {
     customConfig: gdcCustomConfig,
@@ -132,7 +133,7 @@ export default function Home() {
 
 
   const dialogFiltersManager = useDialogFiltersManager({
-    isConnected: false, // Initialized by useEffect
+    isConnected: false, 
     toast,
     handleGlobalApiError,
     fetchAndCacheDialogsForListManager: (cacheKeyToFetch, isLoadingMore, folderIdForApiCall, customLimit) =>
@@ -166,9 +167,9 @@ export default function Home() {
 
 
   const chatListManager = useChatListManager({
-    isConnected: false, // Initialized by useEffect
-    activeFilterDetails: dfmActiveFilterDetails,
-    dialogFilters: dfmDialogFilters,
+    isConnected: false, 
+    activeFilterDetails: dfmActiveFilterDetails, // Pass the state from dialogFiltersManager
+    dialogFilters: dfmDialogFilters, // Pass the state from dialogFiltersManager
     toast,
     handleGlobalApiError,
     resetSelectedMedia: () => {
@@ -194,7 +195,7 @@ export default function Home() {
   } = chatListManager;
 
   const appCloudChannelsManager = useAppCloudChannelsManager({
-    isConnected: false, // Initialized by useEffect
+    isConnected: false, 
     toast,
     handleGlobalApiError,
   });
@@ -306,9 +307,9 @@ export default function Home() {
     selectedFolder: isGlobalDriveActive ? null : smSelectedFolder,
     currentVirtualPath: smCurrentVirtualPath,
     refreshMediaCallback: () => {
-        if (isGlobalDriveActive && gdIsFullScanActive) {
+        if (isGlobalDriveActive && gdIsScanBatchActive) { // Changed from gdIsFullScanActive
           // Refresh for global drive if scan is active could be complex, might need targeted update
-        } else if (isGlobalDriveActive && !gdIsFullScanActive) {
+        } else if (isGlobalDriveActive && !gdIsScanBatchActive) { // Changed from gdIsFullScanActive
            gdFetchInitialGlobalMedia();
         } else if (smSelectedFolder) {
           smFetchInitialChatMediaForSelected(smSelectedFolder);
@@ -400,21 +401,21 @@ export default function Home() {
 
   useEffect(() => {
     if (isGlobalDriveActive && connManagerIsConnected) {
-      if (!gdIsFullScanActive) { // Start scan if Global Drive becomes active and not already scanning
+      if (!gdIsScanBatchActive) { 
         gdFetchInitialGlobalMedia();
       }
       if (organizationMode === 'custom' && !gdcCustomConfig && !gdcIsLoadingConfig && !gdcConfigError) {
         gdcLoadOrCreateConfig();
       }
-    } else if (!isGlobalDriveActive) { // Global Drive deactivated
-      if (gdIsFullScanActive) { // Stop scan if it was active
-        gdResetManager(); // This will also set isFullScanActive to false
+    } else if (!isGlobalDriveActive) { 
+      if (gdIsScanBatchActive) { 
+        gdResetManager(); 
       }
-      gdcResetConfigState(); // Reset custom config related state
+      gdcResetConfigState(); 
     }
   }, [
       isGlobalDriveActive, connManagerIsConnected, organizationMode,
-      gdIsFullScanActive, gdFetchInitialGlobalMedia, gdResetManager,
+      gdIsScanBatchActive, gdFetchInitialGlobalMedia, gdResetManager, // Changed from gdIsFullScanActive
       gdcCustomConfig, gdcIsLoadingConfig, gdcConfigError, gdcLoadOrCreateConfig, gdcResetConfigState
   ]);
 
@@ -481,10 +482,9 @@ export default function Home() {
         return;
     }
     smResetSelectedMedia();
-    setOrganizationMode('default'); // Default to 'default' when opening
-    gdcResetConfigState(); // Reset custom config state
-    setIsGlobalDriveActive(true);
-    // gdFetchInitialGlobalMedia() will now be called by the useEffect watching isGlobalDriveActive
+    setOrganizationMode('default'); 
+    gdcResetConfigState(); 
+    setIsGlobalDriveActive(true); // This will trigger the useEffect to call gdFetchInitialGlobalMedia
   }, [connManagerIsConnected, toast, smResetSelectedMedia, gdcResetConfigState ]);
 
   const handleSetOrganizationMode = useCallback((mode: OrganizationMode) => {
@@ -574,7 +574,7 @@ export default function Home() {
                 files={gdGlobalMediaItems}
                 isLoading={gdIsLoading && gdGlobalMediaItems.length === 0 && !gdcIsLoadingConfig}
                 isLoadingMoreMedia={(gdIsLoading && gdGlobalMediaItems.length > 0) || gdcIsLoadingConfig}
-                hasMore={gdHasMore || (organizationMode === 'default' && gdIsFullScanActive)}
+                hasMore={gdHasMore || (organizationMode === 'default' && gdIsScanBatchActive)} // Changed from gdIsFullScanActive
                 onFileDetailsClick={foHandleOpenFileDetails}
                 onQueueDownloadClick={dmHandleQueueDownloadFile}
                 onFileViewImageClick={mpvHandleViewImage}
@@ -602,7 +602,7 @@ export default function Home() {
                 customGlobalDriveConfig={gdcCustomConfig}
                 isLoadingCustomGlobalDriveConfig={gdcIsLoadingConfig}
                 customGlobalDriveConfigError={gdcConfigError}
-                isGlobalScanActive={gdIsFullScanActive}
+                isScanBatchActive={gdIsScanBatchActive} // Changed from isGlobalScanActive
               />
             ) : smSelectedFolder ? (
               <MainContentView
@@ -799,3 +799,4 @@ export default function Home() {
     </div>
   );
 }
+

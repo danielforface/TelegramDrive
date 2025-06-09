@@ -1,3 +1,4 @@
+
 "use client";
 
 import * as React from "react";
@@ -7,7 +8,7 @@ import { ContentFolderItem } from "./content-folder-item";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Search, FolderOpen, Loader2, CalendarDays, XCircle as ClearIcon, UploadCloud, Cloud, FolderPlus, ArrowUpCircle, ChevronRight, FolderUp, ArrowLeftCircle, ClipboardPaste, Settings2, Globe, Info as InfoIcon, ListTree, Columns, AlertTriangle, Copy as CopyIcon, PlayCircle } from "lucide-react"; // Added PlayCircle
+import { Search, FolderOpen, Loader2, CalendarDays, XCircle as ClearIcon, UploadCloud, Cloud, FolderPlus, ArrowUpCircle, ChevronRight, FolderUp, ArrowLeftCircle, ClipboardPaste, Settings2, Globe, Info as InfoIcon, ListTree, Columns, AlertTriangle, Copy as CopyIcon, PlayCircle } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
@@ -53,7 +54,7 @@ interface MainContentViewProps {
   customGlobalDriveConfig?: GlobalDriveConfigV1 | null;
   isLoadingCustomGlobalDriveConfig?: boolean;
   customGlobalDriveConfigError?: string | null;
-  isGlobalScanActive?: boolean; 
+  isScanBatchActive?: boolean; // Changed from isGlobalScanActive to match hook
 }
 
 const TABS_CONFIG = [
@@ -104,7 +105,7 @@ export function MainContentView({
   customGlobalDriveConfig,
   isLoadingCustomGlobalDriveConfig,
   customGlobalDriveConfigError,
-  isGlobalScanActive, 
+  isScanBatchActive, // Changed from isGlobalScanActive
 }: MainContentViewProps) {
   const [activeTab, setActiveTab] = useState("all");
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
@@ -128,7 +129,7 @@ export function MainContentView({
     if (isGlobalView && organizationMode === 'custom') {
       setCurrentCustomGlobalPath("/");
     } else if (!isGlobalView || organizationMode === 'default') {
-      setCurrentCustomGlobalPath("/"); // Reset for default global too
+      setCurrentCustomGlobalPath("/"); 
     }
   }, [folderName, isGlobalView, isCloudChannel, organizationMode]);
 
@@ -262,8 +263,6 @@ export function MainContentView({
     Object.entries(currentEntries).forEach(([name, entry]) => {
         if (entry.type === 'folder') {
             const subFolderCount = Object.values(entry.entries || {}).filter(e => e.type === 'folder').length;
-            // For custom global drive, itemCount currently only reflects subfolders.
-            // File references are not yet counted here for simplicity.
             displayedCustomFolders.push({ type: 'folder', name, entry, itemCount: subFolderCount });
         }
     });
@@ -329,7 +328,7 @@ export function MainContentView({
 
   const noResultsForFilter = (isGlobalView || !isCloudChannel) && organizationMode === 'default' && (activeTab !== "all" || selectedDate || searchTerm) && mediaFilesToDisplay.length === 0 && !isLoading && !isLoadingMoreMedia;
   const noMediaAtAll = !isGlobalView && !isCloudChannel && organizationMode === 'default' && activeTab === "all" && !selectedDate && !searchTerm && mediaFilesToDisplay.length === 0 && !isLoading && !isLoadingMoreMedia && !hasMore;
-  const noGlobalMediaDefaultOrg = isGlobalView && organizationMode === 'default' && mediaFilesToDisplay.length === 0 && !isLoading && !isLoadingMoreMedia && !hasMore && !(globalStatusMessage || "").toLowerCase().includes("loading") && !(globalStatusMessage || "").toLowerCase().includes("initializing") && !(globalStatusMessage || "").toLowerCase().includes("fetching");
+  const noGlobalMediaDefaultOrg = isGlobalView && organizationMode === 'default' && mediaFilesToDisplay.length === 0 && !isLoading && !isLoadingMoreMedia && !hasMore && !(globalStatusMessage || "").toLowerCase().includes("loading") && !(globalStatusMessage || "").toLowerCase().includes("initializing") && !(globalStatusMessage || "").toLowerCase().includes("fetching") && !isScanBatchActive;
 
 
   let lastDisplayedDay: Date | null = null;
@@ -435,7 +434,7 @@ export function MainContentView({
                 <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center py-10 h-full">
                   <FolderOpen className="w-16 h-16 mb-4 opacity-50" />
                   <p className="text-lg">
-                      {isGlobalView && organizationMode === 'default' && globalStatusMessage && !(globalStatusMessage || "").toLowerCase().includes("complete") && !(globalStatusMessage || "").toLowerCase().includes("idle") && !(globalStatusMessage || "").toLowerCase().includes("paused") ? "Global Drive is initializing or loading content." :
+                      {isGlobalView && organizationMode === 'default' && globalStatusMessage && !(globalStatusMessage || "").toLowerCase().includes("complete") && !(globalStatusMessage || "").toLowerCase().includes("idle") && !(globalStatusMessage || "").toLowerCase().includes("paused") && !(globalStatusMessage || "").toLowerCase().includes("batch complete") ? "Global Drive is initializing or loading content." :
                        (noResultsForFilter ? "No media items found for the current filter." :
                        (noGlobalMediaDefaultOrg ? "Global Drive is empty or content is still loading." :
                        (isCloudChannel ? "This folder is empty." :
@@ -539,15 +538,9 @@ export function MainContentView({
                 <p className="ml-3 text-muted-foreground">Loading more content...</p>
               </div>
             )}
-             {isGlobalView && organizationMode === 'default' && !isGlobalScanActive && hasMore && onLoadMoreMedia && (
-              <div className="col-span-full flex justify-center py-4 mt-4">
-                  <Button onClick={onLoadMoreMedia} disabled={isLoading || isLoadingMoreMedia} variant="outline">
-                      {(isLoading || isLoadingMoreMedia) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                      Resume Scan
-                  </Button>
-              </div>
-            )}
-            {(!isGlobalView || (isGlobalView && organizationMode === 'default' && !isGlobalScanActive) ) && !isLoading && !isLoadingMoreMedia && hasMore && displayItems.length > 0 && onLoadMoreMedia && (
+            {/* Conditional "Load More" button for non-Global Drive views or Custom Global Drive */}
+            {((!isGlobalView || (isGlobalView && organizationMode === 'custom')) &&
+              !isLoading && !isLoadingMoreMedia && hasMore && displayItems.length > 0 && onLoadMoreMedia) && (
               <div className="col-span-full flex justify-center py-4 mt-4">
                 <Button onClick={onLoadMoreMedia} disabled={isLoadingMoreMedia || isLoading} variant="outline">
                   {(isLoadingMoreMedia || isLoading) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -593,9 +586,9 @@ export function MainContentView({
             )}
             {isGlobalView && organizationMode === 'default' && globalStatusMessage && (
               <div className="text-xs text-muted-foreground flex items-center bg-secondary px-3 py-1.5 rounded-full">
-                {(isLoading || isLoadingCustomGlobalDriveConfig || isGlobalScanActive) ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <InfoIcon className="h-4 w-4 mr-2 text-primary/70" />}
+                {(isLoading || isLoadingCustomGlobalDriveConfig || isScanBatchActive) ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <InfoIcon className="h-4 w-4 mr-2 text-primary/70" />}
                 <span>{globalStatusMessage}</span>
-                {!isGlobalScanActive && hasMore && onLoadMoreMedia && (
+                {!isScanBatchActive && hasMore && onLoadMoreMedia && (
                     <Button onClick={onLoadMoreMedia} variant="ghost" size="sm" className="ml-2 h-auto p-0 text-xs hover:bg-primary/10">
                        <PlayCircle className="mr-1 h-3 w-3"/> Resume Scan
                     </Button>
@@ -685,7 +678,7 @@ export function MainContentView({
           <div className="flex-grow flex flex-col items-center justify-center text-muted-foreground text-center h-full">
               <Loader2 className="animate-spin h-12 w-12 text-primary mb-4" />
               <p className="text-lg">
-                {isGlobalView && organizationMode === 'default' && globalStatusMessage ? globalStatusMessage :
+                {isGlobalView && organizationMode === 'default' && globalStatusMessage && !(globalStatusMessage || "").toLowerCase().includes("batch complete") ? globalStatusMessage :
                  (isGlobalView && organizationMode === 'custom' && isLoadingCustomGlobalDriveConfig ? "Loading custom configuration..." :
                  (isCloudChannel ? "Loading cloud storage contents..." : "Loading media..."))}
               </p>
@@ -704,3 +697,4 @@ export function MainContentView({
     </div>
   );
 }
+
