@@ -15,9 +15,9 @@ export const IDENTIFICATION_MESSAGE_SUFFIX = "... This message ensures the confi
 
 const CLOUDIFIER_MANAGED_FOLDER_ID = 20001;
 const CLOUDIFIER_MANAGED_FOLDER_NAME = "Cloudifier Storage";
-const GLOBAL_DRIVE_CONFIG_FILENAME = "telegram_cloudifier_global_drive_config_v1.json";
-const GLOBAL_DRIVE_CONFIG_CAPTION_KEY = "app_feature";
-const GLOBAL_DRIVE_CONFIG_CAPTION_VALUE = "telegram_cloudifier_global_drive_config_v1";
+export const GLOBAL_DRIVE_CONFIG_FILENAME = "telegram_cloudifier_global_drive_config_v1.json";
+export const GLOBAL_DRIVE_CONFIG_CAPTION_KEY = "app_feature";
+export const GLOBAL_DRIVE_CONFIG_CAPTION_VALUE = "telegram_cloudifier_global_drive_config_v1";
 
 function generateRandomLong(): string {
   const buffer = new Uint8Array(8);
@@ -854,6 +854,8 @@ export async function getContacts(): Promise<any[]> {
   }
 }
     
+
+// Removed the redundant export block below, as constants are already exported with `export const`
 // Constants for Global Drive Config File
-export { GLOBAL_DRIVE_CONFIG_FILENAME, GLOBAL_DRIVE_CONFIG_CAPTION_KEY, GLOBAL_DRIVE_CONFIG_CAPTION_VALUE };
+// export { GLOBAL_DRIVE_CONFIG_FILENAME, GLOBAL_DRIVE_CONFIG_CAPTION_KEY, GLOBAL_DRIVE_CONFIG_CAPTION_VALUE };
 

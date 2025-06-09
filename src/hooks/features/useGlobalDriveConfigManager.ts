@@ -4,7 +4,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import type { GlobalDriveConfigV1, InputPeer, GlobalDriveFolderEntry } from '@/types';
 import * as telegramService from '@/services/telegramService';
-import { GLOBAL_DRIVE_CONFIG_FILENAME } from '@/services/telegramService'; // Import the constant
+import { GLOBAL_DRIVE_CONFIG_FILENAME } from '@/services/telegramCloud'; // Import the constant directly
 import type { useToast } from "@/hooks/use-toast";
 import { normalizePath } from '@/lib/vfsUtils';
 
