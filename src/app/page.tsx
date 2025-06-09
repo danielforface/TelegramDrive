@@ -79,16 +79,38 @@ export default function Home() {
     toast,
     handleGlobalApiError,
   });
+  const {
+      authStep: amAuthStep,
+      handleSendCode: amHandleSendCode,
+      setAuthPhoneCode: amSetAuthPhoneCode,
+      handleSignIn: amHandleSignIn,
+      setAuthPassword: amSetAuthPassword,
+      handleCheckPassword: amHandleCheckPassword,
+      authError: amAuthError,
+      authInputPhoneNumber: amAuthInputPhoneNumber,
+      setAuthInputPhoneNumber: amSetAuthInputPhoneNumber,
+      authPhoneCode: amAuthPhoneCode,
+      authPassword: amAuthPassword,
+      resetAuthVisuals: amResetAuthVisuals,
+      setAuthStep: amSetAuthStep,
+  } = authManager;
+
 
   const globalDriveManager = useGlobalDriveManager({
     toast,
     handleGlobalApiError,
-    isConnected: false,
+    isConnected: false, // Initialized by useEffect
   });
   const {
+    globalMediaItems: gdGlobalMediaItems,
+    isLoading: gdIsLoading,
+    hasMore: gdHasMore,
+    statusMessage: gdStatusMessage,
     fetchInitialGlobalMedia: gdFetchInitialGlobalMedia,
+    loadMoreGlobalMedia: gdLoadMoreGlobalMedia,
     resetManager: gdResetManager,
     isFullScanActive: gdIsFullScanActive,
+    setGlobalMediaItemsDirectly: gdSetGlobalMediaItemsDirectly,
     setIsConnected: gdmSetIsConnected,
   } = globalDriveManager;
 
@@ -96,7 +118,7 @@ export default function Home() {
   const globalDriveConfigManager = useGlobalDriveConfigManager({
     toast,
     handleGlobalApiError,
-    isConnected: false,
+    isConnected: false, // Initialized by useEffect
   });
   const {
     customConfig: gdcCustomConfig,
@@ -110,12 +132,46 @@ export default function Home() {
   } = globalDriveConfigManager;
 
 
-  const chatListManager = useChatListManager({
-    isConnected: false,
-    activeFilterDetails: null, // Will be updated by effect
+  const dialogFiltersManager = useDialogFiltersManager({
+    isConnected: false, // Initialized by useEffect
     toast,
     handleGlobalApiError,
-    dialogFilters: [], // Will be updated by effect
+    fetchAndCacheDialogsForListManager: (cacheKeyToFetch, isLoadingMore, folderIdForApiCall, customLimit) =>
+      chatListManager.fetchAndCacheDialogsForList(cacheKeyToFetch, isLoadingMore, folderIdForApiCall, customLimit),
+    setLastFetchedFilterIdForChatListManager: (filterId) =>
+      chatListManager.setLastFetchedFilterIdForChatList(filterId),
+    setChatsDataCacheForFilter: (filterId, data) => chatListManager.setChatsDataCacheForFilter(filterId, data),
+    resetMasterChatListForFilteringInCache: () => chatListManager.resetMasterChatListForFilteringInCache(),
+    updateMasterChatListInCache: (folders, pagination) => chatListManager.updateMasterChatListInCache(folders, pagination),
+    getChatDataCacheEntry: (key) => chatListManager.getChatDataCacheEntry(key),
+  });
+  const {
+    dialogFilters: dfmDialogFilters,
+    activeDialogFilterId: dfmActiveDialogFilterId,
+    activeFilterDetails: dfmActiveFilterDetails,
+    isLoadingDialogFilters: dfmIsLoadingDialogFilters,
+    hasFetchedDialogFiltersOnce: dfmHasFetchedDialogFiltersOnce,
+    isReorderingFolders: dfmIsReorderingFolders,
+    fetchDialogFilters: dfmFetchDialogFilters,
+    handleSelectDialogFilter: dfmHandleSelectDialogFilter,
+    handleToggleReorderFolders: dfmHandleToggleReorderFolders,
+    handleMoveFilter: dfmHandleMoveFilter,
+    handleShareFilter: dfmHandleShareFilter,
+    handleRefreshCurrentFilterView: dfmHandleRefreshCurrentFilterView,
+    defaultAllChatsFilter: dfmDefaultAllChatsFilter,
+    resetDialogFiltersState: dfmResetDialogFiltersState,
+    setActiveDialogFilterId: dfmSetActiveDialogFilterId,
+    setActiveFilterDetails: dfmSetActiveFilterDetails,
+    setIsConnected: dfmSetIsConnected,
+  } = dialogFiltersManager;
+
+
+  const chatListManager = useChatListManager({
+    isConnected: false, // Initialized by useEffect
+    activeFilterDetails: dfmActiveFilterDetails,
+    dialogFilters: dfmDialogFilters,
+    toast,
+    handleGlobalApiError,
     resetSelectedMedia: () => {
       selectedMediaManager?.resetSelectedMedia();
       if (isGlobalDriveActive) {
@@ -128,41 +184,28 @@ export default function Home() {
     setClipboardItem: (item) => fileOperationsManager?.setClipboardItem(item),
   });
   const {
-    fetchAndCacheDialogsForList: clmFetchAndCacheDialogsForList,
-    setLastFetchedFilterIdForChatList: clmSetLastFetchedFilterIdForChatList,
-    setChatsDataCacheForFilter: clmSetChatsDataCacheForFilter,
-    resetMasterChatListForFilteringInCache: clmResetMasterChatListForFilteringInCache,
-    updateMasterChatListInCache: clmUpdateMasterChatListInCache,
-    getChatDataCacheEntry: clmGetChatDataCacheEntry,
+    displayedChats: clmDisplayedChats,
+    isLoadingDisplayedChats: clmIsLoadingDisplayedChats,
+    hasMoreDisplayedChats: clmHasMoreDisplayedChats,
+    currentErrorMessageForChatList: clmCurrentErrorMessageForChatList,
+    loadMoreDisplayedChatsInManager: clmLoadMoreDisplayedChatsInManager,
+    resetAllChatListData: clmResetAllChatListData,
+    cachedDataForActiveFilterIsLoading: clmCachedDataForActiveFilterIsLoading,
     setIsConnected: clmSetIsConnected,
   } = chatListManager;
 
-  const dialogFiltersManager = useDialogFiltersManager({
-    isConnected: false,
-    toast,
-    handleGlobalApiError,
-    fetchAndCacheDialogsForListManager: clmFetchAndCacheDialogsForList,
-    setLastFetchedFilterIdForChatListManager: clmSetLastFetchedFilterIdForChatList,
-    setChatsDataCacheForFilter: clmSetChatsDataCacheForFilter,
-    resetMasterChatListForFilteringInCache: clmResetMasterChatListForFilteringInCache,
-    updateMasterChatListInCache: clmUpdateMasterChatListInCache,
-    getChatDataCacheEntry: clmGetChatDataCacheEntry,
-    setIsConnected: undefined, //This hook is now passed functions from chatListManager directly
-  });
-  const {
-    dialogFilters: dfmDialogFilters,
-    activeFilterDetails: dfmActiveFilterDetails,
-    setActiveFilterDetails: dfmSetActiveFilterDetails,
-    setIsConnected: dfmSetIsConnected,
-  } = dialogFiltersManager;
-
-
   const appCloudChannelsManager = useAppCloudChannelsManager({
-    isConnected: false,
+    isConnected: false, // Initialized by useEffect
     toast,
     handleGlobalApiError,
   });
   const {
+    appManagedCloudFolders: accmAppManagedCloudFolders,
+    isLoadingAppManagedCloudFolders: accmIsLoadingAppManagedCloudFolders,
+    fetchAppManagedCloudChannelsList: accmFetchAppManagedCloudChannelsList,
+    handleNewCloudChannelVerifiedAndUpdateList: accmHandleNewCloudChannelVerifiedAndUpdateList,
+    addCreatedCloudChannelToList: accmAddCreatedCloudChannelToList,
+    resetAppManagedCloudFolders: accmResetAppManagedCloudFolders,
     setAppManagedCloudFolders: accmSetAppManagedCloudFolders,
     setIsConnected: accmSetIsConnected,
   } = appCloudChannelsManager;
@@ -171,42 +214,89 @@ export default function Home() {
   const selectedMediaManager = useSelectedMediaManager({
     toast,
     handleGlobalApiError,
-    displayedChatsFromChatList: chatListManager.displayedChats,
-    appManagedCloudFoldersFromManager: appCloudChannelsManager.appManagedCloudFolders,
+    displayedChatsFromChatList: clmDisplayedChats,
+    appManagedCloudFoldersFromManager: accmAppManagedCloudFolders,
     setClipboardItem: (item) => fileOperationsManager?.setClipboardItem(item),
   });
   const {
     selectedFolder: smSelectedFolder,
     setSelectedFolder: smSetSelectedFolder,
+    currentChatMedia: smCurrentChatMedia,
+    setCurrentChatMedia: smSetCurrentChatMedia,
+    isLoadingChatMedia: smIsLoadingChatMedia,
+    hasMoreChatMedia: smHasMoreChatMedia,
+    currentVirtualPath: smCurrentVirtualPath,
+    handleSelectFolderOrChannel: smHandleSelectFolderOrChannel,
     fetchInitialChatMediaForSelected: smFetchInitialChatMediaForSelected,
+    loadMoreChatMediaForSelected: smLoadMoreChatMediaForSelected,
+    handleNavigateVirtualPath: smHandleNavigateVirtualPath,
     resetSelectedMedia: smResetSelectedMedia,
+    updateSelectedFolderConfig: smUpdateSelectedFolderConfig,
   } = selectedMediaManager;
 
   const fileOperationsManager = useFileOperationsManager({
     toast,
     handleGlobalApiError,
     selectedFolder: isGlobalDriveActive ? null : smSelectedFolder,
-    currentVirtualPath: isGlobalDriveActive ? "/" : selectedMediaManager.currentVirtualPath,
-    currentChatMedia: isGlobalDriveActive ? globalDriveManager.globalMediaItems : selectedMediaManager.currentChatMedia,
-    setCurrentChatMedia: isGlobalDriveActive ? globalDriveManager.setGlobalMediaItemsDirectly : selectedMediaManager.setCurrentChatMedia,
-    updateSelectedFolderConfig: selectedMediaManager.updateSelectedFolderConfig,
+    currentVirtualPath: isGlobalDriveActive ? "/" : smCurrentVirtualPath,
+    currentChatMedia: isGlobalDriveActive ? gdGlobalMediaItems : smCurrentChatMedia,
+    setCurrentChatMedia: isGlobalDriveActive ? gdSetGlobalMediaItemsDirectly : smSetCurrentChatMedia,
+    updateSelectedFolderConfig: smUpdateSelectedFolderConfig,
     setAppManagedCloudFoldersState: accmSetAppManagedCloudFolders,
     fetchInitialChatMediaForSelectedManager: smFetchInitialChatMediaForSelected,
   });
   const {
+    selectedFileForDetails: foSelectedFileForDetails,
+    isDetailsPanelOpen: foIsDetailsPanelOpen,
     itemToDelete: foItemToDelete,
+    isDeleteItemDialogOpen: foIsDeleteItemDialogOpen,
+    isProcessingDeletion: foIsProcessingDeletion,
+    clipboardItem: foClipboardItem,
+    isProcessingVirtualFolder: foIsProcessingVirtualFolder,
+    handleOpenFileDetails: foHandleOpenFileDetails,
+    handleCloseFileDetails: foHandleCloseFileDetails,
+    handleRequestDeleteItem: foHandleRequestDeleteItem,
+    handleConfirmDeletion: foHandleConfirmDeletion,
+    handleCancelDeletion: foHandleCancelDeletion,
+    handleCopyFileOp: foHandleCopyFileOp,
+    handleCopyFolderStructureOp: foHandleCopyFolderStructureOp,
+    handlePasteItemOp: foHandlePasteItemOp,
+    resetFileOperations: foResetFileOperations,
+    setIsProcessingVirtualFolder: foSetIsProcessingVirtualFolder,
     setIsDeleteItemDialogOpen: foSetIsDeleteItemDialogOpen,
   } = fileOperationsManager;
 
 
   const mediaPreviewManager = useMediaPreviewManager({ toast });
   const {
+    isImageViewerOpen: mpvIsImageViewerOpen,
+    viewingImageUrl: mpvViewingImageUrl,
+    viewingImageName: mpvViewingImageName,
+    isVideoPlayerOpen: mpvIsVideoPlayerOpen,
+    playingVideoUrl: mpvPlayingVideoUrl,
+    playingVideoName: mpvPlayingVideoName,
+    isPreparingVideoStream: mpvIsPreparingVideoStream,
+    preparingVideoStreamForFileId: mpvPreparingVideoStreamForFileId,
     videoStreamAbortControllerRef: mpvAbortRef,
     videoStreamUrlInternal: mpvUrlInternal,
+    handleViewImage: mpvHandleViewImage,
+    handleCloseImageViewer: mpvHandleCloseImageViewer,
+    handlePlayVideo: mpvHandlePlayVideo,
+    handleCloseVideoPlayerAndStream: mpvHandleCloseVideoPlayerAndStream,
+    resetMediaPreview: mpvResetMediaPreview,
   } = mediaPreviewManager;
 
   const downloadManager = useDownloadManager({ toast });
   const {
+    isDownloadManagerOpen: dmIsDownloadManagerOpen,
+    downloadQueue: dmDownloadQueue,
+    handleQueueDownloadFile: dmHandleQueueDownloadFile,
+    handleCancelDownloadOp: dmHandleCancelDownloadOp,
+    handlePauseDownloadOp: dmHandlePauseDownloadOp,
+    handleResumeDownloadOp: dmHandleResumeDownloadOp,
+    handleOpenDownloadManagerSheet: dmHandleOpenDownloadManagerSheet,
+    handleCloseDownloadManagerSheet: dmHandleCloseDownloadManagerSheet,
+    resetDownloadManager: dmResetDownloadManager,
     downloadQueueRefForReset: dlQueueRef,
     activeDownloadsRefForReset: dlActiveRef,
     browserDownloadTriggeredRefForReset: dlBrowserRef,
@@ -215,25 +305,34 @@ export default function Home() {
   const uploadManager = useUploadManager({
     toast,
     selectedFolder: isGlobalDriveActive ? null : smSelectedFolder,
-    currentVirtualPath: selectedMediaManager.currentVirtualPath,
+    currentVirtualPath: smCurrentVirtualPath,
     refreshMediaCallback: () => {
-        if (isGlobalDriveActive && globalDriveManager.isFullScanActive) {
+        if (isGlobalDriveActive && gdIsFullScanActive) {
           // Refresh for global drive if scan is active could be complex, might need targeted update
-        } else if (isGlobalDriveActive && !globalDriveManager.isFullScanActive) {
-           globalDriveManager.fetchInitialGlobalMedia();
-        } else if (selectedMediaManager.selectedFolder) {
-          selectedMediaManager.fetchInitialChatMediaForSelected(selectedMediaManager.selectedFolder);
+        } else if (isGlobalDriveActive && !gdIsFullScanActive) {
+           gdFetchInitialGlobalMedia();
+        } else if (smSelectedFolder) {
+          smFetchInitialChatMediaForSelected(smSelectedFolder);
         }
     },
   });
-  const { uploadAbortControllersRefForReset: ulAbortRef } = uploadManager;
+  const {
+    isUploadDialogOpen: ulIsUploadDialogOpen,
+    filesToUpload: ulFilesToUpload,
+    isUploadingFiles: ulIsUploadingFiles,
+    handleOpenUploadFilesDialog: ulHandleOpenUploadFilesDialog,
+    handleCloseUploadFilesDialog: ulHandleCloseUploadFilesDialog,
+    handleFilesSelectedForUploadList: ulHandleFilesSelectedForUploadList,
+    handleStartFileUploads: ulHandleStartFileUploads,
+    resetUploadManager: ulResetUploadManager,
+    uploadAbortControllersRefForReset: ulAbortRef
+  } = uploadManager;
 
 
   const onChannelDetailsUpdatedForAdminHook = useCallback((updatedChannel: CloudFolder) => {
     accmSetAppManagedCloudFolders(prev =>
         prev.map(cf => cf.id === updatedChannel.id ? { ...cf, ...updatedChannel } : cf)
     );
-    // Use a local variable for stable dependency if selectedFolder object itself is unstable
     const currentSelectedFolderId = smSelectedFolder?.id;
     if (!isGlobalDriveActive && currentSelectedFolderId === updatedChannel.id) {
         smSetSelectedFolder(prev => prev ? { ...prev, ...updatedChannel } : null);
@@ -244,41 +343,44 @@ export default function Home() {
   const tempConnectionManager = useConnectionManager({
     toast,
     onInitialConnect: async () => {
-      await dialogFiltersManager.fetchDialogFilters(true);
-      await appCloudChannelsManager.fetchAppManagedCloudChannelsList(true);
+      await dfmFetchDialogFilters(true);
+      await accmFetchAppManagedCloudChannelsList(true);
     },
     onResetApp: () => {
-      authManager.resetAuthVisuals();
-      dialogFiltersManager.resetDialogFiltersState();
-      chatListManager.resetAllChatListData();
-      appCloudChannelsManager.resetAppManagedCloudFolders();
-      selectedMediaManager.resetSelectedMedia();
-      fileOperationsManager.resetFileOperations();
-      mediaPreviewManager.resetMediaPreview();
-      downloadManager.resetDownloadManager();
-      uploadManager.resetUploadManager();
+      amResetAuthVisuals();
+      dfmResetDialogFiltersState();
+      clmResetAllChatListData();
+      accmResetAppManagedCloudFolders();
+      smResetSelectedMedia();
+      foResetFileOperations();
+      mpvResetMediaPreview();
+      dmResetDownloadManager();
+      ulResetUploadManager();
       pageDialogs.resetAllDialogsVisibility();
       setIsGlobalDriveActive(false);
       gdResetManager();
       gdcResetConfigState();
       setOrganizationMode('default');
     },
-    setAuthStep: authManager.setAuthStep,
+    setAuthStep: amSetAuthStep,
     handleGlobalApiError,
     handleNewCloudChannelDiscoveredAppLevel: (folder, source) => {
-      const listChanged = appCloudChannelsManager?.handleNewCloudChannelVerifiedAndUpdateList(folder, source);
+      const listChanged = accmHandleNewCloudChannelVerifiedAndUpdateList(folder, source);
       if (listChanged && source === 'update') {
-        dialogFiltersManager.fetchDialogFilters(true);
+        dfmFetchDialogFilters(true);
       }
     },
-    setGlobalPhoneNumberForDisplay: authManager.setAuthInputPhoneNumber,
-    appPhoneNumber: authManager.authInputPhoneNumber,
+    setGlobalPhoneNumberForDisplay: amSetAuthInputPhoneNumber,
+    appPhoneNumber: amAuthInputPhoneNumber,
   });
   connectionManagerRef.current = tempConnectionManager;
   const connectionManager = tempConnectionManager;
   const {
     isConnected: connManagerIsConnected,
     handleReset: connManagerHandleReset,
+    isConnecting: connManagerIsConnecting,
+    appPhoneNumber: connManagerAppPhoneNumber,
+    checkExistingConnection: connManagerCheckExistingConnection
   } = connectionManager;
 
 
@@ -292,7 +394,7 @@ export default function Home() {
   }, [connManagerIsConnected, dfmSetIsConnected, clmSetIsConnected, accmSetIsConnected, gdmSetIsConnected, gdcmSetIsConnected]);
 
   useEffect(() => {
-    connectionManager.checkExistingConnection();
+    connManagerCheckExistingConnection();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -319,10 +421,10 @@ export default function Home() {
 
 
   useEffect(() => {
-    if (dialogFiltersManager.isLoadingDialogFilters) return;
+    if (dfmIsLoadingDialogFilters) return;
 
-    const currentActiveId = dialogFiltersManager.activeDialogFilterId;
-    const currentFilters = dfmDialogFilters; // Use destructured version
+    const currentActiveId = dfmActiveDialogFilterId;
+    const currentFilters = dfmDialogFilters;
     let newActiveFilterDetails: DialogFilter | null = null;
 
     if (currentFilters && currentFilters.length > 0) {
@@ -331,37 +433,26 @@ export default function Home() {
             newActiveFilterDetails = currentFilters.find(f => f.id === telegramService.ALL_CHATS_FILTER_ID) || currentFilters[0] || null;
         }
     } else {
-        newActiveFilterDetails = dialogFiltersManager.defaultAllChatsFilter;
+        newActiveFilterDetails = dfmDefaultAllChatsFilter;
     }
 
-    const currentFilterDetailsState = dfmActiveFilterDetails; // Use destructured version
+    const currentFilterDetailsState = dfmActiveFilterDetails;
     if (
       currentFilterDetailsState?.id !== newActiveFilterDetails?.id ||
       currentFilterDetailsState?.title !== newActiveFilterDetails?.title ||
       (!currentFilterDetailsState && newActiveFilterDetails) ||
       (currentFilterDetailsState && !newActiveFilterDetails)
     ) {
-      dfmSetActiveFilterDetails(newActiveFilterDetails); // Use destructured version
+      dfmSetActiveFilterDetails(newActiveFilterDetails);
     }
   }, [
-    dialogFiltersManager.activeDialogFilterId,
-    dfmDialogFilters, // Use destructured version
-    dialogFiltersManager.isLoadingDialogFilters,
-    dfmSetActiveFilterDetails, // Use destructured version
-    dialogFiltersManager.defaultAllChatsFilter,
-    dfmActiveFilterDetails, // Use destructured version
+    dfmActiveDialogFilterId,
+    dfmDialogFilters,
+    dfmIsLoadingDialogFilters,
+    dfmSetActiveFilterDetails,
+    dfmDefaultAllChatsFilter,
+    dfmActiveFilterDetails,
   ]);
-
-  useEffect(() => {
-    // Update chatListManager with activeFilterDetails from dialogFiltersManager
-    if (dfmActiveFilterDetails) {
-      chatListManager.activeFilterDetails = dfmActiveFilterDetails;
-    }
-    // Update chatListManager with dialogFilters from dialogFiltersManager
-    if (dfmDialogFilters) {
-      chatListManager.dialogFilters = dfmDialogFilters;
-    }
-  }, [dfmActiveFilterDetails, dfmDialogFilters, chatListManager]);
 
 
   const performFullReset = useCallback(async (performServerLogout = true) => {
@@ -394,11 +485,11 @@ export default function Home() {
     setOrganizationMode('default');
     gdcResetConfigState();
     setIsGlobalDriveActive(true);
-  }, [connManagerIsConnected, toast, smResetSelectedMedia, gdcResetConfigState /* setOrganizationMode, setIsGlobalDriveActive are stable */]);
+  }, [connManagerIsConnected, toast, smResetSelectedMedia, gdcResetConfigState ]);
 
   const handleSetOrganizationMode = useCallback((mode: OrganizationMode) => {
     setOrganizationMode(mode);
-  }, [/* setOrganizationMode is stable */]);
+  }, []);
 
   const handleCreateGlobalVirtualFolder = useCallback(async (folderName: string) => {
     if (organizationMode !== 'custom' || !gdcCustomConfig) {
@@ -420,7 +511,7 @@ export default function Home() {
   },[organizationMode, gdcCustomConfig, foItemToDelete, gdcRemoveVirtualFolderFromConfig, foSetIsDeleteItemDialogOpen, toast]);
 
 
-  if (connectionManager.isConnecting && !connectionManager.isConnected && !authManager.authError && authManager.authStep === 'initial' && !dialogFiltersManager.hasFetchedDialogFiltersOnce) {
+  if (connManagerIsConnecting && !connManagerIsConnected && !amAuthError && amAuthStep === 'initial' && !dfmHasFetchedDialogFiltersOnce) {
     return (
       <div className="min-h-screen flex flex-col">
         <Header ref={headerRef} isConnected={false} />
@@ -428,7 +519,7 @@ export default function Home() {
           <div>
             <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
             <p className="text-lg text-muted-foreground">
-              {connectionManager.isConnecting ? "Connecting to Telegram..." : "Initializing..."}
+              {connManagerIsConnecting ? "Connecting to Telegram..." : "Initializing..."}
             </p>
           </div>
         </main>
@@ -437,25 +528,25 @@ export default function Home() {
     );
   }
 
-  if (!connectionManager.isConnected && !connectionManager.isConnecting) {
+  if (!connManagerIsConnected && !connManagerIsConnecting) {
     return (
       <>
         <Header ref={headerRef} isConnected={false} />
         <main className="flex-grow container mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col items-center justify-center">
           <TelegramConnect
-            authStep={authManager.authStep}
-            onSendCode={authManager.handleSendCode}
-            onSignIn={(code) => { authManager.setAuthPhoneCode(code); authManager.handleSignIn(code); }}
-            onCheckPassword={(pw) => { authManager.setAuthPassword(pw); authManager.handleCheckPassword(pw); }}
-            isLoading={connectionManager.isConnecting}
-            error={authManager.authError}
-            phoneNumber={connectionManager.appPhoneNumber || authManager.authInputPhoneNumber}
-            setPhoneNumber={authManager.setAuthInputPhoneNumber}
-            phoneCode={authManager.authPhoneCode}
-            setPhoneCode={authManager.setAuthPhoneCode}
-            password={authManager.authPassword}
-            setPassword={authManager.setAuthPassword}
-            onReset={() => performFullReset(authManager.authStep !== 'initial')}
+            authStep={amAuthStep}
+            onSendCode={amHandleSendCode}
+            onSignIn={(code) => { amSetAuthPhoneCode(code); amHandleSignIn(code); }}
+            onCheckPassword={(pw) => { amSetAuthPassword(pw); amHandleCheckPassword(pw); }}
+            isLoading={connManagerIsConnecting}
+            error={amAuthError}
+            phoneNumber={connManagerAppPhoneNumber || amAuthInputPhoneNumber}
+            setPhoneNumber={amSetAuthInputPhoneNumber}
+            phoneCode={amAuthPhoneCode}
+            setPhoneCode={amSetAuthPhoneCode}
+            password={amAuthPassword}
+            setPassword={amSetAuthPassword}
+            onReset={() => performFullReset(amAuthStep !== 'initial')}
           />
         </main>
         <footer ref={footerRef} className="py-4 px-4 sm:px-6 lg:px-8 text-center border-t"><p className="text-sm text-muted-foreground">Telegram Cloudifier &copy; {new Date().getFullYear()}</p></footer>
@@ -467,9 +558,9 @@ export default function Home() {
     <div className="min-h-screen flex flex-col">
       <Header
         ref={headerRef}
-        isConnected={connectionManager.isConnected}
+        isConnected={connManagerIsConnected}
         onDisconnect={() => performFullReset(true)}
-        onOpenDownloadManager={downloadManager.handleOpenDownloadManagerSheet}
+        onOpenDownloadManager={dmHandleOpenDownloadManagerSheet}
         onOpenChatSelectionDialog={() => { setIsGlobalDriveActive(false); pageDialogs.handleOpenChatSelectionDialog(); }}
         onOpenCloudStorageSelector={() => { setIsGlobalDriveActive(false); pageDialogs.handleOpenCloudStorageSelector(); }}
         onOpenGlobalDrive={handleOpenGlobalDrive}
@@ -480,66 +571,66 @@ export default function Home() {
             {isGlobalDriveActive ? (
               <MainContentView
                 folderName="Global Drive"
-                files={globalDriveManager.globalMediaItems}
-                isLoading={globalDriveManager.isLoading && globalDriveManager.globalMediaItems.length === 0 && !gdcIsLoadingConfig}
-                isLoadingMoreMedia={(globalDriveManager.isLoading && globalDriveManager.globalMediaItems.length > 0) || gdcIsLoadingConfig}
-                hasMore={globalDriveManager.hasMore || (organizationMode === 'default' && globalDriveManager.isFullScanActive)}
-                onFileDetailsClick={fileOperationsManager.handleOpenFileDetails}
-                onQueueDownloadClick={downloadManager.handleQueueDownloadFile}
-                onFileViewImageClick={mediaPreviewManager.handleViewImage}
-                onFilePlayVideoClick={mediaPreviewManager.handlePlayVideo}
+                files={gdGlobalMediaItems}
+                isLoading={gdIsLoading && gdGlobalMediaItems.length === 0 && !gdcIsLoadingConfig}
+                isLoadingMoreMedia={(gdIsLoading && gdGlobalMediaItems.length > 0) || gdcIsLoadingConfig}
+                hasMore={gdHasMore || (organizationMode === 'default' && gdIsFullScanActive)}
+                onFileDetailsClick={foHandleOpenFileDetails}
+                onQueueDownloadClick={dmHandleQueueDownloadFile}
+                onFileViewImageClick={mpvHandleViewImage}
+                onFilePlayVideoClick={mpvHandlePlayVideo}
                 onOpenUploadDialog={() => toast({title: "Upload Not Available", description: "Uploads are not supported in Global Drive view."})}
-                isPreparingStream={mediaPreviewManager.isPreparingVideoStream}
-                preparingStreamForFileId={mediaPreviewManager.preparingVideoStreamForFileId}
-                onLoadMoreMedia={globalDriveManager.loadMoreGlobalMedia}
+                isPreparingStream={mpvIsPreparingVideoStream}
+                preparingStreamForFileId={mpvPreparingVideoStreamForFileId}
+                onLoadMoreMedia={gdLoadMoreGlobalMedia}
                 isCloudChannel={false}
                 currentVirtualPath={organizationMode === 'custom' ? pageDialogsVirtualFolderParentPath : "/"}
                 onNavigateVirtualPath={(path) => { if (organizationMode === 'custom') pageDialogsSetVirtualFolderParentPath(path); else {/* no-op for default global */} }}
                 onOpenCreateVirtualFolderDialog={(path) => pageDialogs.handleOpenCreateVirtualFolderDialog(path)}
-                onDeleteFile={(file) => fileOperationsManager.handleRequestDeleteItem('file', file, file.inputPeer)}
-                onDeleteVirtualFolder={(path, name) => fileOperationsManager.handleRequestDeleteItem('virtualFolder', {path, name}, undefined)}
+                onDeleteFile={(file) => foHandleRequestDeleteItem('file', file, file.inputPeer)}
+                onDeleteVirtualFolder={(path, name) => foHandleRequestDeleteItem('virtualFolder', {path, name}, undefined)}
                 selectedFolderInputPeer={null}
-                onCopyFile={fileOperationsManager.handleCopyFileOp}
+                onCopyFile={foHandleCopyFileOp}
                 onPasteItem={() => {}}
-                clipboardItem={fileOperationsManager.clipboardItem}
+                clipboardItem={foClipboardItem}
                 selectedFolderForView={null}
                 onOpenManageCloudChannelDialog={() => {}}
                 isGlobalView={true}
-                globalStatusMessage={gdcIsLoadingConfig ? "Loading custom configuration..." : (gdcConfigError ? `Config Error: ${gdcConfigError}` : globalDriveManager.statusMessage)}
+                globalStatusMessage={gdcIsLoadingConfig ? "Loading custom configuration..." : (gdcConfigError ? `Config Error: ${gdcConfigError}` : gdStatusMessage)}
                 organizationMode={organizationMode}
                 onSetOrganizationMode={handleSetOrganizationMode}
                 customGlobalDriveConfig={gdcCustomConfig}
                 isLoadingCustomGlobalDriveConfig={gdcIsLoadingConfig}
                 customGlobalDriveConfigError={gdcConfigError}
               />
-            ) : selectedMediaManager.selectedFolder ? (
+            ) : smSelectedFolder ? (
               <MainContentView
-                folderName={selectedMediaManager.selectedFolder.name}
-                files={selectedMediaManager.currentChatMedia}
-                isLoading={selectedMediaManager.isLoadingChatMedia && selectedMediaManager.currentChatMedia.length === 0}
-                isLoadingMoreMedia={selectedMediaManager.isLoadingChatMedia && selectedMediaManager.currentChatMedia.length > 0}
-                hasMore={selectedMediaManager.hasMoreChatMedia}
-                onFileDetailsClick={fileOperationsManager.handleOpenFileDetails}
-                onQueueDownloadClick={downloadManager.handleQueueDownloadFile}
-                onFileViewImageClick={mediaPreviewManager.handleViewImage}
-                onFilePlayVideoClick={mediaPreviewManager.handlePlayVideo}
-                onOpenUploadDialog={uploadManager.handleOpenUploadFilesDialog}
-                isPreparingStream={mediaPreviewManager.isPreparingVideoStream}
-                preparingStreamForFileId={mediaPreviewManager.preparingVideoStreamForFileId}
-                onLoadMoreMedia={selectedMediaManager.loadMoreChatMediaForSelected}
-                isCloudChannel={selectedMediaManager.selectedFolder.isAppManagedCloud || false}
-                cloudConfig={selectedMediaManager.selectedFolder.cloudConfig}
-                currentVirtualPath={selectedMediaManager.currentVirtualPath}
-                onNavigateVirtualPath={selectedMediaManager.handleNavigateVirtualPath}
+                folderName={smSelectedFolder.name}
+                files={smCurrentChatMedia}
+                isLoading={smIsLoadingChatMedia && smCurrentChatMedia.length === 0}
+                isLoadingMoreMedia={smIsLoadingChatMedia && smCurrentChatMedia.length > 0}
+                hasMore={smHasMoreChatMedia}
+                onFileDetailsClick={foHandleOpenFileDetails}
+                onQueueDownloadClick={dmHandleQueueDownloadFile}
+                onFileViewImageClick={mpvHandleViewImage}
+                onFilePlayVideoClick={mpvHandlePlayVideo}
+                onOpenUploadDialog={ulHandleOpenUploadFilesDialog}
+                isPreparingStream={mpvIsPreparingVideoStream}
+                preparingStreamForFileId={mpvPreparingVideoStreamForFileId}
+                onLoadMoreMedia={smLoadMoreChatMediaForSelected}
+                isCloudChannel={smSelectedFolder.isAppManagedCloud || false}
+                cloudConfig={smSelectedFolder.cloudConfig}
+                currentVirtualPath={smCurrentVirtualPath}
+                onNavigateVirtualPath={smHandleNavigateVirtualPath}
                 onOpenCreateVirtualFolderDialog={pageDialogs.handleOpenCreateVirtualFolderDialog}
-                onDeleteFile={(file) => fileOperationsManager.handleRequestDeleteItem('file', file)}
-                onDeleteVirtualFolder={(path, name, peer) => fileOperationsManager.handleRequestDeleteItem('virtualFolder', { path, name }, peer)}
-                selectedFolderInputPeer={selectedMediaManager.selectedFolder.inputPeer}
-                onCopyFile={fileOperationsManager.handleCopyFileOp}
-                onCopyFolderStructure={fileOperationsManager.handleCopyFolderStructureOp}
-                onPasteItem={(targetPath) => fileOperationsManager.handlePasteItemOp(targetPath, pageDialogs.handleOpenCreateVirtualFolderDialog)}
-                clipboardItem={fileOperationsManager.clipboardItem}
-                selectedFolderForView={selectedMediaManager.selectedFolder}
+                onDeleteFile={(file) => foHandleRequestDeleteItem('file', file)}
+                onDeleteVirtualFolder={(path, name, peer) => foHandleRequestDeleteItem('virtualFolder', { path, name }, peer)}
+                selectedFolderInputPeer={smSelectedFolder.inputPeer}
+                onCopyFile={foHandleCopyFileOp}
+                onCopyFolderStructure={foHandleCopyFolderStructureOp}
+                onPasteItem={(targetPath) => foHandlePasteItemOp(targetPath, pageDialogs.handleOpenCreateVirtualFolderDialog)}
+                clipboardItem={foClipboardItem}
+                selectedFolderForView={smSelectedFolder}
                 onOpenManageCloudChannelDialog={pageDialogs.handleOpenManageCloudChannelDialog}
                 isGlobalView={false}
                 organizationMode="default"
@@ -555,14 +646,14 @@ export default function Home() {
                   <Button onClick={() => { setIsGlobalDriveActive(false); pageDialogs.handleOpenChatSelectionDialog();}}><MessageSquare className="mr-2 h-5 w-5" /> Select Chat Folder</Button>
                   <Button onClick={() => { setIsGlobalDriveActive(false); pageDialogs.handleOpenCloudStorageSelector();}} variant="outline"><Cloud className="mr-2 h-5 w-5" /> Select Cloud Storage</Button>
                 </div>
-                {chatListManager.isLoadingDisplayedChats && chatListManager.displayedChats.length === 0 && dialogFiltersManager.activeFilterDetails && (
-                  <div className="mt-4 flex items-center"><Loader2 className="animate-spin h-5 w-5 text-primary mr-2" /><span>Loading initial chat list for "{dialogFiltersManager.activeFilterDetails?.title || 'current folder'}"...</span></div>
+                {clmIsLoadingDisplayedChats && clmDisplayedChats.length === 0 && dfmActiveFilterDetails && (
+                  <div className="mt-4 flex items-center"><Loader2 className="animate-spin h-5 w-5 text-primary mr-2" /><span>Loading initial chat list for "{dfmActiveFilterDetails?.title || 'current folder'}"...</span></div>
                 )}
-                {!chatListManager.isLoadingDisplayedChats && chatListManager.displayedChats.length === 0 && !chatListManager.currentErrorMessageForChatList && connectionManager.isConnected && dialogFiltersManager.activeFilterDetails && !chatListManager.cachedDataForActiveFilterIsLoading(dialogFiltersManager.activeFilterDetails) && (
-                  <div className="mt-4 flex items-center text-sm"><MessageSquare className="mr-2 h-5 w-5 text-muted-foreground" /><span>Chat list for "{dialogFiltersManager.activeFilterDetails.title}" appears to be empty.</span></div>
+                {!clmIsLoadingDisplayedChats && clmDisplayedChats.length === 0 && !clmCurrentErrorMessageForChatList && connManagerIsConnected && dfmActiveFilterDetails && !clmCachedDataForActiveFilterIsLoading(dfmActiveFilterDetails) && (
+                  <div className="mt-4 flex items-center text-sm"><MessageSquare className="mr-2 h-5 w-5 text-muted-foreground" /><span>Chat list for "{dfmActiveFilterDetails.title}" appears to be empty.</span></div>
                 )}
-                {chatListManager.currentErrorMessageForChatList && (
-                  <div className="mt-4 p-3 bg-destructive/10 text-destructive rounded-md text-sm"><p>{chatListManager.currentErrorMessageForChatList}</p></div>
+                {clmCurrentErrorMessageForChatList && (
+                  <div className="mt-4 p-3 bg-destructive/10 text-destructive rounded-md text-sm"><p>{clmCurrentErrorMessageForChatList}</p></div>
                 )}
               </div>
             )}
@@ -575,37 +666,37 @@ export default function Home() {
         isOpen={pageDialogs.isChatSelectionDialogOpen && !isGlobalDriveActive}
         onOpenChange={pageDialogsSetIsChatSelectionDialogOpen}
         viewMode="default"
-        dialogFilters={dialogFiltersManager.dialogFilters}
-        activeDialogFilterId={dialogFiltersManager.activeDialogFilterId}
-        onSelectDialogFilter={dialogFiltersManager.handleSelectDialogFilter}
-        isLoadingDialogFilters={dialogFiltersManager.isLoadingDialogFilters}
-        isReorderingFolders={dialogFiltersManager.isReorderingFolders}
-        onToggleReorderFolders={dialogFiltersManager.handleToggleReorderFolders}
-        onMoveFilter={dialogFiltersManager.handleMoveFilter}
-        onShareFilter={dialogFiltersManager.handleShareFilter}
-        folders={chatListManager.displayedChats}
-        isLoading={chatListManager.isLoadingDisplayedChats && chatListManager.displayedChats.length === 0}
-        isLoadingMore={chatListManager.isLoadingDisplayedChats && chatListManager.displayedChats.length > 0}
-        hasMore={chatListManager.hasMoreDisplayedChats}
-        selectedFolderId={selectedMediaManager.selectedFolder?.id || null}
-        onSelectFolder={(id) => { setIsGlobalDriveActive(false); selectedMediaManager.handleSelectFolderOrChannel(id, 'chat'); pageDialogsSetIsChatSelectionDialogOpen(false);}}
-        onLoadMore={chatListManager.loadMoreDisplayedChatsInManager}
-        onRefresh={dialogFiltersManager.handleRefreshCurrentFilterView}
-        currentErrorMessage={chatListManager.currentErrorMessageForChatList}
+        dialogFilters={dfmDialogFilters}
+        activeDialogFilterId={dfmActiveDialogFilterId}
+        onSelectDialogFilter={dfmHandleSelectDialogFilter}
+        isLoadingDialogFilters={dfmIsLoadingDialogFilters}
+        isReorderingFolders={dfmIsReorderingFolders}
+        onToggleReorderFolders={dfmHandleToggleReorderFolders}
+        onMoveFilter={dfmHandleMoveFilter}
+        onShareFilter={dfmHandleShareFilter}
+        folders={clmDisplayedChats}
+        isLoading={clmIsLoadingDisplayedChats && clmDisplayedChats.length === 0}
+        isLoadingMore={clmIsLoadingDisplayedChats && clmDisplayedChats.length > 0}
+        hasMore={clmHasMoreDisplayedChats}
+        selectedFolderId={smSelectedFolder?.id || null}
+        onSelectFolder={(id) => { setIsGlobalDriveActive(false); smHandleSelectFolderOrChannel(id, 'chat'); pageDialogsSetIsChatSelectionDialogOpen(false);}}
+        onLoadMore={clmLoadMoreDisplayedChatsInManager}
+        onRefresh={dfmHandleRefreshCurrentFilterView}
+        currentErrorMessage={clmCurrentErrorMessageForChatList}
       />
 
       <ChatSelectionDialog
         isOpen={pageDialogs.isCloudStorageSelectorOpen && !isGlobalDriveActive}
         onOpenChange={pageDialogs.setIsCloudStorageSelectorOpen}
         viewMode="cloudStorage"
-        folders={appCloudChannelsManager.appManagedCloudFolders}
-        isLoading={appCloudChannelsManager.isLoadingAppManagedCloudFolders && appCloudChannelsManager.appManagedCloudFolders.length === 0}
+        folders={accmAppManagedCloudFolders}
+        isLoading={accmIsLoadingAppManagedCloudFolders && accmAppManagedCloudFolders.length === 0}
         isLoadingMore={false}
         hasMore={false}
-        selectedFolderId={selectedMediaManager.selectedFolder?.isAppManagedCloud ? selectedMediaManager.selectedFolder.id : null}
-        onSelectFolder={(id) => {setIsGlobalDriveActive(false); selectedMediaManager.handleSelectFolderOrChannel(id, 'cloud'); pageDialogs.setIsCloudStorageSelectorOpen(false);}}
+        selectedFolderId={smSelectedFolder?.isAppManagedCloud ? smSelectedFolder.id : null}
+        onSelectFolder={(id) => {setIsGlobalDriveActive(false); smHandleSelectFolderOrChannel(id, 'cloud'); pageDialogs.setIsCloudStorageSelectorOpen(false);}}
         onLoadMore={() => {}}
-        onRefresh={appCloudChannelsManager.fetchAppManagedCloudChannelsList.bind(null, true)}
+        onRefresh={() => accmFetchAppManagedCloudChannelsList(true)}
         onOpenCreateCloudChannelDialog={pageDialogs.handleOpenCreateCloudChannelDialog}
       />
 
@@ -618,11 +709,11 @@ export default function Home() {
                 toast({ title: "Cloud Storage Created!", description: `Channel "${result.channelInfo.title}" created.` });
                 pageDialogs.setIsCreateCloudChannelDialogOpen(false);
                 const newCF: CloudFolder = {id: `channel-${result.channelInfo.id}`, name: result.channelInfo.title, isChatFolder:false, inputPeer: { _: 'inputPeerChannel', channel_id: result.channelInfo.id, access_hash: result.channelInfo.access_hash }, files:[], folders:[], isAppManagedCloud: true, cloudConfig: result.initialConfig };
-                appCloudChannelsManager.addCreatedCloudChannelToList(newCF);
-                dialogFiltersManager.fetchDialogFilters(true);
+                accmAddCreatedCloudChannelToList(newCF);
+                dfmFetchDialogFilters(true);
             } else { throw new Error("Channel creation did not return expected info."); }
         }}
-        isLoading={fileOperationsManager.isProcessingVirtualFolder}
+        isLoading={foIsProcessingVirtualFolder}
       />
 
       <CreateVirtualFolderDialog
@@ -631,69 +722,69 @@ export default function Home() {
         onCreate={async (folderName: string) => {
             if (isGlobalDriveActive && organizationMode === 'custom') {
                 await handleCreateGlobalVirtualFolder(folderName);
-            } else if (!isGlobalDriveActive && selectedMediaManager.selectedFolder?.inputPeer) {
-                fileOperationsManager.setIsProcessingVirtualFolder(true);
+            } else if (!isGlobalDriveActive && smSelectedFolder?.inputPeer) {
+                foSetIsProcessingVirtualFolder(true);
                 try {
-                    const updatedConfig = await telegramService.addVirtualFolderToCloudChannel(selectedMediaManager.selectedFolder.inputPeer, pageDialogsVirtualFolderParentPath, folderName);
+                    const updatedConfig = await telegramService.addVirtualFolderToCloudChannel(smSelectedFolder.inputPeer, pageDialogsVirtualFolderParentPath, folderName);
                     if (updatedConfig) {
-                        selectedMediaManager.updateSelectedFolderConfig(updatedConfig);
-                        accmSetAppManagedCloudFolders(prev => prev.map(cf => cf.id === selectedMediaManager.selectedFolder?.id ? {...cf, cloudConfig: updatedConfig} : cf));
+                        smUpdateSelectedFolderConfig(updatedConfig);
+                        accmSetAppManagedCloudFolders(prev => prev.map(cf => cf.id === smSelectedFolder?.id ? {...cf, cloudConfig: updatedConfig} : cf));
                         toast({ title: "Virtual Folder Created", description: `Folder "${folderName}" created.`});
                         pageDialogsSetIsCreateVirtualFolderDialogOpen(false);
                     } else { toast({ title: "Creation Failed", variant: "destructive" }); }
                 } catch (e:any) { handleGlobalApiError(e, "Error Creating Folder", e.message); }
-                finally { fileOperationsManager.setIsProcessingVirtualFolder(false); }
+                finally { foSetIsProcessingVirtualFolder(false); }
             } else {
                 toast({ title: "Error", description: "Operation not valid in this context.", variant: "destructive" });
             }
         }}
-        isLoading={fileOperationsManager.isProcessingVirtualFolder || (isGlobalDriveActive && organizationMode === 'custom' && gdcIsLoadingConfig)}
+        isLoading={foIsProcessingVirtualFolder || (isGlobalDriveActive && organizationMode === 'custom' && gdcIsLoadingConfig)}
         parentPath={pageDialogsVirtualFolderParentPath}
       />
 
       <DeleteItemConfirmationDialog
-        isOpen={fileOperationsManager.isDeleteItemDialogOpen}
-        onClose={() => fileOperationsManager.handleCancelDeletion()}
-        onConfirm={isGlobalDriveActive && organizationMode === 'custom' ? handleDeleteGlobalVirtualFolder : fileOperationsManager.handleConfirmDeletion}
-        isLoading={fileOperationsManager.isProcessingDeletion || (isGlobalDriveActive && organizationMode === 'custom' && gdcIsLoadingConfig)}
+        isOpen={foIsDeleteItemDialogOpen}
+        onClose={() => foHandleCancelDeletion()}
+        onConfirm={isGlobalDriveActive && organizationMode === 'custom' ? handleDeleteGlobalVirtualFolder : foHandleConfirmDeletion}
+        isLoading={foIsProcessingDeletion || (isGlobalDriveActive && organizationMode === 'custom' && gdcIsLoadingConfig)}
         itemName={foItemToDelete?.type === 'file' ? foItemToDelete.file.name : foItemToDelete?.name || "item"}
         itemType={foItemToDelete?.type || "item"}
       />
 
       <FileDetailsPanel
-        file={fileOperationsManager.selectedFileForDetails}
-        isOpen={fileOperationsManager.isDetailsPanelOpen}
-        onClose={fileOperationsManager.handleCloseFileDetails}
-        onQueueDownload={downloadManager.handleQueueDownloadFile}
+        file={foSelectedFileForDetails}
+        isOpen={foIsDetailsPanelOpen}
+        onClose={foHandleCloseFileDetails}
+        onQueueDownload={dmHandleQueueDownloadFile}
       />
       <ImageViewer
-        isOpen={mediaPreviewManager.isImageViewerOpen}
-        onClose={mediaPreviewManager.handleCloseImageViewer}
-        imageUrl={mediaPreviewManager.viewingImageUrl}
-        imageName={mediaPreviewManager.viewingImageName}
+        isOpen={mpvIsImageViewerOpen}
+        onClose={mpvHandleCloseImageViewer}
+        imageUrl={mpvViewingImageUrl}
+        imageName={mpvViewingImageName}
       />
       <VideoPlayer
-        isOpen={mediaPreviewManager.isVideoPlayerOpen}
-        onClose={mediaPreviewManager.handleCloseVideoPlayerAndStream}
-        videoUrl={mediaPreviewManager.playingVideoUrl}
-        videoName={mediaPreviewManager.playingVideoName}
-        isLoading={mediaPreviewManager.isPreparingVideoStream && mediaPreviewManager.playingVideoUrl === null}
+        isOpen={mpvIsVideoPlayerOpen}
+        onClose={mpvHandleCloseVideoPlayerAndStream}
+        videoUrl={mpvPlayingVideoUrl}
+        videoName={mpvPlayingVideoName}
+        isLoading={mpvIsPreparingVideoStream && mpvPlayingVideoUrl === null}
       />
       <DownloadManagerDialog
-        isOpen={downloadManager.isDownloadManagerOpen}
-        onClose={downloadManager.handleCloseDownloadManagerSheet}
-        queue={downloadManager.downloadQueue}
-        onCancel={downloadManager.handleCancelDownloadOp}
-        onPause={downloadManager.handlePauseDownloadOp}
-        onResume={downloadManager.handleResumeDownloadOp}
+        isOpen={dmIsDownloadManagerOpen}
+        onClose={dmHandleCloseDownloadManagerSheet}
+        queue={dmDownloadQueue}
+        onCancel={dmHandleCancelDownloadOp}
+        onPause={dmHandlePauseDownloadOp}
+        onResume={dmHandleResumeDownloadOp}
       />
       <UploadDialog
-        isOpen={uploadManager.isUploadDialogOpen && !isGlobalDriveActive}
-        onClose={uploadManager.handleCloseUploadFilesDialog}
-        onFilesSelected={uploadManager.handleFilesSelectedForUploadList}
-        onUpload={uploadManager.handleStartFileUploads}
-        selectedFiles={uploadManager.filesToUpload}
-        isLoading={uploadManager.isUploadingFiles}
+        isOpen={ulIsUploadDialogOpen && !isGlobalDriveActive}
+        onClose={ulHandleCloseUploadFilesDialog}
+        onFilesSelected={ulHandleFilesSelectedForUploadList}
+        onUpload={ulHandleStartFileUploads}
+        selectedFiles={ulFilesToUpload}
+        isLoading={ulIsUploadingFiles}
       />
       {pageDialogs.managingCloudChannelContext && !isGlobalDriveActive && (
         <ManageCloudChannelDialog
