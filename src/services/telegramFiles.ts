@@ -11,6 +11,8 @@ export const TEN_MB = 10 * 1024 * 1024;
 export const UPLOAD_PART_SIZE = 512 * 1024; // 512KB
 const IDENTIFICATION_MESSAGE_ID = 2; // Also used in telegramCloud.ts
 const CONFIG_MESSAGE_ID = 3; // Also used in telegramCloud.ts
+const KB_1_FOR_DOWNLOAD = 1024;
+
 
 function generateRandomLong(): string {
   const buffer = new Uint8Array(8);
@@ -232,7 +234,7 @@ export async function downloadFileChunk(
     console.error("[downloadFileChunk] Called with no location.");
     return { errorType: 'OTHER' as const };
   }
-  console.log(`[downloadFileChunk] Attempting download. Location: ${location._}, Offset: ${offset}, Limit: ${limit}`);
+  // console.log(`[downloadFileChunk] Attempting download. Location: ${location._}, Offset: ${offset}, Limit: ${limit}`);
 
   try {
     const result = await telegramApiInstance.call('upload.getFile', {
@@ -243,15 +245,15 @@ export async function downloadFileChunk(
       cdn_supported: true // Indicate CDN support
     }, { signal });
 
-    console.log("[downloadFileChunk] API Response:", result);
+    // console.log("[downloadFileChunk] API Response:", result);
 
     if (!result || typeof result !== 'object' || (Object.keys(result).length === 0 && result.constructor === Object)) {
-        console.warn("[downloadFileChunk] Unexpected empty or invalid response from upload.getFile:", result);
+        // console.warn("[downloadFileChunk] Unexpected empty or invalid response from upload.getFile:", result);
         return { errorType: 'OTHER' as const };
     }
 
     if (result._ === 'upload.fileCdnRedirect') {
-      console.log("[downloadFileChunk] CDN Redirect received:", result);
+      // console.log("[downloadFileChunk] CDN Redirect received:", result);
       const cdnRedirectData: CdnRedirectDataType = {
           dc_id: result.dc_id,
           file_token: result.file_token,
@@ -270,20 +272,20 @@ export async function downloadFileChunk(
     }
 
     if (result._ === 'upload.file' && result.bytes) {
-      console.log(`[downloadFileChunk] Success. Bytes received: ${result.bytes.length}`);
+      // console.log(`[downloadFileChunk] Success. Bytes received: ${result.bytes.length}`);
       return { bytes: result.bytes, type: result.type?._ || 'storage.fileUnknown' };
     }
-    console.warn("[downloadFileChunk] Unexpected response type from upload.getFile:", result._);
+    // console.warn("[downloadFileChunk] Unexpected response type from upload.getFile:", result._);
     return { errorType: 'OTHER' as const };
   } catch (error: any) {
-    console.error("[downloadFileChunk] Error during API call:", error);
+    // console.error("[downloadFileChunk] Error during API call:", error);
     if (error.name === 'AbortError' || (error.message && error.message.toLowerCase().includes('aborted'))) {
-      console.log("[downloadFileChunk] Download chunk aborted by signal.");
+      // console.log("[downloadFileChunk] Download chunk aborted by signal.");
       return { errorType: 'OTHER' as const }; // Or a specific 'ABORTED' type
     }
     const errorMessage = error.message || error.originalErrorObject?.error_message;
     if (errorMessage?.includes('FILE_REFERENCE_EXPIRED') || errorMessage?.includes('FILE_ID_INVALID') || errorMessage?.includes('LOCATION_INVALID')) {
-      console.warn("[downloadFileChunk] File reference expired or invalid for download chunk.");
+      // console.warn("[downloadFileChunk] File reference expired or invalid for download chunk.");
       return { errorType: 'FILE_REFERENCE_EXPIRED' as const };
     }
     return { errorType: 'OTHER' as const };
@@ -544,7 +546,7 @@ export async function editMessageCaption(
 export async function downloadDocumentContent(document: any, onProgress?: (progress: number) => void): Promise<string | null> {
   console.log("[downloadDocumentContent] Received document object:", JSON.stringify(document, null, 2));
   if (!document || !document.id || !document.access_hash || !document.file_reference || !document.size) {
-    console.error("[downloadDocumentContent] Invalid document object for download. Missing one or more required fields (id, access_hash, file_reference, size).");
+    console.error("[downloadDocumentContent] Invalid document object for download. Missing one or more required fields (id, access_hash, file_reference, size). Document:", document);
     return null;
   }
 
@@ -553,7 +555,7 @@ export async function downloadDocumentContent(document: any, onProgress?: (progr
     id: document.id,
     access_hash: document.access_hash,
     file_reference: document.file_reference,
-    thumb_size: '',
+    thumb_size: '', // Not used for documents in this way
   };
   console.log("[downloadDocumentContent] Constructed location:", JSON.stringify(location));
 
@@ -562,28 +564,68 @@ export async function downloadDocumentContent(document: any, onProgress?: (progr
   const chunks: Uint8Array[] = [];
   let downloadedBytes = 0;
   let currentOffset = 0;
-  const DOWNLOAD_CHUNK_SIZE_INTERNAL = 512 * 1024; // 512KB for internal downloads
+  const MAX_CHUNK_SIZE_INTERNAL = 512 * KB_1_FOR_DOWNLOAD; // 512KB for internal downloads
 
   try {
     let loopCount = 0;
     while (downloadedBytes < totalSize) {
       loopCount++;
-      console.log(`[downloadDocumentContent] Loop ${loopCount}: downloadedBytes = ${downloadedBytes}, currentOffset = ${currentOffset}`);
-      const limit = Math.min(DOWNLOAD_CHUNK_SIZE_INTERNAL, totalSize - downloadedBytes);
-      console.log(`[downloadDocumentContent] Requesting chunk. Offset: ${currentOffset}, Limit: ${limit}`);
+      // console.log(`[downloadDocumentContent] Loop ${loopCount}: downloadedBytes = ${downloadedBytes}, currentOffset = ${currentOffset}`);
 
-      const response = await downloadFileChunk(location, currentOffset, limit); // No signal here, assumes internal non-cancellable
-      console.log("[downloadDocumentContent] downloadFileChunk response:", response);
+      const remainingBytes = totalSize - downloadedBytes;
+      let currentLimit = Math.min(remainingBytes, MAX_CHUNK_SIZE_INTERNAL);
 
-      if (response.bytes) {
-        chunks.push(response.bytes);
-        downloadedBytes += response.bytes.length;
-        currentOffset += response.bytes.length;
-        console.log(`[downloadDocumentContent] Chunk downloaded. Size: ${response.bytes.length}. Total downloaded: ${downloadedBytes}`);
-        if (onProgress) {
-          onProgress(Math.round((downloadedBytes / totalSize) * 100));
+      // Align limit to KB_1_FOR_DOWNLOAD if it's not the last chunk or if it's >= KB_1_FOR_DOWNLOAD
+      if (currentLimit >= KB_1_FOR_DOWNLOAD) {
+        currentLimit = Math.floor(currentLimit / KB_1_FOR_DOWNLOAD) * KB_1_FOR_DOWNLOAD;
+      }
+      // If after alignment, currentLimit is 0 (meaning remainingBytes < KB_1_FOR_DOWNLOAD initially)
+      // or if remainingBytes itself was < KB_1_FOR_DOWNLOAD, set currentLimit to remainingBytes.
+      if (currentLimit === 0 && remainingBytes > 0) {
+        currentLimit = remainingBytes;
+      }
+      
+      // If currentLimit is still 0 (e.g., remainingBytes was 0 from the start, or an error in logic), break.
+      if (currentLimit <= 0) {
+        if (remainingBytes > 0) {
+          console.warn(`[downloadDocumentContent] Calculated limit is ${currentLimit} but ${remainingBytes} bytes still needed. Breaking loop to prevent issues.`);
         }
-      } else if (response.errorType === 'FILE_REFERENCE_EXPIRED') {
+        break;
+      }
+      
+      // Ensure offset is a multiple of KB_1_FOR_DOWNLOAD.
+      // This should hold if previous chunks were KB_1_FOR_DOWNLOAD aligned and currentOffset is sum of their lengths.
+      if (currentOffset % KB_1_FOR_DOWNLOAD !== 0 && currentOffset !== 0 /* allow offset 0 */) {
+        // This case should ideally not be hit if logic is correct.
+        // Adjusting offset here could be risky if the API expects strict continuity.
+        // console.warn(`[downloadDocumentContent] Offset ${currentOffset} is not KB_1_FOR_DOWNLOAD aligned. This might cause issues.`);
+      }
+
+
+      // console.log(`[downloadDocumentContent] Requesting chunk. Offset: ${currentOffset}, Limit: ${currentLimit}`);
+
+      const response = await telegramApiInstance.call('upload.getFile', {
+          location: location,
+          offset: currentOffset,
+          limit: currentLimit,
+          precise: true,
+          cdn_supported: true
+      });
+      // console.log("[downloadDocumentContent] upload.getFile response:", response);
+
+      if (response && response._ === 'upload.file' && response.bytes) {
+        chunks.push(response.bytes);
+        const chunkSize = response.bytes.length;
+        downloadedBytes += chunkSize;
+        currentOffset += chunkSize;
+        // console.log(`[downloadDocumentContent] Chunk downloaded. Size: ${chunkSize}. Total downloaded: ${downloadedBytes}`);
+        if (onProgress) {
+            onProgress(Math.round((downloadedBytes / totalSize) * 100));
+        }
+      } else if (response && response._ === 'upload.fileCdnRedirect') {
+        console.error("[downloadDocumentContent] Received CDN redirect for config file. This simple downloader does not handle CDN redirects. The file might be unexpectedly large or the server preferred CDN.");
+        throw new Error("CDN redirect received for config file; not supported by this specific download path.");
+      } else if (response && response.errorType === 'FILE_REFERENCE_EXPIRED') {
         console.error("[downloadDocumentContent] File reference expired during document download.");
         throw new Error("File reference expired during document download.");
       } else {
@@ -600,5 +642,3 @@ export async function downloadDocumentContent(document: any, onProgress?: (progr
     return null;
   }
 }
-
-    
