@@ -55,7 +55,7 @@ export async function getChatMediaHistory(
       messagesArray.forEach((msg: any) => {
         // Skip special messages in cloud channels unless specifically needed elsewhere
         if (isCloudChannelFetch && (msg.id === IDENTIFICATION_MESSAGE_ID || msg.id === CONFIG_MESSAGE_ID)) {
-            return; 
+            return;
         }
 
         const shouldProcessForCloud = isCloudChannelFetch && (msg.media || msg.message); // Cloud channels can have text "files" (captions as metadata)
@@ -229,9 +229,10 @@ export async function downloadFileChunk(
     signal?: AbortSignal
 ): Promise<FileChunkResponse> {
   if (!location) {
-    // console.error("downloadFileChunk called with no location.");
+    console.error("[downloadFileChunk] Called with no location.");
     return { errorType: 'OTHER' as const };
   }
+  console.log(`[downloadFileChunk] Attempting download. Location: ${location._}, Offset: ${offset}, Limit: ${limit}`);
 
   try {
     const result = await telegramApiInstance.call('upload.getFile', {
@@ -242,13 +243,15 @@ export async function downloadFileChunk(
       cdn_supported: true // Indicate CDN support
     }, { signal });
 
+    console.log("[downloadFileChunk] API Response:", result);
+
     if (!result || typeof result !== 'object' || (Object.keys(result).length === 0 && result.constructor === Object)) {
-        // console.warn("Unexpected empty or invalid response from upload.getFile:", result);
+        console.warn("[downloadFileChunk] Unexpected empty or invalid response from upload.getFile:", result);
         return { errorType: 'OTHER' as const };
     }
 
     if (result._ === 'upload.fileCdnRedirect') {
-      // console.log("CDN Redirect received:", result);
+      console.log("[downloadFileChunk] CDN Redirect received:", result);
       const cdnRedirectData: CdnRedirectDataType = {
           dc_id: result.dc_id,
           file_token: result.file_token,
@@ -267,21 +270,22 @@ export async function downloadFileChunk(
     }
 
     if (result._ === 'upload.file' && result.bytes) {
+      console.log(`[downloadFileChunk] Success. Bytes received: ${result.bytes.length}`);
       return { bytes: result.bytes, type: result.type?._ || 'storage.fileUnknown' };
     }
-    // console.warn("Unexpected response type from upload.getFile:", result._);
+    console.warn("[downloadFileChunk] Unexpected response type from upload.getFile:", result._);
     return { errorType: 'OTHER' as const };
   } catch (error: any) {
+    console.error("[downloadFileChunk] Error during API call:", error);
     if (error.name === 'AbortError' || (error.message && error.message.toLowerCase().includes('aborted'))) {
-      // console.log("Download chunk aborted by signal.");
+      console.log("[downloadFileChunk] Download chunk aborted by signal.");
       return { errorType: 'OTHER' as const }; // Or a specific 'ABORTED' type
     }
     const errorMessage = error.message || error.originalErrorObject?.error_message;
     if (errorMessage?.includes('FILE_REFERENCE_EXPIRED') || errorMessage?.includes('FILE_ID_INVALID') || errorMessage?.includes('LOCATION_INVALID')) {
-      // console.warn("File reference expired or invalid for download chunk.");
+      console.warn("[downloadFileChunk] File reference expired or invalid for download chunk.");
       return { errorType: 'FILE_REFERENCE_EXPIRED' as const };
     }
-    // console.error("Error downloading file chunk:", error);
     return { errorType: 'OTHER' as const };
   }
 }
@@ -457,7 +461,7 @@ export async function uploadFile(
           throw new Error(`Failed to save file part ${i}. Server response: ${JSON.stringify(partUploadResult)}`);
       }
       // Update progress: 90% is for upload, 5% for preparing media, 5% for sending
-      const progressPercent = Math.round(((i + 1) / totalChunks) * 90); 
+      const progressPercent = Math.round(((i + 1) / totalChunks) * 90);
       onProgress(progressPercent);
     } catch (error: any) {
       // console.error(`Error uploading part ${i}:`, error);
@@ -538,8 +542,9 @@ export async function editMessageCaption(
 }
 
 export async function downloadDocumentContent(document: any, onProgress?: (progress: number) => void): Promise<string | null> {
+  console.log("[downloadDocumentContent] Received document object:", JSON.stringify(document, null, 2));
   if (!document || !document.id || !document.access_hash || !document.file_reference || !document.size) {
-    // console.error("Invalid document object for download.");
+    console.error("[downloadDocumentContent] Invalid document object for download. Missing one or more required fields (id, access_hash, file_reference, size).");
     return null;
   }
 
@@ -550,38 +555,50 @@ export async function downloadDocumentContent(document: any, onProgress?: (progr
     file_reference: document.file_reference,
     thumb_size: '',
   };
+  console.log("[downloadDocumentContent] Constructed location:", JSON.stringify(location));
+
   const totalSize = Number(document.size);
+  console.log(`[downloadDocumentContent] Total size: ${totalSize} bytes`);
   const chunks: Uint8Array[] = [];
   let downloadedBytes = 0;
   let currentOffset = 0;
   const DOWNLOAD_CHUNK_SIZE_INTERNAL = 512 * 1024; // 512KB for internal downloads
 
   try {
+    let loopCount = 0;
     while (downloadedBytes < totalSize) {
+      loopCount++;
+      console.log(`[downloadDocumentContent] Loop ${loopCount}: downloadedBytes = ${downloadedBytes}, currentOffset = ${currentOffset}`);
       const limit = Math.min(DOWNLOAD_CHUNK_SIZE_INTERNAL, totalSize - downloadedBytes);
+      console.log(`[downloadDocumentContent] Requesting chunk. Offset: ${currentOffset}, Limit: ${limit}`);
+
       const response = await downloadFileChunk(location, currentOffset, limit); // No signal here, assumes internal non-cancellable
-      
+      console.log("[downloadDocumentContent] downloadFileChunk response:", response);
+
       if (response.bytes) {
         chunks.push(response.bytes);
         downloadedBytes += response.bytes.length;
         currentOffset += response.bytes.length;
+        console.log(`[downloadDocumentContent] Chunk downloaded. Size: ${response.bytes.length}. Total downloaded: ${downloadedBytes}`);
         if (onProgress) {
           onProgress(Math.round((downloadedBytes / totalSize) * 100));
         }
       } else if (response.errorType === 'FILE_REFERENCE_EXPIRED') {
-        // Attempt to refresh (simplified, ideally a more robust refresh mechanism is needed)
-        // For simplicity, this example won't implement full refresh within this download.
-        // The caller (e.g., config manager) might need to re-fetch the message with the document.
+        console.error("[downloadDocumentContent] File reference expired during document download.");
         throw new Error("File reference expired during document download.");
       } else {
+        console.error("[downloadDocumentContent] Failed to download document chunk or unexpected response. Response:", response);
         throw new Error("Failed to download document chunk or unexpected response.");
       }
     }
     const fullBlob = new Blob(chunks);
-    return await fullBlob.text();
-  } catch (error) {
-    // console.error("Error downloading document content:", error);
+    const textContent = await fullBlob.text();
+    console.log("[downloadDocumentContent] Successfully downloaded and converted to text. Length:", textContent.length);
+    return textContent;
+  } catch (error: any) {
+    console.error("[downloadDocumentContent] Error downloading document content:", error.message, error);
     return null;
   }
 }
 
+    
