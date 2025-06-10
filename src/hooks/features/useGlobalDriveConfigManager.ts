@@ -152,13 +152,37 @@ export function useGlobalDriveConfigManager({
       console.log("[GDC_LoadOrCreate] searchSelfMessagesByCaption result:", existingConfigMessage);
 
       if (existingConfigMessage && existingConfigMessage.media && existingConfigMessage.media._ === 'messageMediaDocument') {
-        const document = existingConfigMessage.media.document;
-        const configFilename = document.attributes.find((a:any) => a._ === 'documentAttributeFilename')?.file_name || "config file";
+        const documentFromFile = existingConfigMessage.media.document;
+        const configFilename = documentFromFile.attributes.find((a:any) => a._ === 'documentAttributeFilename')?.file_name || "config file";
         console.log(`[GDC_LoadOrCreate] Found existing config file message: "${configFilename}", ID: ${existingConfigMessage.id}`);
         toast({ title: "Custom Config", description: `Found existing config file: "${configFilename}". Downloading content...`});
 
-        const jsonContent = await telegramService.downloadDocumentContent(document);
-        console.log("[GDC_LoadOrCreate] Downloaded JSON content:", jsonContent);
+        let jsonContent = await telegramService.downloadDocumentContent(documentFromFile);
+        console.log("[GDC_LoadOrCreate] Initial downloadDocumentContent result:", jsonContent);
+
+        if (jsonContent === null) {
+          console.warn("[GDC_LoadOrCreate] Initial config download failed. Attempting to refresh message and retry.");
+          toast({ title: "Config Refresh", description: "Attempting to refresh config file reference...", variant: "default" });
+          try {
+            const freshMessagesResult = await telegramService.telegramApiInstance.call('messages.getMessages', {
+                id: [{ _: 'inputMessageID', id: existingConfigMessage.id }],
+            });
+            let freshMessage = null;
+            if (freshMessagesResult && freshMessagesResult.messages && Array.isArray(freshMessagesResult.messages)) {
+                freshMessage = freshMessagesResult.messages.find((m: any) => String(m.id) === String(existingConfigMessage.id));
+            }
+            if (freshMessage && freshMessage.media && freshMessage.media._ === 'messageMediaDocument') {
+                console.log("[GDC_LoadOrCreate] Successfully refreshed message. Retrying downloadDocumentContent.");
+                jsonContent = await telegramService.downloadDocumentContent(freshMessage.media.document);
+                console.log("[GDC_LoadOrCreate] Retry downloadDocumentContent result:", jsonContent);
+            } else {
+                console.warn("[GDC_LoadOrCreate] Failed to refresh message or find document in fresh message.");
+            }
+          } catch (refreshError: any) {
+            console.error("[GDC_LoadOrCreate] Error during message refresh:", refreshError);
+          }
+        }
+
 
         if (jsonContent) {
           try {
@@ -186,8 +210,8 @@ export function useGlobalDriveConfigManager({
             toast({ title: "Config Corrupted", description: errMsg, variant: "destructive", duration: 10000 });
           }
         } else {
-          const errMsg = `Could not download content of "${configFilename}". Check network or file access. To create a new config, ensure this file is not present or add a folder.`;
-          console.error("[GDC_LoadOrCreate] Config download failed.");
+          const errMsg = `Could not download content of "${configFilename}" even after refresh attempt. Check network, file access, or if the message was deleted. To create a new config, ensure this file is not present or add a folder.`;
+          console.error("[GDC_LoadOrCreate] Config download failed after retry.");
           setConfigError(errMsg);
           setCustomConfig(null);
           toast({ title: "Config Download Failed", description: errMsg, variant: "destructive", duration: 10000 });
@@ -236,6 +260,11 @@ export function useGlobalDriveConfigManager({
       toast({ title: "Initializing Config", description: "Creating initial custom drive configuration as none was loaded or previous was in error."});
       setConfigError(null); 
     }
+    if (!currentConfigForAdd) { // Should not happen if logic above is correct, but safety check
+        toast({ title: "Error", description: "Configuration not available for adding folder.", variant: "destructive" });
+        return;
+    }
+
 
     const newConfig = JSON.parse(JSON.stringify(currentConfigForAdd)) as GlobalDriveConfigV1;
     let currentEntries = newConfig.root_entries;
